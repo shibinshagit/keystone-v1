@@ -30,6 +30,7 @@ import { RegulationViewerModal } from './regulation-viewer-modal';
 import { ScenarioSelectorModal } from './scenario-selector-modal';
 import { SavedScenariosPanel } from './saved-scenarios-panel';
 import { SimulationTab } from './simulation-tab';
+import { SimulationDataPanel } from './simulation-data-panel';
 import { AnalysisMode } from './solar-controls';
 import { Sun } from 'lucide-react';
 
@@ -44,12 +45,9 @@ export function GeoConstructApp({ projectId }: { projectId: string }) {
 
   // Simulation State
   const [isSimulatorEnabled, setIsSimulatorEnabled] = useState(false);
-  const [solarDate, setSolarDate] = useState<Date>(() => {
-    const d = new Date();
-    d.setHours(12, 0, 0, 0);
-    return d;
-  });
+  const [solarDate, setSolarDate] = useState<Date>(() => new Date());
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('none');
+  const [isDataPanelOpen, setIsDataPanelOpen] = useState(true);
 
   const selectedObjectId = useBuildingStore(s => s.selectedObjectId);
   const actions = useBuildingStore(s => s.actions);
@@ -62,6 +60,10 @@ export function GeoConstructApp({ projectId }: { projectId: string }) {
   const isSaving = useBuildingStore(s => s.isSaving);
   const plots = useBuildingStore(s => s.plots);
   const uiState = useBuildingStore(s => s.uiState);
+
+  // Dynamic bottom clearance — stays above KPI bar whether open or collapsed
+  const kpiOpen = uiState.isFeasibilityPanelOpen ?? true;
+  const kpiBottom = kpiOpen ? 'calc(45vh + 8px)' : '58px';
 
   const project = projects.find(p => p.id === projectId);
 
@@ -85,6 +87,19 @@ export function GeoConstructApp({ projectId }: { projectId: string }) {
     }, 350);
     return () => clearTimeout(timer);
   }, [isChatOpen, selectedObjectId]);
+
+  // Auto-switch to simulation tab when simulator is enabled
+  // And close right property panel by deselecting objects
+  useEffect(() => {
+    if (isSimulatorEnabled) {
+      setActiveTab('simulation');
+      setIsDataPanelOpen(true);
+      // Deselect any object to close the right properties panel
+      if (selectedObjectId && selectedObjectId.type !== 'Plot') {
+        actions.selectObject(null, null);
+      }
+    }
+  }, [isSimulatorEnabled]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -247,7 +262,7 @@ export function GeoConstructApp({ projectId }: { projectId: string }) {
           <DrawingToolbar />
 
           {/* Hektar-style Sidebar */}
-          <div className="absolute top-4 left-4 z-20 flex flex-col gap-3 pointer-events-none max-h-[calc(100vh-8rem)]">
+          <div className="absolute top-4 left-4 z-20 flex flex-col gap-3 pointer-events-none" style={{ bottom: kpiBottom }}>
             <div className="pointer-events-auto shrink-0 w-96">
               <ProjectInfoPanel />
             </div>
@@ -279,8 +294,7 @@ export function GeoConstructApp({ projectId }: { projectId: string }) {
                 <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
                   <TabsContent
                     value="design"
-                    className="flex-1 overflow-y-auto m-0 p-0 data-[state=active]:block h-full min-h-0 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-muted-foreground/20 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/40 [&::-webkit-scrollbar-button]:hidden [&::-webkit-scrollbar-corner]:bg-transparent"
-                    style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--muted-foreground) / 0.2) transparent' }}
+                    className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin m-0 p-0 data-[state=active]:block h-full min-h-0"
                   >
                     <ParametricToolbar embedded={true} />
                   </TabsContent>
@@ -316,7 +330,22 @@ export function GeoConstructApp({ projectId }: { projectId: string }) {
             </div>
           </div>
 
-          <div className={cn("absolute top-4 right-4 w-96 z-20 transition-transform duration-300 ease-in-out", selectedObjectId ? "translate-x-0" : "translate-x-[calc(100%+2rem)]")}>
+          <div className={cn("absolute top-4 right-4 w-96 z-20 transition-transform duration-300 ease-in-out", 
+            isSimulatorEnabled && analysisMode !== 'none' && isDataPanelOpen ? "translate-x-0" : "translate-x-[calc(100%+2rem)]")}>
+            <SimulationDataPanel
+              analysisMode={analysisMode}
+              isOpen={isDataPanelOpen}
+              onClose={() => setIsDataPanelOpen(false)}
+              date={solarDate}
+            />
+          </div>
+
+          <div className={cn("absolute top-4 right-4 z-20 transition-transform duration-300 ease-in-out flex flex-col", 
+            selectedObjectId && !isSimulatorEnabled ? "translate-x-0" : "translate-x-[calc(100%+2rem)]")} 
+            style={{ 
+              bottom: kpiBottom,
+              width: '420px',
+            }}>
             <PropertiesPanel />
           </div>
 
@@ -333,7 +362,7 @@ export function GeoConstructApp({ projectId }: { projectId: string }) {
 
           {selectedObjectId && <FeasibilityDashboard />}
 
-          <div className={cn("fixed top-[65px] right-0 h-[calc(100vh-65px)] bg-background/80 backdrop-blur-sm border-l border-border z-30 transition-transform duration-300 ease-in-out", isChatOpen ? "translate-x-0" : "translate-x-full")}>
+          <div className={cn("fixed top-[65px] right-0 h-[calc(100vh-65px)] bg-background/80 backdrop-blur-sm border-l border-border z-50 transition-transform duration-300 ease-in-out", isChatOpen ? "translate-x-0" : "translate-x-full")}>
             <div className="h-full w-[440px] relative">
               {isChatOpen && <ChatPanel />}
             </div>

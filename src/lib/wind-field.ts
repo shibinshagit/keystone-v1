@@ -98,9 +98,10 @@ export class WindField {
      * Pre-calculate wake zones behind buildings
      */
     private calculateWakeZones(): void {
-        const windRad = this.options.windDirection * (Math.PI / 180);
-        const windVecX = Math.sin(windRad);
-        const windVecY = Math.cos(windRad);
+        // Wind blows FROM windDirection, so the flow (and wake) is opposite
+        const flowRad = (this.options.windDirection + 180) * (Math.PI / 180);
+        const windVecX = Math.sin(flowRad);
+        const windVecY = Math.cos(flowRad);
 
         for (const building of this.buildings) {
             const height = building.height || (building.floors?.reduce((sum, f) => sum + f.height, 0)) || 10;
@@ -150,11 +151,12 @@ export class WindField {
      * Get wind vector at a specific location (lng, lat)
      */
     getVectorAt(lng: number, lat: number): WindVector {
-        const windRad = this.options.windDirection * (Math.PI / 180);
+        // Wind blows FROM windDirection, so flow vector is opposite
+        const flowRad = (this.options.windDirection + 180) * (Math.PI / 180);
 
         // Base wind vector
-        let vx = Math.sin(windRad) * this.options.baseSpeed;
-        let vy = Math.cos(windRad) * this.options.baseSpeed;
+        let vx = Math.sin(flowRad) * this.options.baseSpeed;
+        let vy = Math.cos(flowRad) * this.options.baseSpeed;
 
         // Add turbulence using noise
         const noiseScale = 0.5; // Frequency of turbulence
@@ -162,8 +164,8 @@ export class WindField {
         const turbulence = noiseVal * this.options.turbulenceScale * this.options.baseSpeed;
 
         // Apply turbulence perpendicular to wind direction
-        vx += -Math.cos(windRad) * turbulence;
-        vy += Math.sin(windRad) * turbulence;
+        vx += -Math.cos(flowRad) * turbulence;
+        vy += Math.sin(flowRad) * turbulence;
 
         // Check for wake effects
         const cellKey = `${Math.floor(lng * 10000)},${Math.floor(lat * 10000)}`;

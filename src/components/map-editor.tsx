@@ -10,6 +10,7 @@ import Script from 'next/script';
 import { createShaktiChakraGroup } from '@/lib/shakti-chakra-visualizer';
 import { AnalysisMode } from './solar-controls';
 import { runVisualAnalysis, runGroundAnalysis, runWallAnalysis, calculateAggregateStats } from '@/lib/engines/visual-analysis-engine';
+import { fetchWeatherData } from '@/lib/engines/weather-data-service';
 import { useRegulations } from '@/hooks/use-regulations';
 import { generateBuildingTexture } from '@/lib/texture-generator';
 import { WindStreamlineLayer } from '@/lib/wind-streamline-layer';
@@ -1058,8 +1059,21 @@ export function MapEditor({
       cleanupOverlays(); // Clear previous results before adding new ones
       resetBuildingColors('#eeeeee'); // Reset buildings to neutral grey so walls are visible
 
-      // --- PER-FACE WALL ANALYSIS ---
-      const wallFeatures = await runWallAnalysis(allBuildings, allBuildings, analysisMode, solarDate, activeGreenRegulations);
+      // ── STEP 0: Fetch weather data FIRST so ALL analysis phases use it ──
+      let weatherData: any = null;
+      if (plots.length > 0 && plots[0].geometry) {
+        try {
+          const plotCentroid = turf.centroid(plots[0].geometry);
+          const [pLng, pLat] = plotCentroid.geometry.coordinates;
+          weatherData = await fetchWeatherData(pLat, pLng, solarDate);
+          console.log('[MAP EDITOR] Weather data:', weatherData.isLive ? '🟢 LIVE/ERA5' : '🟡 ESTIMATED', 'for', solarDate.toDateString());
+        } catch (err) {
+          console.warn('[MAP EDITOR] Weather fetch failed, using null:', err);
+        }
+      }
+
+      // --- STEP 1: PER-FACE WALL ANALYSIS (now with weatherData) ---
+      const wallFeatures = await runWallAnalysis(allBuildings, allBuildings, analysisMode, solarDate, activeGreenRegulations, weatherData);
 
       console.log('[MAP EDITOR] Wall Analysis complete, features:', { count: wallFeatures.features.length });
 
@@ -1090,27 +1104,29 @@ export function MapEditor({
         }
       }
 
-      // --- GROUND HEATMAP ANALYSIS ---
+      // --- STEP 2: GROUND HEATMAP ANALYSIS ---
       if (map.current && plots.length > 0) {
         try {
           console.log('[MAP EDITOR] Running Ground Analysis...');
-          // Store results for rendering
-          // 1. Run Ground Analysis (Heatmap)
+          
+          // 2a. Run Ground Analysis (Heatmap)
           const groundPoints = await runGroundAnalysis(
             plots[0].geometry,
             allBuildings,
             analysisMode,
             solarDate,
-            activeGreenRegulations
+            activeGreenRegulations,
+            weatherData
           );
 
-          // 2. Run Visual Analysis (Building Stats)
+          // 2b. Run Visual Analysis (Building Stats)
           const buildingResults = await runVisualAnalysis(
             allBuildings,
             allBuildings,
             analysisMode,
             solarDate,
-            activeGreenRegulations
+            activeGreenRegulations,
+            weatherData
           );
 
           // NEW: Calculate Aggregate Stats and Update Project State
@@ -1124,8 +1140,33 @@ export function MapEditor({
           } else if (analysisMode === 'daylight') {
             actions.updateSimulationResults({ sun: { compliantArea: stats.compliantArea, avgHours: stats.avgValue } });
           }
+          // Energy, Mobility, Resilience: log stats (not stored in project state yet)
+          if (['energy', 'mobility', 'resilience'].includes(analysisMode)) {
+            console.log(`[MAP EDITOR] ${analysisMode.toUpperCase()} Stats:`, stats);
+          }
 
-          // Apply colors to buildings
+          // ── Apply analysis colors to building floor layers ──
+          if (buildingResults.size > 0 && map.current) {
+            buildingResults.forEach((result: any, buildingId: string) => {
+              const building = allBuildings.find(b => b.id === buildingId);
+              if (!building) return;
+              
+              const analysisColor = result.color || '#eeeeee';
+              building.floors.forEach((floor: any) => {
+                const layerId = `building-floor-fill-${floor.id}-${building.id}`;
+                if (map.current!.getLayer(layerId)) {
+                  try {
+                    map.current!.setPaintProperty(layerId, 'fill-extrusion-color', analysisColor);
+                  } catch (e) {
+                    // Layer might not support color change
+                  }
+                }
+              });
+            });
+            console.log(`[MAP EDITOR] Applied analysis colors to ${buildingResults.size} buildings`);
+          }
+
+          // Apply colors to ground heatmap
           const heatmapId = 'solar-ground-heatmap';
 
           if (groundPoints && groundPoints.features.length > 0) {
@@ -1154,6 +1195,39 @@ export function MapEditor({
                   0.6, '#eab308',               // yellow-500 (Moderate)
                   0.8, '#10b981',               // emerald-500 (Good)
                   1, '#00cc00'                  // bright green (Excellent)
+                ];
+              } else if (analysisMode === 'energy') {
+                // Thermal Ramp: Blue (Cool/Efficient) -> Yellow -> Red (Hot/Inefficient)
+                colorRamp = [
+                  'interpolate', ['linear'], ['heatmap-density'],
+                  0, 'rgba(59, 130, 246, 0)',   // Transparent blue
+                  0.2, '#3b82f6',               // blue-500 (Cool/Efficient)
+                  0.4, '#06b6d4',               // cyan-500
+                  0.6, '#f59e0b',               // amber-500 (Warm)
+                  0.8, '#ef4444',               // red-500 (Hot)
+                  1, '#991b1b'                  // red-800 (Very Hot)
+                ];
+              } else if (analysisMode === 'mobility') {
+                // Traffic Ramp: Green (Low Traffic) -> Yellow -> Red (High Traffic)
+                colorRamp = [
+                  'interpolate', ['linear'], ['heatmap-density'],
+                  0, 'rgba(34, 197, 94, 0)',    // Transparent green
+                  0.2, '#22c55e',               // green-500 (Low traffic)
+                  0.4, '#84cc16',               // lime-500
+                  0.6, '#f59e0b',               // amber-500 (Moderate)
+                  0.8, '#f97316',               // orange-500
+                  1, '#ef4444'                  // red-500 (High traffic)
+                ];
+              } else if (analysisMode === 'resilience') {
+                // Risk Ramp: Green (Safe) -> Yellow -> Red (High Risk)
+                colorRamp = [
+                  'interpolate', ['linear'], ['heatmap-density'],
+                  0, 'rgba(34, 197, 94, 0)',    // Transparent green
+                  0.2, '#22c55e',               // green-500 (Safe)
+                  0.4, '#84cc16',               // lime-500
+                  0.6, '#eab308',               // yellow-500 (Moderate risk)
+                  0.8, '#ef4444',               // red-500 (High risk)
+                  1, '#991b1b'                  // red-800 (Extreme risk)
                 ];
               } else {
                 // Standard Thermal Heatmap: Blue (Low) -> Red (High)
@@ -1200,6 +1274,10 @@ export function MapEditor({
                 map.current.removeLayer(windDirId);
               }
 
+              // Get current wind direction from weather data
+              const currentHour = solarDate.getHours();
+              const windDir = (weatherData && weatherData.hourly) ? weatherData.hourly.windDirection[currentHour] : 45;
+
               // Add streamline layer if not already added
               if (!windStreamlineLayer.current) {
                 windStreamlineLayer.current = new WindStreamlineLayer('wind-streamlines');
@@ -1210,7 +1288,10 @@ export function MapEditor({
                 }
 
                 // Initialize with buildings and wind direction
-                windStreamlineLayer.current.initialize(allBuildings, 45); // Default NE wind
+                windStreamlineLayer.current.initialize(allBuildings, windDir);
+              } else {
+                // Update direction dynamically
+                windStreamlineLayer.current.updateWindDirection(windDir);
               }
 
               // Update bounds when map moves
@@ -1701,6 +1782,9 @@ export function MapEditor({
 
       utilitiesToRender.forEach(u => {
         const areaId = `utility-area-${u.id}`;
+        const centerlineId = `${areaId}-centerline`;
+        const isVisible = u.visible !== false;
+
         renderedIds.add(areaId);
         renderedIds.add(`utility-area-label-${u.id}`);
 
@@ -1734,15 +1818,13 @@ export function MapEditor({
 
         const isRoad = u.type === 'Roads' || u.type === 'AppRoads' as any;
 
-        // Force recreation if type mismatch or just ensure correct ADD order relative to buildings
-        // Since we are running BEFORE buildings, standard addLayer will put it below buildings (if they are added later)
-
         if (!mapInstance.getLayer(areaId)) {
           if (isRoad) {
             mapInstance.addLayer({
               id: areaId,
               type: 'fill',
               source: areaId,
+              layout: { 'visibility': isVisible ? 'visible' : 'none' },
               paint: {
                 'fill-color': color,
                 'fill-opacity': 0.8,
@@ -1751,13 +1833,13 @@ export function MapEditor({
             }, LABELS_LAYER_ID);
 
             // Add a dashed centerline for finished roads
-            const centerlineId = `${areaId}-centerline`;
             renderedIds.add(centerlineId);
             if (!mapInstance.getLayer(centerlineId)) {
               mapInstance.addLayer({
                 id: centerlineId,
                 type: 'line',
                 source: areaId,
+                layout: { 'visibility': isVisible ? 'visible' : 'none' },
                 paint: {
                   'line-color': '#ffffff',
                   'line-width': 1,
@@ -1767,11 +1849,12 @@ export function MapEditor({
               }, LABELS_LAYER_ID);
             }
           } else {
-            // 3D Extrusion for others
+            // 3D Extrusion for non-road utilities
             mapInstance.addLayer({
               id: areaId,
               type: 'fill-extrusion',
               source: areaId,
+              layout: { 'visibility': isVisible ? 'visible' : 'none' },
               paint: {
                 'fill-extrusion-color': color,
                 'fill-extrusion-height': 2.5,
@@ -1781,7 +1864,7 @@ export function MapEditor({
             }, LABELS_LAYER_ID);
           }
         } else {
-          // Update
+          // Layer already exists — update paint and visibility
           if (isRoad) {
             if (mapInstance.getLayer(areaId)?.type === 'fill') {
               mapInstance.setPaintProperty(areaId, 'fill-color', color);
@@ -1790,6 +1873,15 @@ export function MapEditor({
             if (mapInstance.getLayer(areaId)?.type === 'fill-extrusion') {
               mapInstance.setPaintProperty(areaId, 'fill-extrusion-color', color);
             }
+          }
+          // Always sync visibility via setLayoutProperty (correct Mapbox approach)
+          try {
+            mapInstance.setLayoutProperty(areaId, 'visibility', isVisible ? 'visible' : 'none');
+            if (mapInstance.getLayer(centerlineId)) {
+              mapInstance.setLayoutProperty(centerlineId, 'visibility', isVisible ? 'visible' : 'none');
+            }
+          } catch (e) {
+            // Layer might not support visibility toggle in rare cases
           }
         }
       });
@@ -1994,7 +2086,8 @@ export function MapEditor({
                 properties: {
                   ...core.geometry.properties,
                   height: visualBuildingTop,
-                  base_height: effectiveBase,  // Use effectiveBase for consistency
+                  // Tower cores extend to ground level so the shaft visually passes through the podium
+                  base_height: building.id.endsWith('-tower') ? 0 : effectiveBase,
                   coreId: core.id
                 }
               } as Feature);

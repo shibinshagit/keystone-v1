@@ -32,7 +32,7 @@ function getCardinalDirection(bearing: number): string {
 function getColorForUnitType(unitName: string): string {
     const name = unitName.toLowerCase();
     if (name.includes('studio')) return '#ADD8E6'; // Light Blue
-    if (name.includes('1bhk') || name.includes('1 bhk')) return '#80bc65'; // Green
+    if (name.includes('1bhk') || name.includes('1 bhk')) return '#80BC65'; // Green
     if (name.includes('2bhk') || name.includes('2 bhk')) return '#1E90FF'; // Blue
     if (name.includes('3bhk') || name.includes('3 bhk')) return '#DA70D6'; // Orchid
     if (name.includes('4bhk') || name.includes('4 bhk')) return '#FFD700'; // Gold
@@ -1373,7 +1373,7 @@ export function generateSiteUtilities(
                         geometry: poly as Feature<Polygon>,
                         area: util.area,
                         centroid: turf.centroid(poly),
-                        visible: true,
+                        visible: util.level !== undefined && util.level < 0 ? false : true,
                         color: util.color,
                         level: util.level || 0,
                         height: util.height

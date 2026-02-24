@@ -958,8 +958,8 @@ export function PropertiesPanel() {
     const { name, type } = getSelectionDetails(selectedObjectId, plots);
 
     return (
-        <Card className="bg-background/80 backdrop-blur-sm">
-            <CardHeader className='flex-row items-center justify-between'>
+        <Card className="bg-background/80 backdrop-blur-sm max-h-full flex-1 flex flex-col shadow-xl overflow-hidden border-border/50">
+            <CardHeader className='flex-row items-center justify-between shrink-0'>
                 <div>
                     <CardTitle className='text-lg'>{name}</CardTitle>
                     <CardDescription>{type} Properties</CardDescription>
@@ -968,13 +968,11 @@ export function PropertiesPanel() {
                     <X className='h-4 w-4' />
                 </Button>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-thin space-y-6 pb-4">
                 {selectedObjectId.type === 'Building' && <BuildingProperties />}
                 {selectedObjectId.type === 'Plot' && <PlotProperties />}
                 {(selectedObjectId.type === 'GreenArea' || selectedObjectId.type === 'ParkingArea' || selectedObjectId.type === 'BuildableArea') && <ZoneProperties />}
                 {selectedObjectId.type === 'UtilityArea' && (
-                    // We need to decide if we use ZoneProperties (plot level) or InternalUtilityProperties (building level) 
-                    // based on whether it exists on the plot directly.
                     plots.flatMap(p => p.utilityAreas).some(u => u.id === selectedObjectId.id)
                         ? <ZoneProperties />
                         : <InternalUtilityProperties />

@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
 import { useSelectedBuilding, useProjectData, useBuildingStore } from '@/hooks/use-building-store';
-import { AreaChart, Scale, Building, Car, CheckCircle, AlertTriangle, ShieldCheck, DollarSign, LocateFixed, ChevronUp, ChevronDown, Compass, DoorOpen } from 'lucide-react';
+import { AreaChart, Scale, Building, Car, CheckCircle, AlertTriangle, ShieldCheck, DollarSign, LocateFixed, ChevronUp, ChevronDown, Compass, DoorOpen, Clock, TrendingUp, BarChart2 } from 'lucide-react';
 import { useDevelopmentMetrics } from '@/hooks/use-development-metrics';
 import { useRegulations } from '@/hooks/use-regulations';
 import { useProjectEstimates } from '@/hooks/use-project-estimates';
@@ -51,6 +51,280 @@ function MetricsTab() {
     )
 }
 
+// ─── COST SIMULATOR ──────────────────────────────────────────────────────────
+interface SimulatorTabProps {
+    estimates: any | null;
+    isLoading: boolean;
+}
+function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
+    if (isLoading) return <div className="p-6 text-center text-sm text-muted-foreground animate-pulse">Calculating cost simulation...</div>;
+    if (!estimates) return <div className="p-6 text-center text-sm text-muted-foreground">Configure Admin Parameters to run cost simulation</div>;
+
+    const bd = estimates.cost_breakdown;
+    const totalCost = estimates.total_construction_cost;
+    const totalRev = estimates.total_revenue;
+    const profit = estimates.potential_profit;
+    const roi = estimates.roi_percentage;
+
+    const costCategories = [
+        { label: 'Earthwork', value: bd.earthwork, color: '#f59e0b' },
+        { label: 'Structure', value: bd.structure, color: '#3b82f6' },
+        { label: 'Finishing', value: bd.finishing, color: '#8b5cf6' },
+        { label: 'Services', value: bd.services, color: '#10b981' },
+        { label: 'Contingency', value: bd.contingency, color: '#ef4444' },
+    ];
+
+    const totalParts = costCategories.reduce((s, c) => s + c.value, 0) || 1;
+
+    // Build cumulative S-curve data (12-month construction spend, typical S-curve shape)
+    const totalMonths = Math.max(6, Math.round(estimates.timeline?.total_months || 12));
+    const sCurve: number[] = [];
+    for (let m = 1; m <= totalMonths; m++) {
+        const t = m / totalMonths; // 0-1
+        // S-curve: logistic-ish ramp (slow start, fast middle, slow end)
+        const spend = totalCost / (1 + Math.exp(-10 * (t - 0.5)));
+        sCurve.push(spend);
+    }
+    const maxSpend = sCurve[sCurve.length - 1] || 1;
+
+    const svgW = 280, svgH = 80;
+    const points = sCurve.map((v, i) =>
+        `${(i / (sCurve.length - 1)) * svgW},${svgH - (v / maxSpend) * (svgH - 6) - 2}`
+    ).join(' ');
+    // Revenue line — flat line once construction done (only appears at handover)
+    const revY = svgH - (totalRev / maxSpend) * (svgH - 6) - 2;
+    const revLineY = Math.max(2, revY);
+
+    return (
+        <div className="space-y-4 pb-4">
+
+            {/* Summary Hero */}
+            <div className="grid grid-cols-3 gap-2">
+                <div className="p-2.5 rounded-lg border bg-slate-500/10 border-slate-500/20 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Cost</div>
+                    <div className="text-base font-bold">{(totalCost / 10000000).toFixed(1)} Cr</div>
+                </div>
+                <div className="p-2.5 rounded-lg border bg-emerald-500/10 border-emerald-500/20 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Revenue</div>
+                    <div className="text-base font-bold text-emerald-400">{(totalRev / 10000000).toFixed(1)} Cr</div>
+                </div>
+                <div className={cn("p-2.5 rounded-lg border text-center", profit > 0 ? "bg-blue-500/10 border-blue-500/20" : "bg-red-500/10 border-red-500/20")}>
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">ROI</div>
+                    <div className={cn("text-base font-bold", profit > 0 ? "text-blue-400" : "text-red-400")}>{roi.toFixed(1)}%</div>
+                </div>
+            </div>
+
+            {/* Cost Breakdown Bar */}
+            <div className="rounded-lg border p-3 bg-secondary/10 border-border/30">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">Cost Breakdown</div>
+                {/* Stacked bar */}
+                <div className="flex h-3 rounded-full overflow-hidden gap-[1px] mb-2">
+                    {costCategories.map(c => (
+                        <div
+                            key={c.label}
+                            className="transition-all duration-700"
+                            style={{ width: `${(c.value / totalParts) * 100}%`, backgroundColor: c.color }}
+                            title={`${c.label}: ₹${(c.value / 10000000).toFixed(2)} Cr`}
+                        />
+                    ))}
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                    {costCategories.map(c => (
+                        <div key={c.label} className="flex items-center gap-1.5 text-[10px]">
+                            <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: c.color }} />
+                            <span className="text-muted-foreground">{c.label}</span>
+                            <span className="ml-auto font-medium">{(c.value / 10000000).toFixed(2)} Cr</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* Cash-Flow S-Curve Chart */}
+            <div className="rounded-lg border p-3 bg-secondary/10 border-border/30">
+                <div className="flex items-center gap-1 mb-2">
+                    <TrendingUp className="h-3.5 w-3.5 text-blue-400" />
+                    <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Construction Cash-Flow</span>
+                    <span className="ml-auto text-[9px] text-muted-foreground">{totalMonths} months</span>
+                </div>
+                <svg width="100%" height={svgH} viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="none">
+                    <defs>
+                        <linearGradient id="costGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
+                            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.02" />
+                        </linearGradient>
+                    </defs>
+                    {/* Cost S-curve area */}
+                    <polygon points={`0,${svgH} ${points} ${svgW},${svgH}`} fill="url(#costGrad)" />
+                    <polyline points={points} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    {/* Revenue horizontal line (at project end) */}
+                    <line x1={0} y1={revLineY} x2={svgW} y2={revLineY} stroke="#10b981" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.7" />
+                    {/* Labels */}
+                    <text x="2" y={svgH - 3} fontSize="7" fill="#6b7280">Start</text>
+                    <text x={svgW - 20} y={svgH - 3} fontSize="7" fill="#6b7280">End</text>
+                    <text x="3" y={revLineY - 2} fontSize="7" fill="#10b981">Rev.</text>
+                </svg>
+                <div className="flex gap-3 mt-1">
+                    <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
+                        <div className="w-4 h-0.5 bg-blue-400 rounded" />
+                        <span>Cumulative Cost</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
+                        <div className="w-4 h-0.5 bg-emerald-400 rounded opacity-70 border-dashed border-t border-emerald-400" />
+                        <span>Revenue Line</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Per-Building Table */}
+            {estimates.breakdown && estimates.breakdown.length > 0 && (
+                <div className="rounded-lg border p-3 bg-secondary/5 border-border/20">
+                    <div className="flex items-center gap-1.5 mb-2">
+                        <Building className="h-3.5 w-3.5 text-primary" />
+                        <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Per-Building Cost</span>
+                    </div>
+                    <div className="space-y-1.5">
+                        {estimates.breakdown.map((b: any, i: number) => {
+                            const pct = (b.cost.total / totalCost) * 100;
+                            return (
+                                <div key={i} className="text-[10px]">
+                                    <div className="flex justify-between mb-0.5">
+                                        <span className="text-muted-foreground truncate mr-2">{b.buildingName}</span>
+                                        <span className="font-semibold shrink-0">{(b.cost.total / 10000000).toFixed(2)} Cr</span>
+                                    </div>
+                                    <div className="h-1.5 rounded-full bg-secondary/50 overflow-hidden">
+                                        <div className="h-full rounded-full bg-blue-400/70 transition-all duration-700" style={{ width: `${pct}%` }} />
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── TIME SIMULATOR ───────────────────────────────────────────────────────────
+function TimeSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
+    if (isLoading) return <div className="p-6 text-center text-sm text-muted-foreground animate-pulse">Calculating time simulation...</div>;
+    if (!estimates) return <div className="p-6 text-center text-sm text-muted-foreground">Configure Admin Parameters to run time simulation</div>;
+
+    const phases = estimates.timeline?.phases;
+    const totalMonths = estimates.timeline?.total_months || 0;
+
+    const ganttPhases = [
+        { label: 'Excavation', value: phases?.excavation || 0, color: '#f59e0b', startOffset: 0 },
+        { label: 'Foundation', value: phases?.foundation || 0, color: '#ef4444', startOffset: phases?.excavation || 0 },
+        { label: 'Structure', value: phases?.structure || 0, color: '#3b82f6', startOffset: (phases?.excavation || 0) + (phases?.foundation || 0) },
+        { label: 'Finishing', value: phases?.finishing || 0, color: '#8b5cf6', startOffset: (phases?.excavation || 0) + (phases?.foundation || 0) + (phases?.structure || 0) },
+        { label: 'Contingency', value: phases?.contingency || 0, color: '#6b7280', startOffset: totalMonths - (phases?.contingency || 0) },
+    ].filter(p => p.value > 0);
+
+    // Building timelines
+    const maxBuildingMonths = estimates.breakdown?.reduce((m: number, b: any) => Math.max(m, b.timeline.total), 0) || totalMonths;
+
+    return (
+        <div className="space-y-4 pb-4">
+
+            {/* Summary */}
+            <div className="grid grid-cols-2 gap-2">
+                <div className="p-2.5 rounded-lg border bg-blue-500/10 border-blue-500/20 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Total Duration</div>
+                    <div className="text-xl font-bold text-blue-400">{totalMonths.toFixed(1)}</div>
+                    <div className="text-[9px] text-muted-foreground">months (Critical Path)</div>
+                </div>
+                <div className="p-2.5 rounded-lg border bg-purple-500/10 border-purple-500/20 text-center">
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Efficiency</div>
+                    <div className={cn("text-xl font-bold",
+                        estimates.efficiency_metrics.status === 'Optimal' ? "text-green-400" :
+                            estimates.efficiency_metrics.status === 'Inefficient' ? "text-red-400" : "text-yellow-400"
+                    )}>
+                        {((estimates.efficiency_metrics?.achieved || 0) * 100).toFixed(0)}%
+                    </div>
+                    <div className="text-[9px] text-muted-foreground">{estimates.efficiency_metrics.status}</div>
+                </div>
+            </div>
+
+            {/* Gantt Phase Bars */}
+            <div className="rounded-lg border p-3 bg-secondary/10 border-border/30">
+                <div className="flex items-center gap-1 mb-3">
+                    <BarChart2 className="h-3.5 w-3.5 text-purple-400" />
+                    <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Phase Timeline (Gantt)</span>
+                </div>
+                <div className="space-y-2">
+                    {ganttPhases.map((phase, i) => {
+                        const leftPct = (phase.startOffset / totalMonths) * 100;
+                        const widthPct = (phase.value / totalMonths) * 100;
+                        return (
+                            <div key={i} className="flex items-center gap-2">
+                                <div className="text-[9px] text-muted-foreground w-16 shrink-0 text-right">{phase.label}</div>
+                                <div className="flex-1 h-4 bg-secondary/40 rounded-full relative overflow-hidden">
+                                    <div
+                                        className="absolute top-0 h-full rounded-full transition-all duration-700 flex items-center px-1"
+                                        style={{
+                                            left: `${leftPct}%`,
+                                            width: `${widthPct}%`,
+                                            backgroundColor: phase.color,
+                                            opacity: 0.85
+                                        }}
+                                    />
+                                </div>
+                                <div className="text-[9px] font-medium w-10 shrink-0">{phase.value.toFixed(1)}mo</div>
+                            </div>
+                        );
+                    })}
+                </div>
+                {/* Month scale */}
+                <div className="mt-2 ml-[70px] flex justify-between pr-10">
+                    {Array.from({ length: 5 }, (_, i) => (
+                        <span key={i} className="text-[8px] text-muted-foreground">
+                            {((i / 4) * totalMonths).toFixed(0)}m
+                        </span>
+                    ))}
+                </div>
+            </div>
+
+            {/* Per-Building Timeline */}
+            {estimates.breakdown && estimates.breakdown.length > 0 && (
+                <div className="rounded-lg border p-3 bg-secondary/5 border-border/20">
+                    <div className="flex items-center gap-1.5 mb-2">
+                        <Building className="h-3.5 w-3.5 text-primary" />
+                        <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Per-Building Timeline</span>
+                    </div>
+                    <div className="space-y-2">
+                        {estimates.breakdown.map((b: any, i: number) => {
+                            const pct = (b.timeline.total / maxBuildingMonths) * 100;
+                            const structPct = (b.timeline.structure / b.timeline.total) * pct;
+                            const finPct = (b.timeline.finishing / b.timeline.total) * pct;
+                            return (
+                                <div key={i} className="text-[10px]">
+                                    <div className="flex justify-between mb-0.5">
+                                        <span className="text-muted-foreground truncate mr-2">{b.buildingName}</span>
+                                        <span className="font-semibold shrink-0">{b.timeline.total.toFixed(1)} mo</span>
+                                    </div>
+                                    {/* Segmented bar: foundation (amber) + structure (blue) + finishing (purple) */}
+                                    <div className="h-2 rounded-full bg-secondary/40 overflow-hidden flex">
+                                        <div className="h-full bg-amber-400/70 transition-all duration-700" style={{ width: `${pct - structPct - finPct}%` }} />
+                                        <div className="h-full bg-blue-400/70 transition-all duration-700" style={{ width: `${structPct}%` }} />
+                                        <div className="h-full bg-purple-400/70 transition-all duration-700" style={{ width: `${finPct}%` }} />
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="flex gap-3 mt-2">
+                        {[['#f59e0b', 'Sub/Foundation'], ['#3b82f6', 'Structure'], ['#8b5cf6', 'Finishing']].map(([c, l]) => (
+                            <div key={l as string} className="flex items-center gap-1 text-[9px] text-muted-foreground">
+                                <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: c as string, opacity: 0.7 }} />
+                                <span>{l}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
 
 function FeasibilityTab() {
@@ -175,11 +449,11 @@ function FeasibilityTab() {
                 </div>
             )
         }] : []),
-        ...(metrics.greenAnalysis ? [{
+        ...((metrics as any).greenAnalysis ? [{
             label: "Green Simulation (Beta)",
-            score: metrics.greenAnalysis.overall,
-            icon: CheckCircle, // Reusing icon for now
-            items: metrics.greenAnalysis.breakdown.map(b => ({
+            score: (metrics as any).greenAnalysis.overall,
+            icon: CheckCircle,
+            items: (metrics as any).greenAnalysis.breakdown.map((b: any) => ({
                 label: b.category,
                 status: b.score > 70 ? 'pass' : b.score > 40 ? 'warn' : 'fail',
                 detail: b.feedback
@@ -228,7 +502,7 @@ function FeasibilityTab() {
                                 <span className="text-xs text-muted-foreground mb-1">/ 100</span>
                             </div>
                             <div className="space-y-1">
-                                {card.items.map((item, i) => (
+                                {card.items.map((item: any, i: number) => (
                                     <div key={i} className="flex items-center justify-between text-xs">
                                         <span className="text-muted-foreground">{item.label}</span>
                                         {getStatusIcon(item.status)}
@@ -339,7 +613,7 @@ function FeasibilityTab() {
                                 <Building className="h-4 w-4 text-primary" />
                                 <span className="text-sm font-semibold">Building Breakdown</span>
                             </div>
-                            <div className="space-y-2 max-h-[150px] overflow-y-auto pr-1">
+                            <div className="space-y-2 max-h-[150px] overflow-y-auto scrollbar-thin pr-1">
                                 {estimates.breakdown.map((b: any, idx: number) => (
                                     <div key={idx} className="text-xs border-b border-border/10 pb-2 last:border-0 last:pb-0">
                                         <div className="flex justify-between font-medium mb-1">
@@ -369,14 +643,17 @@ function FeasibilityTab() {
 
 export function FeasibilityDashboard() {
     const selectedBuilding = useSelectedBuilding();
-    // Also use selectedPlot or Project if no building selected?
-    // The panel is "Feasibility Dashboard", normally Project Level.
     const activeProject = useBuildingStore(state => state.projects.find(p => p.id === state.activeProjectId));
     const uiState = useBuildingStore(state => state.uiState);
     const setOpen = useBuildingStore(state => state.actions.setFeasibilityPanelOpen);
 
     // Default to open if not set
     const isOpen = uiState.isFeasibilityPanelOpen ?? true;
+
+    // Fetch estimates ONCE here — shared by Cost & Time simulator tabs so they don't re-fetch on tab switch
+    const activeProjectData = useProjectData();
+    const metricsForSim = useDevelopmentMetrics(activeProjectData);
+    const { estimates: simEstimates, isLoading: simLoading } = useProjectEstimates(activeProjectData, metricsForSim);
 
     if (!activeProject) return null;
 
@@ -407,18 +684,26 @@ export function FeasibilityDashboard() {
                         <CardContent className="p-0 h-full">
                             <Tabs defaultValue="feasibility" className="flex flex-col h-full w-full">
                                 <div className="px-4 pt-2 shrink-0">
-                                    <TabsList className="grid w-full grid-cols-2">
-                                        <TabsTrigger value="feasibility">Dashboard</TabsTrigger>
-                                        <TabsTrigger value="metrics">Detailed KPIs</TabsTrigger>
+                                    <TabsList className="grid w-full grid-cols-4">
+                                        <TabsTrigger value="feasibility" className="text-[11px]">Dashboard</TabsTrigger>
+                                        <TabsTrigger value="metrics" className="text-[11px]">KPIs</TabsTrigger>
+                                        <TabsTrigger value="cost" className="text-[11px]">Cost Sim</TabsTrigger>
+                                        <TabsTrigger value="time" className="text-[11px]">Time Sim</TabsTrigger>
                                     </TabsList>
                                 </div>
 
                                 <div className="flex-1 min-h-0 overflow-hidden relative">
-                                    <TabsContent value="metrics" className="h-full m-0 p-4 pt-2 overflow-y-auto">
+                                    <TabsContent value="feasibility" className="h-full m-0 p-4 pt-2 overflow-y-auto scrollbar-thin">
+                                        <FeasibilityTab />
+                                    </TabsContent>
+                                    <TabsContent value="metrics" className="h-full m-0 p-4 pt-2 overflow-y-auto scrollbar-thin">
                                         <MetricsTab />
                                     </TabsContent>
-                                    <TabsContent value="feasibility" className="h-full m-0 p-4 pt-2 overflow-y-auto">
-                                        <FeasibilityTab />
+                                    <TabsContent value="cost" className="h-full m-0 p-4 pt-2 overflow-y-auto scrollbar-thin">
+                                        <CostSimulatorTab estimates={simEstimates} isLoading={simLoading} />
+                                    </TabsContent>
+                                    <TabsContent value="time" className="h-full m-0 p-4 pt-2 overflow-y-auto scrollbar-thin">
+                                        <TimeSimulatorTab estimates={simEstimates} isLoading={simLoading} />
                                     </TabsContent>
                                 </div>
                             </Tabs>

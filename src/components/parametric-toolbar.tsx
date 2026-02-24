@@ -439,7 +439,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                     </CardHeader>
                 )}
 
-                <div className={cn("flex-1 overflow-y-auto min-h-0", embedded ? "p-3 scrollbar-thin scrollbar-thumb-muted-foreground/20" : "p-3 space-y-4 scrollbar-thin scrollbar-thumb-muted-foreground/20")}>
+                <div className={cn("flex-1 overflow-y-auto overflow-x-hidden min-h-0", embedded ? "p-3 scrollbar-thin" : "p-3 space-y-4 scrollbar-thin")}>
                     {selectedPlot ? (
                         <div className="space-y-4">
                             {/* Generation Mode: Parametric Only */}
@@ -588,63 +588,6 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                 </div>
                             )}
 
-                            {/* Podium for Mixed-Use (Floor-wise: auto-podium; Plot-wise: slider) */}
-                            {landUse === 'mixed' && (
-                                <div className="p-3 bg-muted/20 border rounded-lg space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <Label className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider cursor-pointer" onClick={() => setHasPodium(!hasPodium)}>
-                                            Stepped / Podium Massing
-                                        </Label>
-                                        <input
-                                            type="checkbox"
-                                            checked={hasPodium}
-                                            onChange={(e) => setHasPodium(e.target.checked)}
-                                            className="h-3 w-3 accent-primary"
-                                        />
-                                    </div>
-
-                                    {hasPodium && (
-                                        <div className="space-y-3 pt-2">
-                                            {allocationMode === 'floor' && (
-                                                <p className="text-[9px] text-muted-foreground italic">
-                                                    Retail, Office, Institutional &amp; Hospitality floors form the podium automatically. Residential becomes the tower.
-                                                </p>
-                                            )}
-                                            {allocationMode === 'plot' && (
-                                                <div className="space-y-1">
-                                                    <div className="flex justify-between text-[10px]">
-                                                        <span className="text-muted-foreground">Podium Floors (Residential)</span>
-                                                        <span>{podiumFloors} floors</span>
-                                                    </div>
-                                                    <Slider
-                                                        value={[podiumFloors]}
-                                                        min={1}
-                                                        max={5}
-                                                        step={1}
-                                                        onValueChange={([val]) => setPodiumFloors(val)}
-                                                        className="[&_.relative]:h-1.5 [&_.absolute]:bg-primary/50 [&_span]:h-3 [&_span]:w-3"
-                                                    />
-                                                </div>
-                                            )}
-                                            <div className="space-y-1">
-                                                <div className="flex justify-between text-[10px]">
-                                                    <span className="text-muted-foreground">Upper Floor Reduction</span>
-                                                    <span>{upperFloorReduction}%</span>
-                                                </div>
-                                                <Slider
-                                                    value={[upperFloorReduction]}
-                                                    min={10}
-                                                    max={60}
-                                                    step={5}
-                                                    onValueChange={([val]) => setUpperFloorReduction(val)}
-                                                    className="[&_.relative]:h-1.5 [&_.absolute]:bg-primary/50 [&_span]:h-3 [&_span]:w-3"
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
                             {/* Unit Mix Allocation (Residential / Mixed Only) */}
                             {(landUse === 'residential' || landUse === 'mixed') && (
                                 <div className="p-3 bg-muted/20 border rounded-lg space-y-3">
@@ -676,7 +619,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                                     onValueChange={([val]) => setUnitMixConfig(prev => ({ ...prev, [type]: val }))}
                                                     className={cn(
                                                         "[&_.relative]:h-1.5 [&_span]:h-3 [&_span]:w-3",
-                                                        type === '1BHK' && "[&_.absolute]:bg-[#414141]",
+                                                        type === '1BHK' && "[&_.absolute]:bg-[#80BC65]",
                                                         type === '2BHK' && "[&_.absolute]:bg-[#1E90FF]",
                                                         type === '3BHK' && "[&_.absolute]:bg-[#DA70D6]",
                                                         type === '4BHK' && "[&_.absolute]:bg-[#FFD700]"
@@ -688,7 +631,61 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                 </div>
                             )}
 
+                            {/* Podium / Stepped Massing Controls (Residential) */}
+                            {landUse === 'residential' && (
+                                <div className="p-3 bg-muted/20 border rounded-lg space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider cursor-pointer" onClick={() => setHasPodium(!hasPodium)}>
+                                            Stepped / Podium Massing
+                                        </Label>
+                                        <input
+                                            type="checkbox"
+                                            checked={hasPodium}
+                                            onChange={(e) => setHasPodium(e.target.checked)}
+                                            className="h-3 w-3 accent-primary"
+                                        />
+                                    </div>
+
+                                    {hasPodium && (
+                                        <div className="space-y-3 pt-2">
+                                            <p className="text-[9px] text-muted-foreground italic">
+                                                Lower floors form the wide podium. Upper residential floors get a smaller footprint.
+                                            </p>
+                                            <div className="space-y-1">
+                                                <div className="flex justify-between text-[10px]">
+                                                    <span className="text-muted-foreground">Podium Floors</span>
+                                                    <span>{podiumFloors} floors</span>
+                                                </div>
+                                                <Slider
+                                                    value={[podiumFloors]}
+                                                    min={1}
+                                                    max={5}
+                                                    step={1}
+                                                    onValueChange={([val]) => setPodiumFloors(val)}
+                                                    className="[&_.relative]:h-1.5 [&_.absolute]:bg-primary/50 [&_span]:h-3 [&_span]:w-3"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <div className="flex justify-between text-[10px]">
+                                                    <span className="text-muted-foreground">Upper Floor Reduction</span>
+                                                    <span>{upperFloorReduction}%</span>
+                                                </div>
+                                                <Slider
+                                                    value={[upperFloorReduction]}
+                                                    min={10}
+                                                    max={60}
+                                                    step={5}
+                                                    onValueChange={([val]) => setUpperFloorReduction(val)}
+                                                    className="[&_.relative]:h-1.5 [&_.absolute]:bg-primary/50 [&_span]:h-3 [&_span]:w-3"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Program Allocations (Hidden for single use unless mixed) */}
+
                             {landUse === 'mixed' && (
                                 <div className="p-3 bg-muted/20 border rounded-lg space-y-3">
                                     <div className="space-y-2">
@@ -762,7 +759,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                                     />
                                                 </div>
 
-                                                {/* Hospitality (Replaces Open Space) */}
+                                                {/* Hospitality*/}
                                                 <div className="space-y-1">
                                                     <div className="flex justify-between text-[10px]">
                                                         <span className="text-muted-foreground">Hospitality</span>
@@ -788,7 +785,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                                         max={100}
                                                         step={5}
                                                         onValueChange={([v]) => setProgramMix(prev => ({ ...prev, institutional: v }))}
-                                                        className="[&_.relative]:h-1.5 [&_.absolute]:bg-purple-500 [&_span]:h-3 [&_span]:w-3"
+                                                        className="[&_.relative]:h-1.5 [&_.absolute]:bg-yellow-500 [&_span]:h-3 [&_span]:w-3"
                                                     />
                                                 </div>
                                             </div>
@@ -796,6 +793,64 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                     </div>
                                 </div>
                             )}
+
+                            {/* Podium for Mixed-Use (Floor-wise: auto-podium; Plot-wise: slider) */}
+                            {landUse === 'mixed' && (
+                                <div className="p-3 bg-muted/20 border rounded-lg space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider cursor-pointer" onClick={() => setHasPodium(!hasPodium)}>
+                                            Stepped / Podium Massing
+                                        </Label>
+                                        <input
+                                            type="checkbox"
+                                            checked={hasPodium}
+                                            onChange={(e) => setHasPodium(e.target.checked)}
+                                            className="h-3 w-3 accent-primary"
+                                        />
+                                    </div>
+
+                                    {hasPodium && (
+                                        <div className="space-y-3 pt-2">
+                                            {allocationMode === 'floor' && (
+                                                <p className="text-[11px] text-muted-foreground italic">
+                                                    Retail, Office, Institutional &amp; Hospitality floors form the podium automatically. Residential becomes the tower.
+                                                </p>
+                                            )}
+                                            {allocationMode === 'plot' && (
+                                                <div className="space-y-1">
+                                                    <div className="flex justify-between text-[10px]">
+                                                        <span className="text-muted-foreground">Podium Floors (Residential)</span>
+                                                        <span>{podiumFloors} floors</span>
+                                                    </div>
+                                                    <Slider
+                                                        value={[podiumFloors]}
+                                                        min={1}
+                                                        max={5}
+                                                        step={1}
+                                                        onValueChange={([val]) => setPodiumFloors(val)}
+                                                        className="[&_.relative]:h-1.5 [&_.absolute]:bg-primary/50 [&_span]:h-3 [&_span]:w-3"
+                                                    />
+                                                </div>
+                                            )}
+                                            <div className="space-y-1">
+                                                <div className="flex justify-between text-[10px]">
+                                                    <span className="text-muted-foreground">Upper Floor Reduction</span>
+                                                    <span>{upperFloorReduction}%</span>
+                                                </div>
+                                                <Slider
+                                                    value={[upperFloorReduction]}
+                                                    min={10}
+                                                    max={60}
+                                                    step={5}
+                                                    onValueChange={([val]) => setUpperFloorReduction(val)}
+                                                    className="[&_.relative]:h-1.5 [&_.absolute]:bg-primary/50 [&_span]:h-3 [&_span]:w-3"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
 
                             {/* --- SECTION: Site Layout --- */}
                             <div className="flex items-center gap-2 pt-2 pb-1">

@@ -57,7 +57,7 @@ export function SimulationTab({
                 </CardTitle>
             </CardHeader>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin scrollbar-thumb-muted-foreground/20">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 p-3 space-y-4 scrollbar-thin">
                 {/* Master Toggle */}
                 <div className="flex items-center justify-between bg-muted/20 p-3 rounded-lg border">
                     <Label className="font-medium text-sm">Enable Simulator</Label>
@@ -66,56 +66,73 @@ export function SimulationTab({
 
                 {enabled ? (
                     <div className="space-y-6 animate-in fade-in duration-300">
-                        {/* Conditional Controls - Hide if mode is 'none' */}
-                        {analysisMode !== 'none' ? (
-                            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-500">
-                                {/* Time of Day - Hide for Sun Hours */}
-                                {analysisMode !== 'sun-hours' && (
-                                    <div className="space-y-3">
-                                        <div className="flex justify-between text-xs">
-                                            <Label className="text-muted-foreground font-medium uppercase tracking-wider">Time of Day</Label>
-                                            <span className="font-mono text-foreground">{date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                        </div>
-                                        <Slider
-                                            min={6}
-                                            max={18}
-                                            step={0.25}
-                                            value={[timeVal]}
-                                            onValueChange={handleTimeChange}
-                                            className="cursor-pointer [&_.relative]:h-2 [&_.absolute]:bg-orange-500/20 [&_span]:border-orange-500/50"
-                                        />
-                                        <div className="flex justify-between text-[10px] text-muted-foreground/50 uppercase font-medium">
-                                            <span>Sunrise</span>
-                                            <span>Noon</span>
-                                            <span>Sunset</span>
-                                        </div>
-                                    </div>
-                                )}
+                        {analysisMode !== 'none' ? (() => {
+                            // Mode → which controls to show
+                            // sun-hours: seasonal variation, month matters; time not relevant (integrates all day)
+                            // daylight: both month (sun angle) and time (sky condition) matter
+                            // wind: time of day matters (ABL profile); month less so for today's analysis
+                            // energy: month drives heating/cooling degree days; no real-time variation
+                            // mobility: time of day (peak/off-peak); month less relevant
+                            // resilience: purely structural+seismic — no time or month dependency
+                            const showMonth = ['sun-hours', 'daylight', 'energy'].includes(analysisMode);
+                            const showTime  = ['daylight', 'wind', 'mobility'].includes(analysisMode);
 
-                                {/* Month Slider */}
-                                <div className="space-y-3">
-                                    <div className="flex justify-between text-xs">
-                                        <Label className="text-muted-foreground font-medium uppercase tracking-wider">Month</Label>
-                                        <span className="font-mono text-foreground">{date.toLocaleDateString([], { month: 'long' })}</span>
-                                    </div>
-                                    <Slider
-                                        min={0}
-                                        max={11}
-                                        step={1}
-                                        value={[date.getMonth()]}
-                                        onValueChange={handleMonthChange}
-                                        className="cursor-pointer [&_.relative]:h-2 [&_.absolute]:bg-blue-500/20 [&_span]:border-blue-500/50"
-                                    />
-                                    <div className="flex justify-between text-[10px] text-muted-foreground/50 uppercase font-medium">
-                                        <span>Jan</span>
-                                        <span>Jun</span>
-                                        <span>Dec</span>
-                                    </div>
+                            return (
+                                <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-500">
+                                    {showTime && (
+                                        <div className="space-y-3">
+                                            <div className="flex justify-between text-xs">
+                                                <Label className="text-muted-foreground font-medium uppercase tracking-wider">Time of Day</Label>
+                                                <span className="font-mono text-foreground">{date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            </div>
+                                            <Slider
+                                                min={6}
+                                                max={18}
+                                                step={0.25}
+                                                value={[timeVal]}
+                                                onValueChange={handleTimeChange}
+                                                className="cursor-pointer [&_.relative]:h-2 [&_.absolute]:bg-orange-500/20 [&_span]:border-orange-500/50"
+                                            />
+                                            <div className="flex justify-between text-[10px] text-muted-foreground/50 uppercase font-medium">
+                                                <span>Sunrise</span>
+                                                <span>Noon</span>
+                                                <span>Sunset</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {showMonth && (
+                                        <div className="space-y-3">
+                                            <div className="flex justify-between text-xs">
+                                                <Label className="text-muted-foreground font-medium uppercase tracking-wider">Month</Label>
+                                                <span className="font-mono text-foreground">{date.toLocaleDateString([], { month: 'long' })}</span>
+                                            </div>
+                                            <Slider
+                                                min={0}
+                                                max={11}
+                                                step={1}
+                                                value={[date.getMonth()]}
+                                                onValueChange={handleMonthChange}
+                                                className="cursor-pointer [&_.relative]:h-2 [&_.absolute]:bg-blue-500/20 [&_span]:border-blue-500/50"
+                                            />
+                                            <div className="flex justify-between text-[10px] text-muted-foreground/50 uppercase font-medium">
+                                                <span>Jan</span>
+                                                <span>Jun</span>
+                                                <span>Dec</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {!showTime && !showMonth && (
+                                        <div className="py-3 px-3 rounded-md bg-muted/10 border border-border/40 text-[10px] text-muted-foreground italic text-center">
+                                            Resilience is based on static seismic hazard — no time controls needed.
+                                        </div>
+                                    )}
+
+                                    <div className="my-2 border-t border-border/50" />
                                 </div>
-                                {/* Divider */}
-                                <div className="my-2 border-t border-border/50" />
-                            </div>
-                        ) : (
+                            );
+                        })() : (
                             <div className="py-4 text-center text-[10px] text-muted-foreground italic bg-muted/5 rounded-md border border-dashed">
                                 Select an analysis layer below to adjust parameters
                             </div>
@@ -128,12 +145,12 @@ export function SimulationTab({
                             <div className="grid grid-cols-2 gap-2">
                                 {[
                                     { id: 'none', label: 'None', tool: '' },
-                                    { id: 'sun-hours', label: 'Sun Hours', tool: 'Radiance/Ladybug' },
-                                    { id: 'daylight', label: 'Daylight', tool: 'Radiance/Honeybee' },
-                                    { id: 'wind', label: 'Wind / CFD', tool: 'OpenFOAM' },
-                                    { id: 'energy', label: 'Energy', tool: 'EnergyPlus/OpenStudio' },
-                                    { id: 'mobility', label: 'Mobility', tool: 'SUMO/MATSim' },
-                                    { id: 'resilience', label: 'Resilience', tool: 'OpenQuake' }
+                                    { id: 'sun-hours', label: 'Sun Hours' },
+                                    { id: 'daylight', label: 'Daylight' },
+                                    { id: 'wind', label: 'Wind / CFD' },
+                                    { id: 'energy', label: 'Energy' }
+                                    // { id: 'mobility', label: 'Mobility' },
+                                    // { id: 'resilience', label: 'Resilience' }
                                 ].map((m) => (
                                     <button
                                         key={m.id}
@@ -163,6 +180,10 @@ export function SimulationTab({
                             {/* Legend Section */}
                             {analysisMode !== 'none' && (
                                 <div className="space-y-3 bg-muted/10 p-3 rounded-md border border-border/50 animate-in zoom-in-95 duration-300">
+                                    <div className="flex items-center gap-1.5 mb-2">
+                                        <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                                        <span className="text-[10px] font-semibold text-green-600 uppercase tracking-wider">Live Weather Data</span>
+                                    </div>
                                     {activeGreenRegulations && activeGreenRegulations.length > 0 ? (
                                         <>
                                             <div className="flex items-center justify-between">
@@ -238,7 +259,55 @@ export function SimulationTab({
                                                                 </div>
                                                             </>
                                                         )}
-                                                        {!['sun-hours', 'daylight', 'wind'].includes(analysisMode) && (
+                                                        {analysisMode === 'energy' && (
+                                                            <>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-3 h-3 rounded-sm bg-[#3b82f6] shadow-sm" />
+                                                                    <span>Efficient (&lt; 120 kWh/m²/yr)</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-3 h-3 rounded-sm bg-[#f59e0b] shadow-sm" />
+                                                                    <span>Average (120-200 kWh/m²/yr)</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-3 h-3 rounded-sm bg-[#ef4444] shadow-sm" />
+                                                                    <span>High EUI (&gt; 200 kWh/m²/yr)</span>
+                                                                </div>
+                                                            </>
+                                                        )}
+                                                        {analysisMode === 'mobility' && (
+                                                            <>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-3 h-3 rounded-sm bg-[#22c55e] shadow-sm" />
+                                                                    <span>Low Traffic (&lt; 50 trips/day)</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-3 h-3 rounded-sm bg-[#f59e0b] shadow-sm" />
+                                                                    <span>Moderate (50-200 trips/day)</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-3 h-3 rounded-sm bg-[#ef4444] shadow-sm" />
+                                                                    <span>High Traffic (&gt; 200 trips/day)</span>
+                                                                </div>
+                                                            </>
+                                                        )}
+                                                        {analysisMode === 'resilience' && (
+                                                            <>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-3 h-3 rounded-sm bg-[#10b981] shadow-sm" />
+                                                                    <span>High Resilience (80-100)</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-3 h-3 rounded-sm bg-[#f59e0b] shadow-sm" />
+                                                                    <span>Moderate (60-80)</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-3 h-3 rounded-sm bg-[#ef4444] shadow-sm" />
+                                                                    <span>Vulnerable (&lt; 60)</span>
+                                                                </div>
+                                                            </>
+                                                        )}
+                                                        {!['sun-hours', 'daylight', 'wind', 'energy', 'mobility', 'resilience'].includes(analysisMode) && (
                                                             <p className="text-muted-foreground italic">Compliance check not supported for this mode.</p>
                                                         )}
                                                     </div>
@@ -248,22 +317,23 @@ export function SimulationTab({
                                     ) : (
                                         <>
                                             <div className="flex justify-between text-[10px] font-medium text-muted-foreground uppercase tracking-widest">
-                                                <span>{analysisMode === 'resilience' ? 'High Impact' : analysisMode === 'energy' ? 'Low EUI' : 'Low Impact'}</span>
-                                                <span>{analysisMode === 'resilience' ? 'Low Impact' : analysisMode === 'energy' ? 'High EUI' : 'High Impact'}</span>
+                                                <span>{analysisMode === 'resilience' ? 'Vulnerable' : analysisMode === 'energy' ? 'Efficient' : analysisMode === 'mobility' ? 'Low Traffic' : 'Low'}</span>
+                                                <span>{analysisMode === 'resilience' ? 'Resilient' : analysisMode === 'energy' ? 'High EUI' : analysisMode === 'mobility' ? 'High Traffic' : 'High'}</span>
                                             </div>
                                             <div className={cn(
                                                 "h-2.5 w-full rounded-full shadow-inner",
-                                                analysisMode === 'mobility' ? "bg-gradient-to-r from-blue-500 via-cyan-500 to-purple-500" :
+                                                analysisMode === 'energy' ? "bg-gradient-to-r from-blue-500 via-amber-500 to-red-600" :
+                                                analysisMode === 'mobility' ? "bg-gradient-to-r from-green-500 via-amber-500 to-red-500" :
                                                 analysisMode === 'resilience' ? "bg-gradient-to-r from-red-500 via-amber-500 to-green-500" :
                                                 "bg-gradient-to-r from-blue-600 via-green-500 to-red-500"
                                             )} />
                                             <p className="text-[10px] text-center text-muted-foreground pt-1 italic">
-                                                {analysisMode === 'sun-hours' && "Cumulative sun exposure over the day (Radiance/Ladybug)"}
-                                                {analysisMode === 'daylight' && "Visibility of the sky from surface (Radiance/Honeybee)"}
-                                                {analysisMode === 'wind' && "Wind pressure from prevailing direction (OpenFOAM)"}
-                                                {analysisMode === 'energy' && "Estimated Energy Use Intensity (EnergyPlus/OpenStudio)"}
-                                                {analysisMode === 'mobility' && "Projected traffic generation & flow (SUMO/MATSim)"}
-                                                {analysisMode === 'resilience' && "Seismic Vulnerability & Resilience Score (OpenQuake)"}
+                                                {analysisMode === 'sun-hours' && "Direct sun hours per day using NOAA solar positions with shadow casting"}
+                                                {analysisMode === 'daylight' && "Daylight Factor (DF) with Sky View Factor & CIE clear sky model"}
+                                                {analysisMode === 'wind' && "ABL power law wind profile with Venturi effect & wake sheltering"}
+                                                {analysisMode === 'energy' && "ASHRAE 90.1 baseline EUI with climate zone, compactness & solar heat gain"}
+                                                {analysisMode === 'mobility' && "ITE Trip Generation Manual rates by use type with transit proximity reduction"}
+                                                {analysisMode === 'resilience' && "GSHAP seismic hazard x structural fragility (IS 1893 criteria)"}
                                             </p>
                                         </>
                                     )}

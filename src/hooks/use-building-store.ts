@@ -1541,8 +1541,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     }
 
                     const isPodiumCandidate = params.hasPodium && actualPodiumFloors !== undefined && actualPodiumFloors > 0 && floors > actualPodiumFloors && (
-                        // Non-mixed landuse (commercial, institutional): existing types
-                        (params.landUse !== 'mixed' && (intendedUse === BuildingIntendedUse.Commercial || intendedUse === BuildingIntendedUse.Industrial || intendedUse === BuildingIntendedUse.Public)) ||
+                        // Non-mixed landuse (commercial, institutional, residential)
+                        (params.landUse !== 'mixed' && (intendedUse === BuildingIntendedUse.Commercial || intendedUse === BuildingIntendedUse.Industrial || intendedUse === BuildingIntendedUse.Public || intendedUse === BuildingIntendedUse.Residential)) ||
                         // Mixed floor-wise: auto-split MixedUse building
                         (params.landUse === 'mixed' && params.allocationMode === 'floor' && intendedUse === BuildingIntendedUse.MixedUse) ||
                         // Mixed plot-wise: ONLY residential buildings get podium treatment
@@ -1601,17 +1601,26 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                         const towerUnitMix = params.unitMix || activeProject?.feasibilityParams?.unitMix || DEFAULT_FEASIBILITY_PARAMS.unitMix;
                         const towerAlignRotForLayout = (towerGeometry as any).properties?.alignmentRotation ?? f.properties?.alignmentRotation ?? 0;
+
+                        // For floor-wise mixed-use: tower always contains Residential floors,
+                        // so force Residential intendedUse so proper BHK units are generated.
+                        const isFloorWiseMixed = params.landUse === 'mixed' && params.allocationMode === 'floor';
+                        const towerIntendedUse = isFloorWiseMixed ? BuildingIntendedUse.Residential : intendedUse;
+
                         const towerLayoutResult = generateBuildingLayout(towerGeometry, {
                             subtype: f.properties?.subtype || params.typology,
                             unitMix: towerUnitMix,
-                            intendedUse: intendedUse,
+                            intendedUse: towerIntendedUse,
                             alignmentRotation: towerAlignRotForLayout
                         });
 
-                        const multiplyUnits = (floors: Floor[], baseLayout: any) => {
+                        // Multiply units across floors — only on Residential floors for floor-wise mixed use
+                        const multiplyUnits = (floors: Floor[], baseLayout: any, residentialOnly = false) => {
                             const units: Unit[] = [];
                             floors.forEach(floor => {
                                 if ((floor.level !== undefined && floor.level < 0) || floor.type === 'Parking' || floor.type === 'Utility') return;
+                                // Skip non-residential floors when residentialOnly is true
+                                if (residentialOnly && floor.intendedUse !== BuildingIntendedUse.Residential) return;
                                 (baseLayout.units || []).forEach((u: Unit) => units.push({ ...u, id: `${floor.id}-u-${u.id}`, floorId: floor.id }));
                             });
                             return units;
@@ -1620,14 +1629,15 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         const podiumFloorsArray = buildingSpecificFloors.slice(0, pFloors);
                         const towerFloorsArray = buildingSpecificFloors.slice(pFloors).map(fl => ({ ...fl, id: `floor-${id}-tower-${fl.level || fl.id}` }));
 
-                        const podiumUnits = multiplyUnits(podiumFloorsArray, layout);
-                        const towerUnits = multiplyUnits(towerFloorsArray, towerLayoutResult);
-
                         const alignRot = f.properties?.alignmentRotation ?? 0;
+
+                        // Podium: non-residential use (Retail/Public/Hospitality) — no BHK units
+                        const podiumIntendedUse = isFloorWiseMixed ? BuildingIntendedUse.MixedUse : intendedUse;
                         const podiumBuilding: Building = {
                             ...baseBuildingProps,
+                            intendedUse: podiumIntendedUse,
                             cores: layout.cores || [],
-                            units: multiplyUnits(podiumFloorsArray, layout),
+                            units: isFloorWiseMixed ? [] : multiplyUnits(podiumFloorsArray, layout),
                             id: `${id}-podium`,
                             name: `Building ${i + 1} (Podium)`,
                             geometry: f,
@@ -1638,14 +1648,17 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             baseHeight: 0,
                             floors: podiumFloorsArray,
                             alignmentRotation: alignRot,
-                            totalFloors: floors, // record combined total so tower can stay in sync
+                            totalFloors: floors,
                         } as Building;
                         
                         const towerAlignRot = (towerGeometry as any).properties?.alignmentRotation ?? alignRot;
+
+                        // Tower: always Residential for floor-wise mixed-use — generate BHK units
                         const towerBuilding: Building = {
                             ...baseBuildingProps,
+                            intendedUse: towerIntendedUse,
                             cores: towerLayoutResult.cores || [],
-                            units: multiplyUnits(towerFloorsArray, towerLayoutResult),
+                            units: multiplyUnits(towerFloorsArray, towerLayoutResult, isFloorWiseMixed),
                             id: `${id}-tower`,
                             name: `Building ${i + 1} (Tower)`,
                             geometry: towerGeometry,
@@ -2128,9 +2141,12 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             }
                         }
 
-                        // 2. Subtract Internal Utilities (Iteratively)
+                        // 2. Subtract Ground-Level Utilities only (Iteratively)
+                        // Basement utilities (level < 0) are underground — they don't occupy surface space
+                        // so their footprints should NOT create holes in the green area above them.
                         for (const utility of plotClone.utilityAreas) {
                             if (utility.name?.includes('Peripheral Road')) continue;
+                            if (utility.level !== undefined && utility.level < 0) continue; // Skip basement utilities
                             if (utility.geometry && remainingGeom) {
                                 remainingGeom = robustSubtract(remainingGeom, utility.geometry, `Utility ${utility.name}`);
                             }
@@ -4107,7 +4123,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         ...plot.buildings,
                         ...plot.greenAreas,
                         ...plot.parkingAreas,
-                        ...plot.buildableAreas
+                        ...plot.buildableAreas,
+                        ...plot.utilityAreas
                     ];
                     targetObject = allObjects.find(obj => obj.id === objectId);
                 }

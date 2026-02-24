@@ -72,7 +72,21 @@ function PlotItem({ plot }: { plot: import('@/lib/types').Plot }) {
                     <span>{obj.name}</span>
                     {info}
                 </button>
-                <div className="flex items-center">
+                <div className="flex items-center gap-1">
+                    {type === 'UtilityArea' && obj.level !== undefined && obj.level < 0 && (
+                        <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                actions.toggleObjectVisibility(plot.id, obj.id, type);
+                            }}
+                            title={obj.visible !== false ? "Hide Basement Utility" : "Show Basement Utility"}
+                        >
+                            {obj.visible !== false ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4 text-muted-foreground" />}
+                        </Button>
+                    )}
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => actions.deleteObject(plot.id, obj.id, type)}>
                         <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
@@ -213,10 +227,10 @@ function PlotItem({ plot }: { plot: import('@/lib/types').Plot }) {
                     {plot.greenAreas.map(g => renderObject(g, 'GreenArea'))}
                     {(plot.entries || []).map(e => renderObject(e, 'EntryPoint'))}
                     {plot.parkingAreas.map(p => renderObject(p, 'ParkingArea'))}
-                    {(plot.roads || []).map(r => renderObject(r, 'UtilityArea'))}
+
                     {plot.utilityAreas.map(u => renderObject(u, 'UtilityArea'))}
 
-                    {plot.buildings.length === 0 && plot.greenAreas.length === 0 && plot.parkingAreas.length === 0 && buildableAreas.length === 0 && plot.utilityAreas.length === 0 && (plot.roads || []).length === 0 && (
+                    {plot.buildings.length === 0 && plot.greenAreas.length === 0 && plot.parkingAreas.length === 0 && buildableAreas.length === 0 && plot.utilityAreas.length === 0 && (
                         <p className='text-xs text-center text-muted-foreground p-2'>This plot is empty.</p>
                     )}
                 </div>
