@@ -112,5 +112,4 @@ out.txt
 sisdp_vec1_layers.txt
 src/hooks/use-building-store.ts.new.ts
 src/hooks/use-building-store.ts.ring.ts
-src/lib/vastu-utils.ts
 wms_bhuvan.xml

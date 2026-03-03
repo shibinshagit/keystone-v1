@@ -300,7 +300,7 @@ function BuildingProperties() {
                                             </span>
                                         </div>
                                     )}
-                                    {totalOccupiableUnits > 0 && (
+                                    {/* {totalOccupiableUnits > 0 && (
                                         <div className="pl-5 text-muted-foreground/80 text-[10px] space-y-0.5">
                                             {unitTypeStrings.map((str, idx) => (
                                                 <div key={idx} className="flex items-center gap-1.5">
@@ -309,7 +309,7 @@ function BuildingProperties() {
                                                 </div>
                                             ))}
                                         </div>
-                                    )}
+                                    )} */}
                                 </div>
                             </div>
                         )}

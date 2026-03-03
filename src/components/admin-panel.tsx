@@ -180,7 +180,8 @@ export function AdminPanel() {
         if (!selectedRegulation) return;
         setIsSaving(true);
         try {
-            const docRef = doc(regulationsCollection, `${selectedRegulation.location}-${selectedRegulation.type}`);
+            const docId = `${selectedRegulation.location}-${selectedRegulation.type}`.replace(/\s+/g, '-');
+            const docRef = doc(regulationsCollection, docId);
             await setDoc(docRef, selectedRegulation, { merge: true });
 
             setRegulations(prevRegs => prevRegs.map(reg =>
@@ -200,7 +201,7 @@ export function AdminPanel() {
 
     const handleCreateRegulation = async (location: string, type: string) => {
         setIsSaving(true);
-        const docId = `${location}-${type}`;
+        const docId = `${location}-${type}`.replace(/\s+/g, '-');
         if (regulations.some(reg => `${reg.location}-${reg.type}` === docId)) {
             toast({ variant: 'destructive', title: 'Error', description: 'This regulation already exists.' });
             setIsSaving(false);
@@ -229,7 +230,7 @@ export function AdminPanel() {
     };
 
     const handleDeleteRegulation = async (location: string, type: string) => {
-        const docId = `${location}-${type}`;
+        const docId = `${location}-${type}`.replace(/\s+/g, '-');
         setDeletingId(docId);
         try {
             await deleteDoc(doc(regulationsCollection, docId));
@@ -245,6 +246,32 @@ export function AdminPanel() {
             setDeletingId(null);
         }
     }
+
+    const handleDeleteLocation = async (location: string) => {
+        const locationRegulations = groupedRegulations[location];
+        if (!locationRegulations || locationRegulations.length === 0) return;
+
+        setDeletingId(location);
+        try {
+            const batch = writeBatch(db);
+            locationRegulations.forEach(reg => {
+                const docId = `${reg.location}-${reg.type}`.replace(/\s+/g, '-');
+                batch.delete(doc(regulationsCollection, docId));
+            });
+            await batch.commit();
+
+            setRegulations(prev => prev.filter(reg => reg.location !== location));
+            if (selectedRegulation?.location === location) {
+                setSelectedRegulation(null);
+            }
+            toast({ title: 'Success', description: `All regulations for ${location} deleted successfully.` });
+        } catch (error) {
+            console.error("Error deleting location regulations:", error);
+            toast({ variant: 'destructive', title: 'Error', description: 'Could not delete regulations.' });
+        } finally {
+            setDeletingId(null);
+        }
+    };
 
     const handleExtractedRegulation = async (extractedDataArray: Partial<RegulationData>[]) => {
         if (!extractedDataArray || extractedDataArray.length === 0) {
@@ -413,16 +440,51 @@ export function AdminPanel() {
                                         <Accordion type="single" collapsible className="w-full space-y-4">
                                             {Object.entries(groupedRegulations).map(([location, locationRegulations]) => (
                                                 <AccordionItem value={location} key={location} className="border rounded-lg bg-card px-4">
-                                                    <AccordionTrigger className="hover:no-underline py-4">
-                                                        <div className="flex items-center gap-4">
-                                                            <span className="text-xl font-semibold text-primary">{location}</span>
-                                                            <Badge variant="secondary" className="ml-2">{locationRegulations.length} Types</Badge>
+                                                    <AccordionTrigger className="hover:no-underline py-4 group">
+                                                        <div className="flex items-center justify-between w-full pr-4">
+                                                            <div className="flex items-center gap-4">
+                                                                <span className="text-xl font-semibold text-primary">{location}</span>
+                                                                <Badge variant="secondary" className="ml-2">{locationRegulations.length} Types</Badge>
+                                                            </div>
+                                                            <AlertDialog>
+                                                                <AlertDialogTrigger asChild>
+                                                                    <Button 
+                                                                        variant="ghost" 
+                                                                        size="icon" 
+                                                                        className="h-8 w-8 text-destructive/50 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                        onClick={(e) => e.stopPropagation()}
+                                                                        disabled={deletingId === location}
+                                                                    >
+                                                                        {deletingId === location ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                                                    </Button>
+                                                                </AlertDialogTrigger>
+                                                                <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                                                                    <AlertDialogHeader>
+                                                                        <AlertDialogTitle>Delete all regulations for {location}?</AlertDialogTitle>
+                                                                        <AlertDialogDescription>
+                                                                            This will permanently delete all {locationRegulations.length} regulation types for this location. This action cannot be undone.
+                                                                        </AlertDialogDescription>
+                                                                    </AlertDialogHeader>
+                                                                    <AlertDialogFooter>
+                                                                        <AlertDialogCancel onClick={(e) => e.stopPropagation()}>Cancel</AlertDialogCancel>
+                                                                        <AlertDialogAction 
+                                                                            className="bg-destructive hover:bg-destructive/90"
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleDeleteLocation(location);
+                                                                            }}
+                                                                        >
+                                                                            Delete All
+                                                                        </AlertDialogAction>
+                                                                    </AlertDialogFooter>
+                                                                </AlertDialogContent>
+                                                            </AlertDialog>
                                                         </div>
                                                     </AccordionTrigger>
                                                     <AccordionContent className="pt-2 pb-6">
                                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pt-4">
                                                             {locationRegulations.map(reg => {
-                                                                const docId = `${reg.location}-${reg.type}`;
+                                                                const docId = `${reg.location}-${reg.type}`.replace(/\s+/g, '-');
                                                                 const isDeleting = deletingId === docId;
                                                                 return (
                                                                     <Card
@@ -442,7 +504,6 @@ export function AdminPanel() {
                                                                                     <AlertDialogContent>
                                                                                         <AlertDialogHeader>
                                                                                             <AlertDialogTitle>Delete {reg.type}?</AlertDialogTitle>
-                                                                                            <AlertDialogTitle>Delete {reg.type} regulation?</AlertDialogTitle>
                                                                                             <AlertDialogDescription>
                                                                                                 This will permanently delete the regulation for {reg.location} - {reg.type}.
                                                                                             </AlertDialogDescription>
