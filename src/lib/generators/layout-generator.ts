@@ -666,7 +666,7 @@ export function generateBuildingLayout(
     } catch (e) {
         console.warn('Failed to place Rooftop Solar PV', e);
     }
-
+    }
     // EV Charging
     const isTowerBuilding = params.buildingId?.includes('-tower');
     if (!isTowerBuilding && shouldInclude('EV Charging')) {

@@ -23,90 +23,103 @@ export const OverpassPlacesService = {
 
         const [lng, lat] = center;
 
-        // category
-        const queryParts = categoryList.map(cat => {
-            let osmFilter = '';
-            switch (cat) {
-                case 'school': osmFilter = `["amenity"~"school|kindergarten"]`; break; 
-                case 'college': osmFilter = `["amenity"~"college|university"]`; break;
-                case 'hospital': osmFilter = `["amenity"~"hospital|clinic|doctors|pharmacy"]`; break;
-                case 'transit': osmFilter = `["public_transport"~"station"]`; break;
-                case 'park': osmFilter = `["leisure"~"park|garden|playground"]`; break;
-                case 'restaurant': osmFilter = `["amenity"~"restaurant|cafe|fast_food"]`; break;
-                case 'shopping': osmFilter = `["shop"~"supermarket|convenience"]`; break;
-                case 'mall': osmFilter = `["shop"~"mall|department_store"]`; break;
-                case 'atm': osmFilter = `["amenity"~"^(atm|bank)$"]`; break; 
-                case 'petrol_pump': osmFilter = `["amenity"="fuel"]`; break;
-                default: return '';
-            }
+        const SERVERS = [
+            'https://overpass-api.de/api/interpreter',
+            'https://lz4.overpass-api.de/api/interpreter',
+            'https://overpass.kumi.systems/api/interpreter',
+        ];
+        const BATCH_SIZE = 2; // categories per HTTP request
 
-            if (cat === 'transit') {
+        /** Build the Overpass QL body for a subset of categories */
+        const buildQueryParts = (cats: AmenityCategory[]): string =>
+            cats.map(cat => {
+                if (cat === 'transit') {
+                    return `
+                      node["railway"~"station|halt"](around:${radius},${lat},${lng});
+                      way["railway"~"station|halt"](around:${radius},${lat},${lng});
+                      node["station"~"subway|light_rail"](around:${radius},${lat},${lng});
+                      node["aeroway"="aerodrome"](around:${radius},${lat},${lng});
+                      way["aeroway"="aerodrome"](around:${radius},${lat},${lng});
+                      node["amenity"="bus_station"](around:${radius},${lat},${lng});
+                    `;
+                }
+                const filterMap: Record<string, string> = {
+                    school:      `["amenity"~"school|kindergarten"]`,
+                    college:     `["amenity"~"college|university"]`,
+                    hospital:    `["amenity"~"hospital|clinic|doctors|pharmacy"]`,
+                    park:        `["leisure"~"park|garden|playground"]`,
+                    restaurant:  `["amenity"~"restaurant|cafe|fast_food"]`,
+                    shopping:    `["shop"~"supermarket|convenience"]`,
+                    mall:        `["shop"~"mall|department_store"]`,
+                    atm:         `["amenity"~"^(atm|bank)$"]`,
+                    petrol_pump: `["amenity"="fuel"]`,
+                };
+                const f = filterMap[cat];
+                if (!f) return '';
                 return `
-                  node["railway"~"station|halt"](around:${radius},${lat},${lng});
-                  way["railway"~"station|halt"](around:${radius},${lat},${lng});
-                  node["station"~"subway|light_rail"](around:${radius},${lat},${lng});
-                  node["aeroway"="aerodrome"](around:${radius},${lat},${lng}); 
-                  way["aeroway"="aerodrome"](around:${radius},${lat},${lng});
-                  node["amenity"="bus_station"](around:${radius},${lat},${lng});
-                  // relation["public_transport"="stop_area"](around:${radius},${lat},${lng});
+                  node${f}(around:${radius},${lat},${lng});
+                  way${f}(around:${radius},${lat},${lng});
+                  relation${f}(around:${radius},${lat},${lng});
                 `;
-            }
+            }).join('\n');
 
-            if (!osmFilter) return '';
+        /** Fetch one batch, trying each mirror in turn */
+        const fetchBatch = async (cats: AmenityCategory[]): Promise<any[]> => {
+            const parts = buildQueryParts(cats);
+            if (!parts.trim()) return [];
 
-            return `
-              node${osmFilter}(around:${radius},${lat},${lng});
-              way${osmFilter}(around:${radius},${lat},${lng});
-              relation${osmFilter}(around:${radius},${lat},${lng});
-            `;
-        }).join('\n');
+            const query = `[out:json][timeout:30];\n(\n${parts}\n);\nout center;`;
+            const encoded = encodeURIComponent(query);
 
-        const query = `
-            [out:json][timeout:90];
-            (
-              ${queryParts}
-            );
-            out center;
-        `;
-
-        const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-        console.log(`[OverpassService] Fetching amenities nearby...`);
-
-        try {
-            const response = await fetch(url);
-            if (!response.ok) {
-                if (response.status === 429) {
-                    console.warn("[OverpassService] Rate limit hit. Waiting...");
-                    throw new Error("Overpass API Rate Limit (429). Please try again in a minute.");
+            for (let i = 0; i < SERVERS.length; i++) {
+                const url = `${SERVERS[i]}?data=${encoded}`;
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        console.warn(`[OverpassService] Server ${i + 1} returned ${response.status} for batch [${cats.join(',')}]`);
+                        continue;
+                    }
+                    const contentType = response.headers.get('content-type') ?? '';
+                    if (!contentType.includes('application/json')) {
+                        console.warn(`[OverpassService] Server ${i + 1} returned non-JSON for batch [${cats.join(',')}]`);
+                        continue;
+                    }
+                    const data = await response.json();
+                    return data.elements ?? [];
+                } catch (err) {
+                    console.warn(`[OverpassService] Server ${i + 1} error for batch [${cats.join(',')}]:`, err);
                 }
-                throw new Error(`Overpass API error: ${response.status}`);
             }
+            console.error(`[OverpassService] All servers failed for batch [${cats.join(',')}]`);
+            return [];
+        };
 
-            const contentType = response.headers.get("content-type");
-            let data: any;
-            
-            try {
-                if (contentType && !contentType.includes("application/json")) {
-                    const text = await response.text();
-                    console.error(`[OverpassService] Expected JSON but received ${contentType}. Body starts with: ${text.substring(0, 100)}`);
-                    throw new Error(`Overpass API returned non-JSON response (${contentType})`);
-                }
-                data = await response.json();
-            } catch (e) {
-                const text = await response.clone().text().catch(() => "Could not read body");
-                console.error(`[OverpassService] Failed to parse JSON response. Body starts with: ${text.substring(0, 100)}`);
-                throw new Error(`Failed to parse Overpass API response as JSON: ${e instanceof Error ? e.message : String(e)}`);
-            }
+        // Split into batches and run in parallel
+        const batches: AmenityCategory[][] = [];
+        for (let i = 0; i < categoryList.length; i += BATCH_SIZE) {
+            batches.push(categoryList.slice(i, i + BATCH_SIZE));
+        }
 
-            const elements = data.elements || [];
-            console.log(`[OverpassService] Found ${elements.length} elements total.`);
+        console.log(`[OverpassService] Fetching ${categoryList.length} categories in ${batches.length} batch(es)…`);
+        const batchResults = await Promise.all(batches.map(fetchBatch));
+        const elements: any[] = batchResults.flat();
+        console.log(`[OverpassService] Found ${elements.length} elements total.`);
 
-            return elements.map((el: any) => {
-                const elLat = el.lat || el.center?.lat;
-                const elLng = el.lon || el.center?.lon;
+        // Deduplicate by OSM id (same element may appear in multiple batches if category overlaps)
+        const seen = new Set<number>();
+
+        const mapped: (Amenity | null)[] = elements
+            .filter((el: any) => {
+                if (seen.has(el.id)) return false;
+                seen.add(el.id);
+                return true;
+            })
+            .map((el: any): Amenity | null => {
+                const elLat = el.lat ?? el.center?.lat;
+                const elLng = el.lon ?? el.center?.lon;
                 if (!elLat || !elLng) return null;
 
-                let category: AmenityCategory = 'school'; 
+                let category: AmenityCategory = 'school';
                 const tags = el.tags || {};
 
                 if (tags.amenity?.match(/college|university/)) category = 'college';
@@ -120,10 +133,7 @@ export const OverpassPlacesService = {
                 else if (tags.amenity?.match(/^(atm|bank)$/)) category = 'atm';
                 else if (tags.amenity === 'fuel') category = 'petrol_pump';
 
-                if (category === 'school' && !tags.amenity?.match(/school|kindergarten/) && !tags.amenity?.match(/college|university/)) {
-                }
-
-                if (tags.amenity === 'blood_bank') return null; 
+                if (tags.amenity === 'blood_bank') return null;
 
                 let name = tags.name || tags['name:en'] || tags.operator || tags.brand;
                 if (!name) {
@@ -135,7 +145,7 @@ export const OverpassPlacesService = {
                     tags['addr:housenumber'],
                     tags['addr:street'],
                     tags['addr:city'],
-                    tags['addr:postcode']
+                    tags['addr:postcode'],
                 ].filter(Boolean);
                 let address = addressParts.join(', ');
                 if (!address) address = tags['addr:full'] || '';
@@ -144,23 +154,13 @@ export const OverpassPlacesService = {
 
                 const distance = calculateDistanceInMeters(lat, lng, elLat, elLng);
 
-                return {
-                    id: `osm-${el.id}`,
-                    name,
-                    category,
-                    distance: Math.round(distance),
-                    coordinates: [elLng, elLat] as [number, number],
-                    address
-                };
-            })
-                .filter((a: Amenity | null) => a !== null)
-                .filter((a: Amenity) => a.distance < 10000)
-                .sort((a: Amenity, b: Amenity) => a.distance - b.distance);
+                return { id: `osm-${el.id}`, name, category, distance: Math.round(distance), coordinates: [elLng, elLat] as [number, number], address };
+            });
 
-        } catch (error) {
-            console.error(`[OverpassService] Search failed:`, error);
-            throw error;
-        }
+        return mapped
+            .filter((a): a is Amenity => a !== null)
+            .filter(a => a.distance < 10000)
+            .sort((a, b) => a.distance - b.distance);
     },
 
     /**
