@@ -101,16 +101,18 @@ export function useGreenStandardChecks(
             const windAnalysis = simulationResults.wind || { compliantArea: 0 };
             const sunAnalysis = simulationResults.sun || { compliantArea: 0 };
 
-            if (windAnalysis.compliantArea > 75) {
-                checks['ventilation'] = { status: 'achieved', score: 2, metrics: { achieved: windAnalysis.compliantArea, target: 75, unit: '%' } };
-            } else {
-                checks['ventilation'] = { status: 'failed', score: 0, metrics: { achieved: windAnalysis.compliantArea, target: 75, unit: '%' } };
+            // Ventilation: 25% of building area has adequate airflow
+            if (windAnalysis.compliantArea > 25) {
+                checks['ventilation'] = { status: 'achieved', score: 2, metrics: { achieved: windAnalysis.compliantArea, target: 25, unit: '%' } };
+            } else if (simulationResults.wind) {
+                checks['ventilation'] = { status: 'failed', score: 0, metrics: { achieved: windAnalysis.compliantArea, target: 25, unit: '%' } };
             }
 
-            if (sunAnalysis.compliantArea > 50) {
-                checks['daylighting'] = { status: 'achieved', score: 3, metrics: { achieved: sunAnalysis.compliantArea, target: 50, unit: '%' } };
-            } else {
-                checks['daylighting'] = { status: 'failed', score: 0, metrics: { achieved: sunAnalysis.compliantArea, target: 50, unit: '%' } };
+            // Daylighting: 25% of building area meets daylight factor
+            if (sunAnalysis.compliantArea > 25) {
+                checks['daylighting'] = { status: 'achieved', score: 3, metrics: { achieved: sunAnalysis.compliantArea, target: 25, unit: '%' } };
+            } else if (simulationResults.sun) {
+                checks['daylighting'] = { status: 'failed', score: 0, metrics: { achieved: sunAnalysis.compliantArea, target: 25, unit: '%' } };
             }
         }
 

@@ -5729,7 +5729,8 @@ const useProjectData = () => {
         const project = projects.find(p => p.id === activeProjectId);
         if (!project) return 'no-project';
         const plotsStr = plots.map(p => `${p.id}-${p.area}-${p.buildings.map(b => `${b.id}-${b.area}-${b.numFloors}`).join('_')}`).join('|');
-        return `${project.id}-${project.totalPlotArea}-${plotsStr}-${selectedPlot?.id}`;
+        const simStr = project.simulationResults ? JSON.stringify(project.simulationResults) : 'none';
+        return `${project.id}-${project.totalPlotArea}-${plotsStr}-${selectedPlot?.id}-${project.lastModified || ''}-${simStr}`;
     }, [projects, activeProjectId, plots, selectedPlot]);
 
     return useMemo(() => {

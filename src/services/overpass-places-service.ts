@@ -3,6 +3,9 @@ import { Amenity, AmenityCategory } from './mapbox-places-service';
 
 /**
  * Service to interact with OpenStreetMap (Overpass API) to find nearby amenities.
+ *
+ * All queries are proxied through /api/overpass to avoid CORS and rate-limiting.
+ * A single combined query fetches all categories in one request.
  */
 export const OverpassPlacesService = {
 
@@ -10,102 +13,85 @@ export const OverpassPlacesService = {
      * Search for amenities around a central point using Overpass API.
      * @param center [lng, lat]
      * @param categories Single category or array of categories
-     * @param radius Search radius in meters (default 5000m)
+     * @param radius Search radius in meters (default 2000m = 2 km)
      */
     async searchNearby(
         center: [number, number],
         categories: AmenityCategory | AmenityCategory[],
-        radius: number = 5000
+        radius: number = 2000
     ): Promise<Amenity[]> {
 
         const categoryList = Array.isArray(categories) ? categories : [categories];
         if (categoryList.length === 0) return [];
 
+        // Clamp radius between 500 m and 5 km
+        const r = Math.max(500, Math.min(radius, 5000));
         const [lng, lat] = center;
 
-        const SERVERS = [
-            'https://overpass-api.de/api/interpreter',
-            'https://lz4.overpass-api.de/api/interpreter',
-            'https://overpass.kumi.systems/api/interpreter',
-        ];
-        const BATCH_SIZE = 2; // categories per HTTP request
-
-        /** Build the Overpass QL body for a subset of categories */
-        const buildQueryParts = (cats: AmenityCategory[]): string =>
-            cats.map(cat => {
-                if (cat === 'transit') {
-                    return `
-                      node["railway"~"station|halt"](around:${radius},${lat},${lng});
-                      way["railway"~"station|halt"](around:${radius},${lat},${lng});
-                      node["station"~"subway|light_rail"](around:${radius},${lat},${lng});
-                      node["aeroway"="aerodrome"](around:${radius},${lat},${lng});
-                      way["aeroway"="aerodrome"](around:${radius},${lat},${lng});
-                      node["amenity"="bus_station"](around:${radius},${lat},${lng});
-                    `;
-                }
-                const filterMap: Record<string, string> = {
-                    school:      `["amenity"~"school|kindergarten"]`,
-                    college:     `["amenity"~"college|university"]`,
-                    hospital:    `["amenity"~"hospital|clinic|doctors|pharmacy"]`,
-                    park:        `["leisure"~"park|garden|playground"]`,
-                    restaurant:  `["amenity"~"restaurant|cafe|fast_food"]`,
-                    shopping:    `["shop"~"supermarket|convenience"]`,
-                    mall:        `["shop"~"mall|department_store"]`,
-                    atm:         `["amenity"~"^(atm|bank)$"]`,
-                    petrol_pump: `["amenity"="fuel"]`,
-                };
-                const f = filterMap[cat];
-                if (!f) return '';
-                return `
-                  node${f}(around:${radius},${lat},${lng});
-                  way${f}(around:${radius},${lat},${lng});
-                  relation${f}(around:${radius},${lat},${lng});
-                `;
-            }).join('\n');
-
-        /** Fetch one batch, trying each mirror in turn */
-        const fetchBatch = async (cats: AmenityCategory[]): Promise<any[]> => {
-            const parts = buildQueryParts(cats);
-            if (!parts.trim()) return [];
-
-            const query = `[out:json][timeout:30];\n(\n${parts}\n);\nout center;`;
-            const encoded = encodeURIComponent(query);
-
-            for (let i = 0; i < SERVERS.length; i++) {
-                const url = `${SERVERS[i]}?data=${encoded}`;
-                try {
-                    const response = await fetch(url);
-                    if (!response.ok) {
-                        console.warn(`[OverpassService] Server ${i + 1} returned ${response.status} for batch [${cats.join(',')}]`);
-                        continue;
-                    }
-                    const contentType = response.headers.get('content-type') ?? '';
-                    if (!contentType.includes('application/json')) {
-                        console.warn(`[OverpassService] Server ${i + 1} returned non-JSON for batch [${cats.join(',')}]`);
-                        continue;
-                    }
-                    const data = await response.json();
-                    return data.elements ?? [];
-                } catch (err) {
-                    console.warn(`[OverpassService] Server ${i + 1} error for batch [${cats.join(',')}]:`, err);
-                }
+        // ── Build ONE combined Overpass QL query for all categories ────
+        const parts = categoryList.map(cat => {
+            if (cat === 'transit') {
+                return [
+                    `node["railway"~"station|halt"](around:${r},${lat},${lng});`,
+                    `way["railway"~"station|halt"](around:${r},${lat},${lng});`,
+                    `node["aeroway"="aerodrome"](around:${r},${lat},${lng});`,
+                    `way["aeroway"="aerodrome"](around:${r},${lat},${lng});`,
+                    `node["amenity"="bus_station"](around:${r},${lat},${lng});`,
+                    `way["amenity"="bus_station"](around:${r},${lat},${lng});`,
+                    `node["highway"="bus_stop"](around:${r},${lat},${lng});`,
+                    `node["public_transport"](around:${r},${lat},${lng});`,
+                    `way["public_transport"](around:${r},${lat},${lng});`,
+                ].join('\n');
             }
-            console.error(`[OverpassService] All servers failed for batch [${cats.join(',')}]`);
-            return [];
-        };
+            const filterMap: Record<string, string> = {
+                school:      '["amenity"~"school|kindergarten"]',
+                college:     '["amenity"~"college|university"]',
+                hospital:    '["amenity"~"hospital|clinic|doctors|pharmacy"]',
+                park:        '["leisure"~"park|garden|playground"]',
+                restaurant:  '["amenity"~"restaurant|cafe|fast_food"]',
+                shopping:    '["shop"~"supermarket|convenience"]',
+                mall:        '["shop"~"mall|department_store"]',
+                atm:         '["amenity"~"^(atm|bank)$"]',
+                petrol_pump: '["amenity"="fuel"]',
+            };
+            const f = filterMap[cat];
+            if (!f) return '';
+            return [
+                `node${f}(around:${r},${lat},${lng});`,
+                `way${f}(around:${r},${lat},${lng});`,
+                `relation${f}(around:${r},${lat},${lng});`,
+            ].join('\n');
+        }).filter(Boolean).join('\n');
 
-        // Split into batches and run in parallel
-        const batches: AmenityCategory[][] = [];
-        for (let i = 0; i < categoryList.length; i += BATCH_SIZE) {
-            batches.push(categoryList.slice(i, i + BATCH_SIZE));
+        const query = `[out:json][timeout:60];\n(\n${parts}\n);\nout center;`;
+
+        console.log(`[Overpass] Scanning ${categoryList.length} categories within ${r}m via server proxy…`);
+
+        // ── Send through server-side proxy (single request) ───────────
+        let elements: any[] = [];
+        try {
+            const res = await fetch('/api/overpass', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query }),
+            });
+
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => ({}));
+                console.error(`[Overpass] Proxy returned ${res.status}:`, errBody.error || '');
+                // Return empty gracefully rather than throwing
+                return [];
+            }
+
+            const data = await res.json();
+            elements = data.elements || [];
+            console.log(`[Overpass] ✓ Received ${elements.length} raw elements`);
+        } catch (err) {
+            console.error('[Overpass] Proxy request failed:', err);
+            return [];
         }
 
-        console.log(`[OverpassService] Fetching ${categoryList.length} categories in ${batches.length} batch(es)…`);
-        const batchResults = await Promise.all(batches.map(fetchBatch));
-        const elements: any[] = batchResults.flat();
-        console.log(`[OverpassService] Found ${elements.length} elements total.`);
-
-        // Deduplicate by OSM id (same element may appear in multiple batches if category overlaps)
+        // ── De-duplicate by OSM id ────────────────────────────────────
         const seen = new Set<number>();
 
         const mapped: (Amenity | null)[] = elements
@@ -125,7 +111,7 @@ export const OverpassPlacesService = {
                 if (tags.amenity?.match(/college|university/)) category = 'college';
                 else if (tags.amenity?.match(/school|kindergarten/)) category = 'school';
                 else if (tags.amenity?.match(/hospital|clinic|doctors|pharmacy/)) category = 'hospital';
-                else if (tags.railway || tags.aeroway || tags.station || tags.amenity === 'bus_station' || tags.public_transport) category = 'transit';
+                else if (tags.railway || tags.aeroway || tags.station || tags.amenity === 'bus_station' || tags.public_transport || tags.highway === 'bus_stop') category = 'transit';
                 else if (tags.leisure?.match(/park|garden|playground/)) category = 'park';
                 else if (tags.amenity?.match(/restaurant|cafe|fast_food/)) category = 'restaurant';
                 else if (tags.shop?.match(/mall|department_store/)) category = 'mall';
@@ -157,9 +143,11 @@ export const OverpassPlacesService = {
                 return { id: `osm-${el.id}`, name, category, distance: Math.round(distance), coordinates: [elLng, elLat] as [number, number], address };
             });
 
+        // Keep only results within the requested radius (+10% tolerance)
+        const maxDist = r * 1.1;
         return mapped
             .filter((a): a is Amenity => a !== null)
-            .filter(a => a.distance < 10000)
+            .filter(a => a.distance <= maxDist)
             .sort((a, b) => a.distance - b.distance);
     },
 
@@ -169,72 +157,43 @@ export const OverpassPlacesService = {
      */
     async fetchRoads(bbox: [number, number, number, number]): Promise<any[]> {
         const [minX, minY, maxX, maxY] = bbox;
-        const query = `
-            [out:json][timeout:25];
-            way["highway"](${minY},${minX},${maxY},${maxX});
-            out geom;
-        `;
+        const query = `[out:json][timeout:30];way["highway"](${minY},${minX},${maxY},${maxX});out geom;`;
 
-        const servers = [
-            'https://overpass-api.de/api/interpreter',
-            'https://lz4.overpass-api.de/api/interpreter',
-            'https://overpass.kumi.systems/api/interpreter'
-        ];
+        console.log(`[Overpass] Fetching roads in bbox via server proxy…`);
 
-        console.log(`[OverpassService] Fetching roads in bbox...`);
+        try {
+            const res = await fetch('/api/overpass', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query }),
+            });
 
-        for (let i = 0; i < servers.length; i++) {
-            const url = `${servers[i]}?data=${encodeURIComponent(query)}`;
-
-            try {
-                const response = await fetch(url);
-                if (!response.ok) {
-                    console.warn(`[OverpassService] Server ${i + 1} failed: ${response.status}`);
-                    continue;
-                }
-
-                const contentType = response.headers.get("content-type");
-                let data: any;
-
-                try {
-                    if (contentType && !contentType.includes("application/json")) {
-                        const text = await response.text();
-                        console.error(`[OverpassService] Server ${i + 1} expected JSON but received ${contentType}. Body starts with: ${text.substring(0, 100)}`);
-                        continue;
-                    }
-                    data = await response.json();
-                } catch (e) {
-                    const text = await response.clone().text().catch(() => "Could not read body");
-                    console.error(`[OverpassService] Server ${i + 1} failed to parse JSON. Body starts with: ${text.substring(0, 100)}`);
-                    continue;
-                }
-
-                if (!data || !data.elements) {
-                    console.warn(`[OverpassService] Server ${i + 1} returned empty or invalid data structure.`);
-                    continue;
-                }
-
-                const ways = data.elements.filter((el: any) => el.type === 'way' && el.geometry);
-                console.log(`[OverpassService] Found ${ways.length} roads.`);
-
-                return ways.map((way: any) => ({
-                    type: 'Feature',
-                    geometry: {
-                        type: 'LineString',
-                        coordinates: way.geometry.map((g: any) => [g.lon, g.lat])
-                    },
-                    properties: way.tags || {}
-                }));
-            } catch (error) {
-                console.warn(`[OverpassService] Server ${i + 1} error:`, error);
-                if (i === servers.length - 1) {
-                    console.error(`[OverpassService] All servers failed`);
-                    return [];
-                }
+            if (!res.ok) {
+                console.error(`[Overpass] Road proxy returned ${res.status}`);
+                return [];
             }
-        }
 
-        return [];
+            const data = await res.json();
+            if (!data || !data.elements) {
+                console.warn('[Overpass] Road proxy returned empty data');
+                return [];
+            }
+
+            const ways = data.elements.filter((el: any) => el.type === 'way' && el.geometry);
+            console.log(`[Overpass] Found ${ways.length} roads.`);
+
+            return ways.map((way: any) => ({
+                type: 'Feature',
+                geometry: {
+                    type: 'LineString',
+                    coordinates: way.geometry.map((g: any) => [g.lon, g.lat])
+                },
+                properties: way.tags || {}
+            }));
+        } catch (error) {
+            console.error('[Overpass] Road fetch failed:', error);
+            return [];
+        }
     }
 };
 

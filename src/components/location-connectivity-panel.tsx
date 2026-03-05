@@ -78,6 +78,7 @@ export function LocationConnectivityPanel() {
             const uniqueResults = [...other, ...results];
 
             actions.setLocationData(uniqueResults);
+            await actions.saveCurrentProject();
 
             if (results.length > 0) {
                 toast({ title: "Updated", description: `Found ${results.length} ${category}s.` });
@@ -107,7 +108,8 @@ export function LocationConnectivityPanel() {
             const results = await OverpassPlacesService.searchNearby(center, allCategories, 2000);
 
             actions.setLocationData(results);
-            toast({ title: 'Scan Complete', description: `Found ${results.length} amenities nearby.` });
+            await actions.saveCurrentProject();
+            toast({ title: 'Scan Complete', description: `Found ${results.length} amenities nearby and saved to project.` });
 
         } catch (error: any) {
             console.error(error);
