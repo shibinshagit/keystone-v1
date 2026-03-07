@@ -1,5 +1,6 @@
 
 import * as turf from '@turf/turf';
+import { planarDestination } from './geometry-utils';
 import { Feature, Polygon, MultiPolygon, Position } from 'geojson';
 import { AlgoParams } from './basic-generator';
 
@@ -120,28 +121,28 @@ export function applyVariableSetbacks(
 
         if (edge === 'N') {
             const nw = turf.point([minX, maxY]);
-            const cutLine = turf.destination(nw, margin, 180, { units: 'meters' });
+            const cutLine = turf.point(planarDestination(nw, margin, 180));
             const cutY = cutLine.geometry.coordinates[1];
 
             cPoly = turf.bboxPolygon([minX - 0.1, cutY, maxX + 0.1, maxY + 0.1]);
         }
         else if (edge === 'S') {
             const sw = turf.point([minX, minY]);
-            const cutLine = turf.destination(sw, margin, 0, { units: 'meters' });
+            const cutLine = turf.point(planarDestination(sw, margin, 0));
             const cutY = cutLine.geometry.coordinates[1];
 
             cPoly = turf.bboxPolygon([minX - 0.1, minY - 0.1, maxX + 0.1, cutY]);
         }
         else if (edge === 'E') {
             const ne = turf.point([maxX, maxY]);
-            const cutLine = turf.destination(ne, margin, 270, { units: 'meters' });
+            const cutLine = turf.point(planarDestination(ne, margin, 270));
             const cutX = cutLine.geometry.coordinates[0];
 
             cPoly = turf.bboxPolygon([cutX, minY - 0.1, maxX + 0.1, maxY + 0.1]);
         }
         else if (edge === 'W') {
             const nw = turf.point([minX, maxY]);
-            const cutLine = turf.destination(nw, margin, 90, { units: 'meters' });
+            const cutLine = turf.point(planarDestination(nw, margin, 90));
             const cutX = cutLine.geometry.coordinates[0];
 
             cPoly = turf.bboxPolygon([minX - 0.1, minY - 0.1, cutX, maxY + 0.1]);

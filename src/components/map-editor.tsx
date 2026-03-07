@@ -1,4 +1,5 @@
 ﻿import { useBuildingStore, UTILITY_COLORS } from '@/hooks/use-building-store';
+import { planarDimensions, planarArea } from '@/lib/generators/geometry-utils';
 import { BUILDING_MATERIALS, hslToRgb } from '@/lib/color-utils';
 import { useToast } from '@/hooks/use-toast';
 import { BuildingIntendedUse, GreenRegulationData, UtilityType, Building, Core, Unit, Plot, GreenArea, ParkingArea, BuildableArea, UtilityArea, SelectableObjectType } from '@/lib/types';
@@ -425,6 +426,7 @@ export function MapEditor({
           [
             `plot-base-${p.id}`,
             ...p.buildings.flatMap(b => b.floors.map(f => `building-floor-fill-${f.id}-${b.id}`)),
+            ...p.buildings.flatMap(b => (b.units || []).map(u => `units-${u.id}`)),
             ...p.buildableAreas.map(b => `buildable-area-${b.id}`),
             ...p.greenAreas.map(g => `green-area-${g.id}`),
             ...p.parkingAreas.map(pa => `parking-area-${pa.id}`),
@@ -440,6 +442,7 @@ export function MapEditor({
 
         if (features && features.length > 0) {
           const prioritizedTypes = [
+            'units-',
             'building-floor-fill-',
             'green-area-',
             'parking-area-',
@@ -465,6 +468,16 @@ export function MapEditor({
               const matchedBuilding = plot.buildings.find(b => layerId.endsWith(`-${b.id}`));
               if (matchedBuilding) {
                 actions.selectObject(matchedBuilding.id, 'Building');
+                break;
+              }
+            }
+          } else if (layerId.startsWith('units-')) {
+            const unitId = layerId.replace('units-', '');
+            // Verify it exists
+            for (const plot of plots) {
+              const matchedBuilding = plot.buildings.find(b => b.units?.some(u => u.id === unitId));
+              if (matchedBuilding) {
+                actions.selectObject(unitId, 'Unit');
                 break;
               }
             }
@@ -532,6 +545,7 @@ export function MapEditor({
           [
             `plot-base-${p.id}`,
             ...p.buildings.flatMap(b => b.floors.map(f => `building-floor-fill-${f.id}-${b.id}`)),
+            ...p.buildings.flatMap(b => (b.units || []).map(u => `units-${u.id}`)),
             ...p.buildableAreas.map(b => `buildable-area-${b.id}`),
             ...p.greenAreas.map(g => `green-area-${g.id}`),
             ...p.parkingAreas.map(pa => `parking-area-${pa.id}`),
@@ -2200,7 +2214,8 @@ useEffect(() => {
             id: u.id,
             name: u.name,
             type: u.type,
-            area: u.area
+            area: u.area,
+            targetArea: u.targetArea
           }
         };
 
@@ -3249,26 +3264,12 @@ useEffect(() => {
         if (f.layer?.id === 'all-buildings-hit-layer') {
           let dims = '';
           try {
-            // @ts-ignore
-            const area = props.area || turf.area(f);
-            // @ts-ignore
-            const line = turf.polygonToLine(f.geometry);
-            // @ts-ignore
-            const perimeter = turf.length(line, { units: 'meters' });
-
-            if (area && perimeter) {
-              const s = perimeter / 2;
-              const disc = (s * s) - (4 * area);
-              let l = 0, w = 0;
-              if (disc >= 0) {
-                l = (s + Math.sqrt(disc)) / 2;
-                w = (s - Math.sqrt(disc)) / 2;
-              } else {
-                l = Math.sqrt(area);
-                w = l;
-              }
-              dims = `${Math.round(Math.max(l, w))}m x ${Math.round(Math.min(l, w))}m`;
-            }
+            const pd = planarDimensions(f);
+            const l = Math.round(pd.length * 10) / 10;
+            const w = Math.round(pd.width * 10) / 10;
+            const calcArea = Math.round(l * w * 100) / 100;
+            dims = `${l.toFixed(1)}m x ${w.toFixed(1)}m`;
+            props.area = calcArea;
           } catch (e) { }
 
           html = `
@@ -3276,19 +3277,15 @@ useEffect(() => {
             <div class="text-xs text-muted-foreground" style="color: #525252;">${props.use || ''}</div>
             <div class="text-xs mt-1 text-neutral-800" style="color: #262626;">${props.floors || 0} Fl • ${Math.round(props.height || 0)}m</div>
             ${dims ? `<div class="text-xs text-neutral-600 mt-0.5" style="color: #525252;">Size: ${dims}</div>` : ''}
+            <div class="text-xs text-neutral-600 mt-0.5" style="color: #525252;">Footprint: ${props.area.toFixed(2)} m²</div>
           `;
         } else if (f.layer?.id.startsWith('utility-area-') || f.layer?.id.startsWith('parking-area-')) {
           const typeLabel = props.type || (f.layer?.id.startsWith('parking-area-') ? 'Parking' : 'Utility');
           
-          let actualArea = 0;
-          try {
-            actualArea = turf.area(f as any);
-          } catch (e) {
-            actualArea = props.area || 0;
-          }
-          
+          const actualArea = Number(props.targetArea || props.area) || 0;
           const areaLabel = actualArea ? `Footprint: ${actualArea.toFixed(1)} m²` : '';
-          const targetAreaLabel = props.area ? `<span style="color:#737373;">(target: ${Math.round(props.area)} m²)</span>` : '';
+          const targetAreaLabel = '';
+          
           const capacityLabel = props.capacity ? `<div class="text-xs text-neutral-600 mt-0.5">Capacity: ${props.capacity} cars</div>` : '';
 
           html = `
@@ -3302,37 +3299,27 @@ useEffect(() => {
             <div class="font-bold text-sm text-neutral-900" style="color: #171717;">${props.name || 'Gate'}</div>
           `;
         } else if (f.layer?.id.startsWith('cores-')) {
-          const area = turf.area(f as any);
           let dims = '';
+          let coreArea = 0;
           try {
-            // @ts-ignore
-            const line = turf.polygonToLine(f.geometry);
-            // @ts-ignore
-            const perimeter = turf.length(line, { units: 'meters' });
-            if (area && perimeter) {
-              const s = perimeter / 2;
-              const disc = (s * s) - (4 * area);
-              let l = 0, w = 0;
-              if (disc >= 0) {
-                l = (s + Math.sqrt(disc)) / 2;
-                w = (s - Math.sqrt(disc)) / 2;
-              } else {
-                l = Math.sqrt(area);
-                w = l;
-              }
-              dims = `${Math.round(Math.max(l, w))}m x ${Math.round(Math.min(l, w))}m`;
-            }
-          } catch (e) { }
+            const pd = planarDimensions(f);
+            const l = Math.round(pd.length * 10) / 10;
+            const w = Math.round(pd.width * 10) / 10;
+            coreArea = pd.area;
+            dims = `${l.toFixed(1)}m x ${w.toFixed(1)}m`;
+          } catch (e) {
+            coreArea = turf.area(f as any);
+          }
 
           html = `
             <div class="font-bold text-sm text-neutral-900" style="color: #171717;">Core</div>
             <div class="text-xs text-muted-foreground" style="color: #525252;">Vertical Circulation</div>
-            <div class="text-xs mt-1 text-neutral-800" style="color: #262626;">Footprint Area: ${area.toFixed(1)} m²</div>
+            <div class="text-xs mt-1 text-neutral-800" style="color: #262626;">Footprint Area: ${coreArea.toFixed(1)} m²</div>
             ${dims ? `<div class="text-xs text-neutral-600 mt-0.5" style="color: #525252;">Size: ${dims}</div>` : ''}
           `;
         } else if (f.layer?.id.startsWith('util-')) {
           const typeLabel = props.type || 'Utility Shaft';
-          const area = turf.area(f as any);
+          const area = planarArea(f);
           html = `
             <div class="font-bold text-sm text-neutral-900" style="color: #171717;">${props.name || typeLabel}</div>
             <div class="text-xs text-muted-foreground" style="color: #525252;">Internal ${typeLabel}</div>
@@ -3340,12 +3327,12 @@ useEffect(() => {
           `;
         } else if (f.layer?.id.startsWith('units-')) {
           const typeLabel = props.type || 'Unit';
-          const targetArea = props.targetArea;
-          const actualArea = turf.area(f as any).toFixed(1);
+          // Use targetArea if available (architectural intent), fallback to geometric area
+          const actualArea = props.targetArea ? Number(props.targetArea).toFixed(1) : planarArea(f).toFixed(1);
           html = `
             <div class="font-bold text-sm text-neutral-900" style="color: #171717;">${typeLabel}</div>
             <div class="text-xs text-muted-foreground" style="color: #525252;">Internal Unit Layout</div>
-            <div class="text-xs mt-1 text-neutral-800" style="color: #262626;">Area: ${actualArea} m²${targetArea ? ` <span style="color:#737373;">(target: ${targetArea} m²)</span>` : ''}</div>
+            <div class="text-xs mt-1 text-neutral-800" style="color: #262626;">Area: ${actualArea} m² </div>
           `;
         }
 

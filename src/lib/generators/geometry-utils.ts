@@ -4,7 +4,150 @@
  */
 
 import * as turf from '@turf/turf';
-import { Feature, Polygon, MultiPolygon } from 'geojson';
+import { Feature, Polygon, MultiPolygon, Position } from 'geojson';
+
+/**
+ * Calculates a destination point based on a starting point, distance, and bearing
+ * using a planar approximation. This is often faster and sufficient for small-scale
+ * site planning than spherical calculations.
+ * 
+ * @param origin - [lng, lat] starting point
+ * @param distance - distance in meters
+ * @param bearing - bearing in degrees (0 = North, 90 = East, etc.)
+ * @returns [lng, lat] destination point
+ */
+export function planarDestination(
+    origin: Position,
+    distance: number,
+    bearing: number
+): Position {
+    const lat = origin[1];
+    const lng = origin[0];
+
+    // Meters per degree latitude (approximate)
+    const metersPerDegreeLat = 111111;
+    // Meters per degree longitude (adjusts with latitude)
+    const metersPerDegreeLng = 111111 * Math.cos(lat * (Math.PI / 180));
+
+    const bearingRad = bearing * (Math.PI / 180);
+
+    const deltaLat = (distance * Math.cos(bearingRad)) / metersPerDegreeLat;
+    const deltaLng = (distance * Math.sin(bearingRad)) / metersPerDegreeLng;
+
+    return [lng + deltaLng, lat + deltaLat];
+}
+
+/**
+ * Convert polygon coordinates to local meters relative to centroid.
+ * Returns array of [x, y] in meters.
+ */
+function toLocalMeters(coords: Position[]): [number, number][] {
+    if (coords.length === 0) return [];
+    // Use the centroid latitude for conversion
+    let sumLat = 0;
+    for (const c of coords) sumLat += c[1];
+    const refLat = sumLat / coords.length;
+
+    const metersPerDegreeLat = 111111;
+    const metersPerDegreeLng = 111111 * Math.cos(refLat * (Math.PI / 180));
+
+    return coords.map(c => [
+        c[0] * metersPerDegreeLng,
+        c[1] * metersPerDegreeLat
+    ]);
+}
+
+/**
+ * Compute polygon area using the Shoelace formula in planar meters.
+ * No earth curvature — accurate for site-scale features (<10km).
+ */
+export function planarArea(geojson: Feature<Polygon | MultiPolygon> | any): number {
+    try {
+        const geom = geojson.geometry || geojson;
+        if (geom.type === 'Polygon') {
+            let area = shoelaceRing(toLocalMeters(geom.coordinates[0]));
+            for (let i = 1; i < geom.coordinates.length; i++) {
+                // Holes must be strictly subtracted regardless of winding order
+                area -= shoelaceRing(toLocalMeters(geom.coordinates[i]));
+            }
+            return Math.max(0, area); // Ensure we don't return negative area
+        } else if (geom.type === 'MultiPolygon') {
+            let total = 0;
+            for (const poly of geom.coordinates) {
+                let polyArea = shoelaceRing(toLocalMeters(poly[0]));
+                for (let i = 1; i < poly.length; i++) {
+                    polyArea -= shoelaceRing(toLocalMeters(poly[i]));
+                }
+                total += Math.max(0, polyArea);
+            }
+            return total;
+        }
+    } catch (e) {
+        console.warn('[planarArea] fallback to turf.area:', e);
+    }
+    return turf.area(geojson);
+}
+
+function shoelaceRing(pts: [number, number][]): number {
+    let area = 0;
+    const n = pts.length;
+    for (let i = 0; i < n - 1; i++) {
+        area += (pts[i][0] * pts[i + 1][1]) - (pts[i + 1][0] * pts[i][1]);
+    }
+    // Return ABSOLUTE area for the ring, ignoring clockwise/counter-clockwise winding
+    return Math.abs(area / 2);
+}
+
+/**
+ * Compute polygon perimeter in planar meters (Euclidean distance after local projection).
+ */
+export function planarPerimeter(geojson: Feature<Polygon | MultiPolygon> | any): number {
+    try {
+        const geom = geojson.geometry || geojson;
+        const ring = geom.type === 'Polygon'
+            ? geom.coordinates[0]
+            : geom.coordinates[0][0]; // First polygon of MultiPolygon
+        const local = toLocalMeters(ring);
+        let perimeter = 0;
+        for (let i = 0; i < local.length - 1; i++) {
+            const dx = local[i + 1][0] - local[i][0];
+            const dy = local[i + 1][1] - local[i][1];
+            perimeter += Math.sqrt(dx * dx + dy * dy);
+        }
+        return perimeter;
+    } catch (e) {
+        console.warn('[planarPerimeter] fallback to turf.length');
+        const line = turf.polygonToLine(geojson);
+        return turf.length(line, { units: 'meters' });
+    }
+}
+
+/**
+ * Derive approximate L × W dimensions from planar area and perimeter.
+ * Uses the quadratic formula: s = P/2; L,W = (s ± sqrt(s²-4A))/2
+ * Returns { length, width, area } all in meters/m².
+ */
+export function planarDimensions(geojson: Feature<Polygon | MultiPolygon> | any): { length: number; width: number; area: number } {
+    const area = planarArea(geojson);
+    const perimeter = planarPerimeter(geojson);
+
+    const s = perimeter / 2;
+    const disc = (s * s) - (4 * area);
+    let l = 0, w = 0;
+    if (disc >= 0) {
+        l = (s + Math.sqrt(disc)) / 2;
+        w = (s - Math.sqrt(disc)) / 2;
+    } else {
+        l = Math.sqrt(area);
+        w = l;
+    }
+
+    return {
+        length: Math.max(l, w),
+        width: Math.min(l, w),
+        area
+    };
+}
 
 export interface PeripheralZoneConfig {
     parkingWidth: number;

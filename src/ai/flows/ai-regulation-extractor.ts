@@ -47,6 +47,7 @@ export const extractRegulationData = ai.defineFlow(
     inputSchema: z.object({
       documentText: z.string().describe('The full text content of the regulation document'),
       fileName: z.string().describe('The name of the source file for context'),
+      overrideLocation: z.string().optional().describe('Force the AI to tag extracted rules with this precise location'),
     }),
     outputSchema: z.array(ExtractedRegulationSchema),
   },
@@ -55,7 +56,7 @@ export const extractRegulationData = ai.defineFlow(
 
 Document: ${input.fileName}
 Content:
-${input.documentText.slice(0, 400000)} ...
+${input.documentText.slice(0, 80000)}${input.documentText.length > 80000 ? '\n\n[Document truncated for processing...]' : ''}
 
 Task:
 1. **EXTRACT ALL** land use types and subtypes mentioned. Do NOT limit to a few examples.
@@ -69,7 +70,15 @@ Task:
      - If only a general "Setback" is mentioned, use the 'setback' field.
      - Values must be in meters.
 
-Andaman and Nicobar Islands, Andhra Pradesh, Arunachal Pradesh, Assam, Bihar, Chandigarh, Chhattisgarh, Dadra and Nagar Haveli and Daman and Diu, Delhi, Goa, Gujarat, Haryana, Himachal Pradesh, Jammu and Kashmir, Jharkhand, Karnataka, Kerala, Ladakh, Lakshadweep, Madhya Pradesh, Maharashtra, Manipur, Meghalaya, Mizoram, Nagaland, Odisha, Puducherry, Punjab, Rajasthan, Sikkim, Tamil Nadu, Telangana, Tripura, Uttar Pradesh, Uttarakhand, West Bengal
+Andaman and Nicobar Islands, Andhra Pradesh, Arunachal Pradesh, Assam, Bihar, Chandigarh, Chhattisgarh, Dadra and Nagar Haveli and Daman and Diu, Delhi, Goa, Gujarat, Haryana, Himachal Pradesh, Jammu and Kashmir, Jharkhand, Karnataka, Kerala, Ladakh, Lakshadweep, Madhya Pradesh, Maharashtra, Manipur, Meghalaya, Mizoram, Nagaland, Odisha, Puducherry, Punjab, Rajasthan, Sikkim, Tamil Nadu, Telangana, Tripura, Uttar Pradesh, Uttarakhand, West Bengal, National (NBC)
+
+**CRITICAL LOCATION RULES**: 
+${input.overrideLocation ? 
+`🔥 USER OVERRIDE ACTIVE 🔥
+You MUST set the \`location\` field to exactly "${input.overrideLocation}" for EVERY single extracted regulation in the JSON. Ignore the document's text/state if it contradicts this override.` 
+: 
+`- Determine the \`location\` based EXACTLY on the state or city mentioned in the Document name or the Document text.
+- **DO NOT** lump "Telangana" and "Andhra Pradesh" together. If the document is for Telangana, the location MUST be "Telangana". If it is for Andhra Pradesh, it MUST be "Andhra Pradesh". Pay close attention to the file name.`}
 
 **Type**: use the SPECIFIC ZONE NAME from the document (e.g. "Residential Plotted", "Residential Group Housing", "Commercial C-1").
 **CRITICAL**: Do NOT simplify to just "Residential" or "Commercial" if distinct subtypes exist. We need separate entries for each subtype.

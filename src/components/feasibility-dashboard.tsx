@@ -287,7 +287,7 @@ function MetricsTab() {
                                                                     typeRealAreas[typ].count++;
                                                                     
                                                                     try {
-                                                                        const a = turf.area(u.geometry);
+                                                                        const a = u.targetArea || turf.area(u.geometry);
                                                                         typeRealAreas[typ].area += a;
                                                                         totalRealArea += a;
                                                                     } catch (e) { /* ignore */ }
@@ -301,9 +301,10 @@ function MetricsTab() {
                                                                             .sort((a, b) => b[1].count - a[1].count)
                                                                             .map(([type, data]) => {
                                                                                 const avgUnit = data.count > 0 ? Math.round(data.area / data.count) : 0;
+                                                                                const perFloorCount = Math.max(1, Math.round(data.count / occFloors.length));
                                                                                 return (
                                                                                     <div key={type} className="flex items-center justify-between text-sm">
-                                                                                        <span>{data.count} × {type} <span className="text-xs text-muted-foreground italic">(~{avgUnit}m²/ea)</span></span>
+                                                                                        <span>{data.count} × {type} <span className="text-xs text-muted-foreground italic">({perFloorCount}/fl @ ~{avgUnit}m²)</span></span>
                                                                                         <span className="font-bold text-emerald-500 flex items-center gap-2">
                                                                                             {Math.round(data.area)} m²
                                                                                         </span>
@@ -311,8 +312,12 @@ function MetricsTab() {
                                                                                 );
                                                                             })}
                                                                         <div className="flex items-center justify-between text-sm font-bold border-t border-emerald-500/20 pt-1 mt-1">
-                                                                            <span>Total Unit Polygon Area per Floor</span>
-                                                                            <span className="text-emerald-500">{Math.round(totalRealArea / occFloors.length)} m² ({bGfa > 0 ? Math.round((totalRealArea / bGfa) * 100) : 0}% of GFA)</span>
+                                                                            <span>Total Unit Area (All Floors)</span>
+                                                                            <span className="text-emerald-500">{Math.round(totalRealArea)} m² ({bGfa > 0 ? Math.round((totalRealArea / bGfa) * 100) : 0}% of GFA)</span>
+                                                                        </div>
+                                                                         <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                                                            <span>Average per floor</span>
+                                                                            <span>{Math.round(totalRealArea / Math.max(1, occFloors.length))} m²</span>
                                                                         </div>
                                                                     </>
                                                                 );
@@ -326,22 +331,32 @@ function MetricsTab() {
                                                         <div className="text-xs text-muted-foreground/80 italic mb-1.5">Based on nominal unit sizes given per typology</div>
                                                         <div className="space-y-1.5">
                                                             {Object.entries(unitBD).sort((a, b) => b[1] - a[1]).map(([type, count]) => {
-                                                                // Compute actual average area from generated unit polygons
-                                                                const matchingUnits = bUnits.filter(u => u.type === type);
-                                                                const avgSqm = matchingUnits.length > 0
-                                                                    ? Math.round(matchingUnits.reduce((sum, u) => sum + (u.targetArea || 0), 0) / matchingUnits.length)
-                                                                    : 0;
-                                                                const typeGfa = Math.round(count * avgSqm);
-                                                                const sqft = Math.round(avgSqm * 10.7639);
+                                                                // Find the exact target size for this typology from the building's unitMix
+                                                                const mixEntry = ((b as any).unitMix || []).find((m: any) => m.name === type);
+                                                                
+                                                                // Use exact size if found (Method B theoretical), otherwise compute actual average from generated
+                                                                let targetSqm = 0;
+                                                                if (mixEntry && mixEntry.area > 0) {
+                                                                    targetSqm = mixEntry.area;
+                                                                } else {
+                                                                    const matchingUnits = bUnits.filter(u => u.type === type);
+                                                                    targetSqm = matchingUnits.length > 0
+                                                                        ? Math.round(matchingUnits.reduce((sum, u) => sum + (u.targetArea || 0), 0) / matchingUnits.length)
+                                                                        : 0;
+                                                                }
+
+                                                                const typeGfa = Math.round(count * targetSqm);
+                                                                const sqft = Math.round(targetSqm * 10.7639);
+                                                                const perFloorCount = Math.max(1, Math.round(count / occFloors.length));
                                                                 
                                                                 return (
                                                                     <div key={type} className="rounded bg-teal-500/10 px-2 py-1">
                                                                         <div className="flex items-center justify-between text-sm">
-                                                                            <span className="font-medium">{count} × {type}</span>
+                                                                            <span className="font-medium">{count} × {type} <span className="font-normal text-xs text-muted-foreground italic">({perFloorCount}/fl)</span></span>
                                                                             <span className="font-bold text-teal-600 dark:text-teal-400">{typeGfa} m²</span>
                                                                         </div>
                                                                         <div className="text-xs text-muted-foreground/80 italic mt-0.5">
-                                                                            = {count} units × ~{avgSqm} m² ({sqft} sqft)
+                                                                            = {count} units × {targetSqm} m² ({sqft} sqft)
                                                                         </div>
                                                                     </div>
                                                                 );
@@ -401,9 +416,20 @@ function MetricsTab() {
                                                 const pctCircArea = Math.round(bGfa * circFactor);
                                                 const pctTotal = pctCoreArea + pctCircArea;
 
+                                                let liftsEqParts = [];
+                                                if (coreBreakdown.passLiftCount > 0) liftsEqParts.push(`${coreBreakdown.passLiftCount} Pass`);
+                                                if (coreBreakdown.fireLiftCount > 0) liftsEqParts.push(`${coreBreakdown.fireLiftCount} Fire`);
+                                                if (coreBreakdown.serviceLiftCount > 0) liftsEqParts.push(`${coreBreakdown.serviceLiftCount} Service`);
+                                                if (coreBreakdown.stretcherLiftCount > 0) liftsEqParts.push(`${coreBreakdown.stretcherLiftCount} Stretcher`);
+
+                                                let shaftsEqParts = ['Plumb', 'Elec', 'Fire'];
+                                                if (coreBreakdown.garbageShaftArea > 0) shaftsEqParts.push('Garbage');
+                                                if (coreBreakdown.hvacShaftArea > 0) shaftsEqParts.push('HVAC');
+                                                if (coreBreakdown.medicalGasShaftArea > 0) shaftsEqParts.push('MedGas');
+
                                                 const nbcItems = [
                                                     { label: '🛗 Lifts', val: coreBreakdown.liftArea.toFixed(1),
-                                                      eq: `${coreBreakdown.liftCount} lifts × ${(coreBreakdown.liftArea/coreBreakdown.liftCount).toFixed(2)}m²` },
+                                                      eq: `${coreBreakdown.liftCount} total: ${liftsEqParts.join(', ')}` },
                                                     { label: '🪜 Stairs', val: `${coreBreakdown.stairArea}`,
                                                       eq: `${coreBreakdown.stairCount} stairs × ${Math.round(coreBreakdown.stairArea/coreBreakdown.stairCount)}m²` },
                                                     { label: '🚪 Lobby', val: `${coreBreakdown.liftLobbyArea}`,
@@ -411,10 +437,13 @@ function MetricsTab() {
                                                     { label: '🚶 Corridor', val: `${coreBreakdown.corridorArea}`,
                                                       eq: `Circulation logic based on unit count` },
                                                     { label: '🔧 Shafts', val: `${coreBreakdown.totalShaftArea.toFixed(1)}`,
-                                                      eq: `Plumb + Elec + Fire Riser` },
+                                                      eq: shaftsEqParts.join(' + ') },
                                                 ];
                                                 if (coreBreakdown.fireCheckLobbyArea > 0) {
                                                     nbcItems.push({ label: '🔥 Fire Lobby', val: `${coreBreakdown.fireCheckLobbyArea}`, eq: `Required > 24m height` });
+                                                }
+                                                if (coreBreakdown.refugeAreaPerFloor && coreBreakdown.refugeAreaPerFloor > 0) {
+                                                    nbcItems.push({ label: '🛡️ Refuge Area', val: coreBreakdown.refugeAreaPerFloor.toFixed(1), eq: `Avg distributed per floor` });
                                                 }
 
                                                 return (
@@ -579,7 +608,7 @@ function MetricsTab() {
                             // Determine formula/rationale per type — with actual values
                             const uType = (u.type || '').toLowerCase();
                             const uArea = Math.round(u.targetArea || u.area || 0);
-                            const totalOccupants = Math.round((allUnits.length || metrics.totalUnits) * 3.5); // avg 3.5 per unit
+                            const totalOccupants = Math.round((allUnits.length || metrics.totalUnits) * 4); // avg 4 per unit
                             const totalGfa = Math.round(gfa);
                             const totalFootprintVal = Math.round(totalFootprint);
                             const totalRooftop = Math.round(allBuildings.reduce((s, b) => s + b.area, 0));
@@ -653,13 +682,13 @@ function MetricsTab() {
                         // Estimate max units based on avg unit size of current drawn units, or fallback
                         const avgUnitSize = allUnits.length > 0 ? (totalFootprint/allUnits.length) : 100; // rough generic fallback
                         const maxUnits = Math.round(maxGFA / avgUnitSize);
-                        const maxOccupants = Math.round(maxUnits * 3.5);
+                        const maxOccupants = Math.round(maxUnits * 4);
                         // Estimate roof area at max capacity (assuming same ground coverage ratio roughly, or just max permissible coverage)
                         const maxGroundCoverage = totalPlotArea * 0.5; // 50% max coverage typical
 
                         const activeGfaTotal = useMaxCapacity ? maxGFA : Math.round(gfa);
                         const activeNumUnits = useMaxCapacity ? maxUnits : (allUnits.length || metrics.totalUnits || 1);
-                        const activeTotalOccupants = useMaxCapacity ? maxOccupants : Math.round((allUnits.length || metrics.totalUnits) * 3.5);
+                        const activeTotalOccupants = useMaxCapacity ? maxOccupants : Math.round((allUnits.length || metrics.totalUnits) * 4);
                         const activeRoofArea = useMaxCapacity ? maxGroundCoverage : Math.round(allBuildings.reduce((s, b) => s + b.area, 0));
                         const avgFloors = allBuildings.length > 0 ? Math.round(allBuildings.reduce((s,b) => s + (b.numFloors||1), 0) / allBuildings.length) : 1;
 
@@ -737,7 +766,7 @@ function MetricsTab() {
                                     <div className="font-bold text-muted-foreground mb-1.5 border-b border-border/40 pb-1 w-[200px]">⚙️ Calculation Parameters</div>
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-y-2 gap-x-3 text-[11px] relative z-0 mt-2">
                                         <div className="flex justify-between items-center"><span className="text-muted-foreground">Units:</span> <span className="font-bold">{activeNumUnits}</span></div>
-                                        <div className="flex justify-between items-center"><span className="text-muted-foreground">Avg Occupancy:</span> <span className="font-bold">3.5 / unit</span></div>
+                                        <div className="flex justify-between items-center"><span className="text-muted-foreground">Avg Occupancy:</span> <span className="font-bold">4 / unit</span></div>
                                         <div className="flex justify-between items-center"><span className="text-muted-foreground">Total Pop:</span> <span className="font-bold">{activeTotalOccupants} pax</span></div>
                                         <div className="flex justify-between items-center"><span className="text-muted-foreground">Avg Floors:</span> <span className="font-bold">{avgFloors} F</span></div>
                                         <div className="flex justify-between items-center"><span className="text-muted-foreground">Site Area:</span> <span className="font-bold">{Math.round(totalPlotArea).toLocaleString()} m²</span></div>
@@ -890,13 +919,14 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
                 <div className="p-2.5 rounded-lg border bg-slate-500/10 border-slate-500/20 text-center">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Cost (P50)</div>
                     <div className="text-base font-bold">
-                        {sim ? fmtCr(sim.cost_p50) : `${(totalCost / 10000000).toFixed(1)} Cr`}
+                        {/* {sim ? fmtCr(sim.cost_p50) : `${(totalCost / 10000000).toFixed(1)} Cr`} */}
+                        {fmtCr(sim.cost_p10)} – {fmtCr(sim.cost_p90)}
                     </div>
-                    {sim && (
+                    {/* {sim && (
                         <div className="text-[8px] text-muted-foreground">
                             {fmtCr(sim.cost_p10)} – {fmtCr(sim.cost_p90)}
                         </div>
-                    )}
+                    )} */}
                 </div>
                 <div className="p-2.5 rounded-lg border bg-emerald-500/10 border-emerald-500/20 text-center">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Revenue</div>
@@ -1068,11 +1098,12 @@ function TimeSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
                 <div className="p-2.5 rounded-lg border bg-blue-500/10 border-blue-500/20 text-center">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Duration (P50)</div>
                     <div className="text-xl font-bold text-blue-400">
-                        {sim ? sim.time_p50.toFixed(1) : totalMonths.toFixed(1)}
+                        {/* {sim ? sim.time_p50.toFixed(1) : totalMonths.toFixed(1)} */}
+                        {sim ? `${sim.time_p10.toFixed(1)} m – ${sim.time_p90.toFixed(1)} months` : 'months (Critical Path)'}
                     </div>
-                    <div className="text-[9px] text-muted-foreground">
+                    {/* <div className="text-[9px] text-muted-foreground">
                         {sim ? `${sim.time_p10.toFixed(1)} – ${sim.time_p90.toFixed(1)} months` : 'months (Critical Path)'}
-                    </div>
+                    </div> */}
                 </div>
                 <div className="p-2.5 rounded-lg border bg-purple-500/10 border-purple-500/20 text-center flex flex-col items-center justify-center">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Efficiency</div>

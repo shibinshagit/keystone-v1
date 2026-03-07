@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Trash2, BookX, Calculator, Building2, Home, Bookmark } from "lucide-react";
 import { ScenarioThumbnail } from "./scenario-thumbnail";
 import { cn } from "@/lib/utils";
+import { DEFAULT_FEASIBILITY_PARAMS } from '@/lib/development-calc';
 
 interface SavedScenariosPanelProps {
     embedded?: boolean;
@@ -18,13 +19,24 @@ export function SavedScenariosPanel({ embedded = false }: SavedScenariosPanelPro
         designOptions,
         plots,
         selectedObjectId,
-        actions
+        actions,
+        activeProjectId,
+        projects,
     } = useBuildingStore(state => ({
         designOptions: state.designOptions,
         plots: state.plots,
         selectedObjectId: state.selectedObjectId,
-        actions: state.actions
+        actions: state.actions,
+        activeProjectId: state.activeProjectId,
+        projects: state.projects,
     }));
+
+    const activeProject = projects.find(p => p.id === activeProjectId);
+    const unitMix = activeProject?.feasibilityParams?.unitMix || DEFAULT_FEASIBILITY_PARAMS.unitMix;
+    const weightedAvgUnitArea = unitMix.reduce((acc, u) => acc + u.area * u.mixRatio, 0) || 70;
+    const coreFactor = activeProject?.feasibilityParams?.coreFactor ?? DEFAULT_FEASIBILITY_PARAMS.coreFactor;
+    const circFactor = activeProject?.feasibilityParams?.circulationFactor ?? DEFAULT_FEASIBILITY_PARAMS.circulationFactor;
+    const efficiencyFactor = 1 - coreFactor - circFactor;
 
     // Derive the truly selected plot based on user selection
     const selectedPlot = selectedObjectId?.type === 'Plot'
@@ -86,11 +98,18 @@ export function SavedScenariosPanel({ embedded = false }: SavedScenariosPanelPro
                                         plot.buildings.forEach((b: any) => {
                                             if (b.visible) {
                                                 totalGFA += b.area * (b.numFloors || 1);
+                                                // Use actual unit counts from exact typology
+                                                if (b.units && b.units.length > 0) {
+                                                    totalUnits += b.units.length;
+                                                }
                                             }
                                         });
                                     }
                                 });
-                                totalUnits = Math.floor((totalGFA * 0.85) / 70);
+                                // Fallback: use weighted avg unit area from project params
+                                if (totalUnits === 0) {
+                                    totalUnits = Math.floor((totalGFA * efficiencyFactor) / weightedAvgUnitArea);
+                                }
                             }
 
                             // Get geometry for thumbnail

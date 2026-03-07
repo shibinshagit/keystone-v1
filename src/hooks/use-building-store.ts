@@ -8,7 +8,7 @@ import { BuildingIntendedUse, type Plot, type Building, type GreenArea, type Par
 import { calculateDevelopmentStats, DEFAULT_FEASIBILITY_PARAMS } from '@/lib/development-calc';
 import { calculateParkingCapacity } from '@/lib/parking-calc';
 import { produce } from 'immer';
-import { applyPeripheralClearZone } from '@/lib/generators/geometry-utils';
+import { applyPeripheralClearZone, planarArea } from '@/lib/generators/geometry-utils';
 import { toast } from './use-toast';
 import { useMemo } from 'react';
 import { generateSiteLayout } from '@/ai/flows/ai-site-layout-generator';
@@ -2395,7 +2395,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             name: `Building ${i + 1} (Podium)`,
                             geometry: f,
                             centroid: turf.centroid(f),
-                            area: turf.area(f),
+                            area: planarArea(f),
                             height: pFloors * floorHeight,
                             numFloors: pFloors,
                             baseHeight: 0,
@@ -2417,7 +2417,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             name: `Building ${i + 1} (Tower)`,
                             geometry: towerGeometry,
                             centroid: turf.centroid(towerGeometry),
-                            area: turf.area(towerGeometry),
+                            area: planarArea(towerGeometry),
                             height: tFloors * floorHeight,
                             numFloors: tFloors,
                             baseHeight: pFloors * floorHeight,
@@ -2445,7 +2445,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         name: `Building ${i + 1}`,
                         geometry: f,
                         centroid: turf.centroid(f),
-                        area: turf.area(f),
+                        area: planarArea(f),
                         height: height,
                         numFloors: floors,
                         baseHeight: 0,
@@ -2737,7 +2737,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         type: UtilityType.Roads,
                         geometry: peripheralRoadZone as Feature<Polygon>,
                         centroid: turf.centroid(peripheralRoadZone),
-                        area: turf.area(peripheralRoadZone),
+                        area: planarArea(peripheralRoadZone),
                         visible: true
                     };
                     plotClone.utilityAreas = [...existingManualRoads, ...existingUserUtilities, roadUtility];
@@ -2883,7 +2883,41 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                         }
 
                                         if (finalParkingGeom) {
-                                            const finalArea = turf.area(finalParkingGeom);
+                                            let finalArea = planarArea(finalParkingGeom);
+
+                                            // MATHEMATICAL SUBTRACTION (Option 1)
+                                            // The visual polygons for utilities are small to fit the layout.
+                                            // We must subtract the rest of their required NBC area mathematically.
+                                            const geometricArea = finalArea;
+                                            for (const util of smartUtils) {
+                                                // Only ground-level utilities consume surface parking area
+                                                if (util.level !== undefined && util.level < 0) continue;
+                                                
+                                                let physicalArea = 0;
+                                                if (util.geometry) {
+                                                    try {
+                                                        const buffered = turf.buffer(util.geometry, 0.05, { units: 'meters' });
+                                                        physicalArea = planarArea(buffered);
+                                                    } catch (e) {
+                                                        physicalArea = planarArea(util.geometry); // fallback
+                                                    }
+                                                }
+                                                const requiredArea = util.targetArea || util.area;
+                                                
+                                                // Subtract the difference between required area and what was already physically subtracted
+                                                if (requiredArea > physicalArea) {
+                                                    // The buffer (0.05m) already subtracted slightly more than physicalArea from geometricArea.
+                                                    // To ensure we subtract exactly requiredArea in total:
+                                                    const penalty = Math.max(0, requiredArea - physicalArea);
+                                                    console.log(`[Parking Math] ${util.name}: required=${requiredArea.toFixed(1)}m², physical=${physicalArea.toFixed(1)}m², penalty=${penalty.toFixed(1)}m²`);
+                                                    finalArea -= penalty;
+                                                }
+                                            }
+                                            
+                                            // Prevent negative areas if utilities completely consume the space
+                                            finalArea = Math.max(0, finalArea);
+                                            console.log(`[Parking Math] Geometric parking: ${geometricArea.toFixed(0)}m² → After utility subtraction: ${finalArea.toFixed(0)}m²`);
+
                                             const parkingArea: ParkingArea = {
                                                 id: `parking-peripheral-${crypto.randomUUID()}`,
                                                 name: 'Peripheral Parking',
@@ -2895,6 +2929,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                                 capacity: Math.floor((finalArea * 0.75) / 12.5),
                                                 visible: true
                                             };
+
                                             plotClone.parkingAreas.push(parkingArea);
 
                                             // --- SOLAR PV FLOATING OVER PARKING ---
@@ -3001,7 +3036,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             geometry: peripheralParkingZone as Feature<Polygon>,
                             originalGeometry: peripheralParkingZone as Feature<Polygon>,
                             centroid: turf.centroid(peripheralParkingZone),
-                            area: turf.area(peripheralParkingZone),
+                            area: planarArea(peripheralParkingZone),
                             capacity: Math.floor((turf.area(peripheralParkingZone) * 0.75) / 12.5),
                             visible: true
                         };
@@ -3861,7 +3896,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                     type: UtilityType.Roads,
                                     geometry: roadPolygon,
                                     centroid: turf.centroid(roadPolygon),
-                                    area: turf.area(roadPolygon),
+                                    area: planarArea(roadPolygon),
                                     visible: true
                                 };
                                 plot.utilityAreas.push(roadArea);
@@ -4192,7 +4227,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         } // end if (props.numFloors !== undefined || props.typicalFloorHeight !== undefined)
 
                         if (props.geometry) {
-                            building.area = turf.area(props.geometry);
+                            building.area = planarArea(props.geometry);
                         }
 
 
@@ -4311,7 +4346,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 if (plot) {
                     Object.assign(plot, props);
                     if (props.geometry) {
-                        plot.area = turf.area(props.geometry);
+                        plot.area = planarArea(props.geometry);
                     }
                     if (props.selectedRegulationType) {
                         plot.regulation = plot.availableRegulations?.find((r: any) => r.type === props.selectedRegulationType) || null;
@@ -4542,7 +4577,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             height: floorHeight,
                             color: generateFloorColors(floors, intendedUse)[j] || '#cccccc'
                         })),
-                        area: turf.area(f),
+                        area: planarArea(f),
                         numFloors: floors,
                         typicalFloorHeight: floorHeight,
                         visible: true,
@@ -5166,7 +5201,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                 name: `${aiMassingObject.name} (Tower)`,
                                 geometry: towerGeometry,
                                 centroid: turf.centroid(towerGeometry),
-                                area: turf.area(towerGeometry),
+                                area: planarArea(towerGeometry),
                                 isPolygonClosed: true,
                                 height: towerHeight,
                                 opacity: getOpacityForBuildingType(aiMassingObject.intendedUse ?? BuildingIntendedUse.Residential),
@@ -5544,8 +5579,29 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         });
                     }
 
+                    // MATHEMATICAL SUBTRACTION (Option 1)
+                    // Calculate the total remaining un-subtracted area of ground utilities
+                    let remainingUtilityPenalty = 0;
+                    const groundUtilities = plot.utilityAreas.filter(u => (u as any).level === undefined || (u as any).level === 0);
+                    for (const util of groundUtilities) {
+                        const requiredArea = util.targetArea || util.area;
+                        const physicalArea = util.geometry ? planarArea(util.geometry) : 0;
+                        if (requiredArea > physicalArea && !util.id.includes('road')) {
+                            // Rough approximation: half the penalty goes to parking, half to green
+                            remainingUtilityPenalty += (requiredArea - physicalArea) * 0.5;
+                        }
+                    }
+
                     greenPolygons.forEach((poly, i) => {
-                        const areaSize = turf.area(poly);
+                        let areaSize = planarArea(poly);
+                        
+                        // Apply a proportional amount of the penalty to this green polygon
+                        if (remainingUtilityPenalty > 0) {
+                            const penaltyToApply = Math.min(areaSize * 0.8, remainingUtilityPenalty); // Don't wipe out the whole polygon
+                            areaSize -= penaltyToApply;
+                            remainingUtilityPenalty -= penaltyToApply;
+                        }
+
                         if (areaSize > 10) {
                             newGreenAreas.push({
                                 id: `green-area-${plotId}-${i}`,
@@ -5587,8 +5643,10 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             try {
                 // Clone ground-level utility geometries only (level === 0 or undefined)
                 // Exclude: Peripheral Road, basement (level < 0), floating/canopy (level > 0 like Solar PV)
-                const cloneUtilityGeoms = plot.utilityAreas
-                    .filter(u => u.geometry && !u.name?.includes('Peripheral Road') && ((u as any).level === undefined || (u as any).level === 0))
+                const groundUtilities = plot.utilityAreas
+                    .filter(u => u.geometry && !u.name?.includes('Peripheral Road') && ((u as any).level === undefined || (u as any).level === 0));
+                
+                const cloneUtilityGeoms = groundUtilities
                     .map(u => JSON.parse(JSON.stringify(u.geometry)));
 
                 // Process each peripheral parking area using its stored originalGeometry
@@ -5611,7 +5669,34 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                     if (!freshParkingGeom) return pa; // Keep original if subtraction leaves nothing
 
-                    const newArea = turf.area(freshParkingGeom);
+                    let newArea = planarArea(freshParkingGeom);
+
+                    // MATHEMATICAL SUBTRACTION (Option 1)
+                    // The visual polygons for utilities are small.
+                    // We must subtract the rest of their required NBC area mathematically.
+                    for (const util of groundUtilities) {
+                        let physicalArea = 0;
+                        if (util.geometry) {
+                            try {
+                                const buffered = turf.buffer(util.geometry, 0.05, { units: 'meters' });
+                                physicalArea = planarArea(buffered);
+                            } catch (e) {
+                                physicalArea = planarArea(util.geometry); // fallback
+                            }
+                        }
+                        const requiredArea = util.targetArea || util.area;
+                        
+                        if (requiredArea > physicalArea) {
+                            // Ensure the penalty exactly makes up the difference to reach requiredArea
+                            const penalty = Math.max(0, requiredArea - physicalArea);
+                            console.log(`[recalcParking Math] ${util.name}: required=${requiredArea.toFixed(1)}m², physical=${physicalArea.toFixed(1)}m², penalty=${penalty.toFixed(1)}m²`);
+                            newArea -= penalty;
+                        }
+                    }
+                    
+                    newArea = Math.max(0, newArea);
+                    console.log(`[recalcParking Math] Final parking area: ${newArea.toFixed(0)}m²`);
+
                     return {
                         ...pa,
                         geometry: freshParkingGeom,

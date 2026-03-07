@@ -1,5 +1,3 @@
-'use client';
-
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -7,19 +5,31 @@ import { useBuildingStore } from '@/hooks/use-building-store';
 import { ScenarioThumbnail } from './scenario-thumbnail';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { DEFAULT_FEASIBILITY_PARAMS } from '@/lib/development-calc';
 
 export function ScenarioSelectorModal() {
     const {
         tempScenarios,
         isGeneratingScenarios,
         designOptions,
-        actions
+        actions,
+        activeProjectId,
+        projects,
     } = useBuildingStore(state => ({
         tempScenarios: state.tempScenarios,
         isGeneratingScenarios: state.isGeneratingScenarios,
         designOptions: state.designOptions,
         actions: state.actions,
+        activeProjectId: state.activeProjectId,
+        projects: state.projects,
     }));
+
+    const activeProject = projects.find(p => p.id === activeProjectId);
+    const unitMix = activeProject?.feasibilityParams?.unitMix || DEFAULT_FEASIBILITY_PARAMS.unitMix;
+    const weightedAvgUnitArea = unitMix.reduce((acc, u) => acc + u.area * u.mixRatio, 0) || 70;
+    const coreFactor = activeProject?.feasibilityParams?.coreFactor ?? DEFAULT_FEASIBILITY_PARAMS.coreFactor;
+    const circFactor = activeProject?.feasibilityParams?.circulationFactor ?? DEFAULT_FEASIBILITY_PARAMS.circulationFactor;
+    const efficiencyFactor = 1 - coreFactor - circFactor; // net usable ratio
 
     const isOpen = tempScenarios !== null;
 
@@ -95,15 +105,28 @@ export function ScenarioSelectorModal() {
                         let totalGFA = 0;
                         let totalUnits = 0;
 
+                        console.log(`[Scenario ${index}] Checking building units structure:`, 
+                            scenario.plots[0]?.buildings[0]?.units !== undefined ? 'Has .units' : 'No .units',
+                            (scenario.plots[0]?.buildings[0] as any)?.properties?.units !== undefined ? 'Has .properties.units' : 'No .properties.units',
+                            'Building keys:', Object.keys(scenario.plots[0]?.buildings[0] || {})
+                        );
+
                         scenario.plots.forEach(plot => {
                             plot.buildings.forEach((b: any) => {
                                 if (b.visible) {
                                     totalGFA += b.area * (b.numFloors || 1);
+                                    // b.units already contains instances for all floors
+                                    if (b.units && b.units.length > 0) {
+                                        totalUnits += b.units.length;
+                                    }
                                 }
                             });
                         });
 
-                        totalUnits = Math.floor((totalGFA * 0.85) / 70);
+                        // Fallback only if no buildings had units
+                        if (totalUnits === 0) {
+                            totalUnits = Math.floor((totalGFA * efficiencyFactor) / weightedAvgUnitArea);
+                        }
 
                         return (
                             <Card

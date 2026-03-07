@@ -6,6 +6,13 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 
+// We need to define the type expected by the AI flow if it doesn't infer it correctly
+interface ExtractorInput {
+    documentText: string;
+    fileName: string;
+    overrideLocation?: string;
+}
+
 async function extractTextFromFile(file: File): Promise<string> {
     const buffer = Buffer.from(await file.arrayBuffer());
     const fileName = file.name.toLowerCase();
@@ -27,6 +34,7 @@ export async function POST(request: NextRequest) {
     try {
         const formData = await request.formData();
         const file = formData.get('file') as File;
+        const overrideLocation = formData.get('overrideLocation') as string | null;
 
         if (!file) {
             return NextResponse.json({ error: 'No file provided' }, { status: 400 });
@@ -43,10 +51,12 @@ export async function POST(request: NextRequest) {
         }
 
         // Use AI to extract regulation data
-        const extractedData = await extractRegulationData({
+        const input: ExtractorInput = {
             documentText,
             fileName: file.name,
-        });
+            overrideLocation: overrideLocation === 'none' ? undefined : overrideLocation || undefined,
+        };
+        const extractedData = await extractRegulationData(input);
 
         return NextResponse.json({
             success: true,

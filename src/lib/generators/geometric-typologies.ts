@@ -1,4 +1,5 @@
 import * as turf from '@turf/turf';
+import { planarArea } from './geometry-utils';
 import { generateBuildingLayout } from './layout-generator';
 import { Feature, Polygon, MultiPolygon, Point, LineString } from 'geojson';
 import { UnitTypology } from '../types';
@@ -54,6 +55,10 @@ function applyCornerClearance(
         try {
             const shrunk = turf.buffer(part, -minClearance / 2000, { units: 'kilometers' });
             if (shrunk && turf.area(shrunk) > 50) {
+                // Recalculate stored area after shrinkage
+                if (shrunk.properties || part.properties) {
+                    shrunk.properties = { ...(part.properties || {}), ...(shrunk.properties || {}), area: planarArea(shrunk) };
+                }
                 return shrunk as Feature<Polygon>;
             }
             return part;
@@ -938,7 +943,7 @@ export function generateHShapes(
                                                 });
 
                                                 shape.properties = {
-                                                    type: 'generated', subtype: 'hshaped', area: turf.area(shape),
+                                                    type: 'generated', subtype: 'hshaped', area: planarArea(shape),
                                                     cores: layout.cores, units: layout.units, entrances: layout.entrances, internalUtilities: layout.utilities,
                                                     scenarioId: `H-Pair-${i}-${j}-${v.name}`,
                                                     pairId: `${i}-${j}`,
@@ -1226,7 +1231,7 @@ export function generateSlabShapes(
                     }
 
                     if (validPoly) {
-                        const area = turf.area(validPoly);
+                        const area = planarArea(validPoly);
                         const layout = generateBuildingLayout(validPoly, {
                             subtype: 'slab', unitMix: params.unitMix, alignmentRotation: edgeData.bearing, selectedUtilities: params.selectedUtilities
                         });
@@ -1344,7 +1349,7 @@ export function generatePointShapes(
 
                     // @ts-ignore
                     const intersect = turf.intersect(poly, validArea);
-                    const polyArea = turf.area(poly);
+                    const polyArea = planarArea(poly);
 
                     if (intersect && turf.area(intersect) >= polyArea * 0.95) {
                         if (!checkCollision(poly, usedAreas)) {
@@ -1412,7 +1417,7 @@ export function generatePointShapes(
                     }
 
                     if (validPoly) {
-                        const area = turf.area(validPoly);
+                        const area = planarArea(validPoly);
                         const layout = generateBuildingLayout(validPoly, {
                             subtype: 'point', unitMix: params.unitMix, alignmentRotation: bearing, selectedUtilities: params.selectedUtilities
                         });

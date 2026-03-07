@@ -6,6 +6,7 @@ import { Slider } from '@/components/ui/slider';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import * as turf from '@turf/turf';
+import { planarArea, planarDimensions } from '@/lib/generators/geometry-utils';
 import { BuildingIntendedUse, type Floor, type Plot, type BuildableArea, FeasibilityParams, UnitTypology, type UtilityArea, UtilityType, ParkingType } from '@/lib/types';
 import { calculateDevelopmentStats, DEFAULT_FEASIBILITY_PARAMS } from '@/lib/development-calc';
 import { calculateTotalParkingSpaces } from '@/lib/parking-calc';
@@ -46,7 +47,15 @@ function BuildingProperties() {
     // Occupiable floor count = numFloors if set (should exclude parking), or derive from floors array
     const occupiableFloorCount = selectedBuilding.numFloors ?? (selectedBuilding.floors.length - parkingFloorsCount);
     const effectiveFloors = Math.max(0, occupiableFloorCount);
-    const currentBuildingGFA = selectedBuilding.area * effectiveFloors;
+    let displayArea = selectedBuilding.area;
+    try {
+        const pd = planarDimensions(selectedBuilding.geometry);
+        const l = Math.round(pd.length * 10) / 10;
+        const w = Math.round(pd.width * 10) / 10;
+        displayArea = Math.round(l * w * 100) / 100;
+    } catch(e) {}
+
+    const currentBuildingGFA = displayArea * effectiveFloors;
     const newBuildingGFA = currentBuildingGFA;
     const remainingGFA = totalGFA - (consumedGFA - currentBuildingGFA);
     const isOverLimit = newBuildingGFA > remainingGFA;
@@ -58,7 +67,7 @@ function BuildingProperties() {
             <div className='p-3 bg-secondary rounded-md space-y-2 text-sm'>
                 <div className='flex justify-between'>
                     <span className='text-muted-foreground'>Footprint Area:</span>
-                    <span className='font-mono'>{selectedBuilding.area.toFixed(2)} m²</span>
+                    <span className='font-mono'>{displayArea.toFixed(2)} m²</span>
                 </div>
                 <div className={cn('flex justify-between', isOverLimit ? 'text-destructive' : 'text-muted-foreground')}>
                     <span className=''>Gross Floor Area (GFA):</span>
@@ -184,7 +193,7 @@ function BuildingProperties() {
                 const unitTypeAreas: Record<string, number[]> = {};
                 (selectedBuilding.units || []).forEach(u => {
                     if (!unitTypeAreas[u.type]) unitTypeAreas[u.type] = [];
-                    unitTypeAreas[u.type].push(turf.area(u.geometry));
+                    unitTypeAreas[u.type].push(planarArea(u.geometry));
                 });
                 
                 const uniqueUnitTypes = Object.keys(unitTypeAreas);
@@ -225,7 +234,7 @@ function BuildingProperties() {
                                             Core ({selectedBuilding.cores.length})
                                         </span>
                                         <span className="text-muted-foreground font-mono">
-                                            {selectedBuilding.cores.reduce((s, c) => s + turf.area(c.geometry), 0).toFixed(1)} m²
+                                            {selectedBuilding.cores.reduce((s, c) => s + planarArea(c.geometry), 0).toFixed(1)} m²
                                         </span>
                                     </div>
                                 )}
@@ -235,7 +244,7 @@ function BuildingProperties() {
                                     <div className="space-y-1">
                                         {selectedBuilding.internalUtilities.map(util => {
                                             const isElec = util.type === 'Electrical';
-                                            const utilArea = turf.area(util.geometry);
+                                            const utilArea = planarArea(util.geometry);
                                             return (
                                                 <div key={util.id} className="flex items-center gap-2 px-1 py-0.5 text-muted-foreground">
                                                     {isElec ? <Zap className="h-3 w-3 text-amber-400 shrink-0" /> : <Fan className="h-3 w-3 text-blue-400 shrink-0" />}
@@ -643,12 +652,8 @@ function ZoneProperties() {
 
             <div className="p-3 bg-secondary rounded-md space-y-2 text-sm mt-4">
                 <div className="flex justify-between">
-                    <span className="text-muted-foreground">Required Area (NBC/IS):</span>
-                    <span className="font-mono font-bold">{((object as any).targetArea || object.area).toFixed(2)} m²</span>
-                </div>
-                <div className="flex justify-between">
-                    <span className="text-muted-foreground">Actual Footprint:</span>
-                    <span className="font-mono text-muted-foreground">{object.area.toFixed(2)} m²</span>
+                    <span className="text-muted-foreground">Footprint Area:</span>
+                    <span className="font-mono">{((object as any).targetArea || object.area).toFixed(1)} m²</span>
                 </div>
             </div>
         </div>
@@ -695,7 +700,7 @@ function InternalUtilityProperties() {
             <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                     <span className="text-muted-foreground">Footprint Area</span>
-                    <span className="font-mono">{(internalUtility.geometry ? turf.area(internalUtility.geometry) : 0).toFixed(1)} m²</span>
+                    <span className="font-mono">{(internalUtility.geometry ? planarArea(internalUtility.geometry) : 0).toFixed(1)} m²</span>
                 </div>
                 <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md space-y-2 mt-4">
                     <h5 className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">Utility Specs</h5>

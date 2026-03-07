@@ -40,7 +40,7 @@ export async function generateWithFallback(prompt: string, preferredModel?: stri
         // Fallback to Gemini
         try {
             const { text } = await ai.generate({
-                model: 'googleai/gemini-1.5-flash',
+                model: 'googleai/gemini-2.5-flash',
                 prompt,
             });
             return text;

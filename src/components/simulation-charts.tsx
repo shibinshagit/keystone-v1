@@ -679,7 +679,10 @@ export function SimBoxPlot({ data, title = 'Cost Component Variability' }: BoxPl
                     return (
                         <div key={c.label} className="flex items-center gap-3">
                             <div className="w-24 text-[11px] font-medium text-right shrink-0">{c.label}</div>
-                            <div className="flex-1 relative h-6">
+                            <div
+                                className="flex-1 relative h-6"
+                                title={`${c.label} Breakdown:\n• P95 (Worst Case): ${fmtCr(max)}\n• Q3 (75th Percentile): ${fmtCr(q3)}\n• Median: ${fmtCr(median)}\n• Q1 (25th Percentile): ${fmtCr(q1)}\n• P5 (Best Case): ${fmtCr(min)}`}
+                            >
                                 {/* Whisker line (min to max) */}
                                 <div
                                     className="absolute top-1/2 -translate-y-1/2 h-[2px] bg-muted-foreground/40"

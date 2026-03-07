@@ -8,6 +8,12 @@ import { toast } from '@/hooks/use-toast';
 import type { RegulationData } from '@/lib/types';
 import { Alert, AlertDescription } from './ui/alert';
 import { Badge } from './ui/badge';
+import { Label } from './ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+
+const INDIAN_STATES_AND_UTS = [
+    "National (NBC)", "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal"
+];
 
 interface UploadRegulationDialogProps {
     isOpen: boolean;
@@ -19,6 +25,7 @@ export function UploadRegulationDialog({ isOpen, onOpenChange, onExtracted }: Up
     const [isUploading, setIsUploading] = useState(false);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [extractedData, setExtractedData] = useState<any[]>([]);
+    const [overrideLocation, setOverrideLocation] = useState<string>('');
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -35,6 +42,9 @@ export function UploadRegulationDialog({ isOpen, onOpenChange, onExtracted }: Up
         try {
             const formData = new FormData();
             formData.append('file', selectedFile);
+            if (overrideLocation) {
+                formData.append('overrideLocation', overrideLocation);
+            }
 
             const response = await fetch('/api/extract-regulation', {
                 method: 'POST',
@@ -69,12 +79,14 @@ export function UploadRegulationDialog({ isOpen, onOpenChange, onExtracted }: Up
             onOpenChange(false);
             setSelectedFile(null);
             setExtractedData([]);
+            setOverrideLocation('');
         }
     };
 
     const handleCancel = () => {
         setSelectedFile(null);
         setExtractedData([]);
+        setOverrideLocation('');
         onOpenChange(false);
     };
 
@@ -113,6 +125,24 @@ export function UploadRegulationDialog({ isOpen, onOpenChange, onExtracted }: Up
                                         Selected: {selectedFile.name}
                                     </p>
                                 )}
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="override-location">Location Override (Optional)</Label>
+                                <Select value={overrideLocation} onValueChange={setOverrideLocation}>
+                                    <SelectTrigger id="override-location">
+                                        <SelectValue placeholder="Let AI determine location..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="none" className="text-muted-foreground italic">Let AI determine location...</SelectItem>
+                                        {INDIAN_STATES_AND_UTS.map(state => (
+                                            <SelectItem key={state} value={state}>{state}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">
+                                    Forces the AI to tag all extracted rules under this specific location (e.g., Delhi, Haryana).
+                                </p>
                             </div>
 
                             <Button

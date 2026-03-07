@@ -134,8 +134,8 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
     });
 
     const [shuffleUnits, setShuffleUnits] = useState(false);
-    const [exactTypologyAllocation, setExactTypologyAllocation] = useState(false); // Use exact Method B typology sizes
-    const [allocationMode, setAllocationMode] = useState<'floor' | 'plot'>('floor'); // New Allocation Mode
+    const [exactTypologyAllocation, setExactTypologyAllocation] = useState(true); // DEFAULT ON
+    const [allocationMode, setAllocationMode] = useState<'floor' | 'plot'>('floor');
     const [selectedUtilities, setSelectedUtilities] = useState<string[]>(['Roads', 'Water', 'Electrical', 'HVAC', 'STP', 'WTP', 'Solar PV', 'EV Charging']);
 
     // Constraints
@@ -571,8 +571,8 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                             )}
                             */}
 
-                            {/* Unit Mix Allocation (Residential / Mixed Only) */}
-                            {(landUse === 'residential' || landUse === 'mixed') && (
+                            {/* Unit Mix Allocation (Residential / Mixed Only) - Exact Typology is now the default */}
+                            {/* (landUse === 'residential' || landUse === 'mixed') && (
                                 <div className="p-3 bg-muted/20 border rounded-lg space-y-3">
                                     <div className="flex justify-between items-center">
                                         <Label className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">Unit Mix Allocation</Label>
@@ -611,7 +611,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                         ))}
                                     </div>
 
-                                    {/* Shuffle Toggle */}
+                                    Shuffle Toggle
                                     <div className="flex items-center justify-between pt-1 border-t border-border/30">
                                         <Label className="text-[10px] text-muted-foreground cursor-pointer" onClick={() => setShuffleUnits(!shuffleUnits)}>
                                             Shuffle Unit Order
@@ -624,7 +624,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                         />
                                     </div>
 
-                                    {/* Exact Typology Allocation Toggle */}
+                                    Exact Typology Allocation Toggle
                                     <div className="flex items-center justify-between pt-1">
                                         <div>
                                             <Label className="text-[10px] text-muted-foreground cursor-pointer" onClick={() => setExactTypologyAllocation(!exactTypologyAllocation)}>
@@ -642,7 +642,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                         />
                                     </div>
                                 </div>
-                            )}
+                            ) */}
 
                             {/* Podium / Stepped Massing Controls (Residential) */}
                             {landUse === 'residential' && (

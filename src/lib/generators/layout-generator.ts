@@ -1,5 +1,6 @@
 
 import * as turf from '@turf/turf';
+import { planarArea } from './geometry-utils';
 import { Feature, Polygon, MultiPolygon, Point } from 'geojson';
 import { Building, Core, Unit, UnitTypology, UtilityArea, UtilityType, EntryPoint, BuildingIntendedUse } from '../types';
 import { generateVastuGates } from '../vastu-gate-generator';
@@ -501,7 +502,8 @@ export function generateBuildingLayout(
     };
 
     // Electrical Shaft (Vertical Utility)
-    if (shouldInclude('Electrical')) {
+    // In exact typology mode, skip placing electrical as separate polygon — it's already included in core area
+    if (shouldInclude('Electrical') && !params.exactTypologyAllocation) {
     try {
         const bBox = turf.bbox(workingPoly);
         
@@ -554,7 +556,7 @@ export function generateBuildingLayout(
             type: UtilityType.Electrical,
             geometry: safeElecPoly as Feature<Polygon>,
             centroid: turf.centroid(safeElecPoly as Feature<Polygon>),
-            area: turf.area(safeElecPoly as Feature<Polygon>),
+            area: planarArea(safeElecPoly as Feature<Polygon>),
             visible: true
         });
         
@@ -615,7 +617,7 @@ export function generateBuildingLayout(
             type: UtilityType.HVAC,
             geometry: hvacPoly as Feature<Polygon>,
             centroid: turf.centroid(hvacPoly),
-            area: turf.area(hvacPoly),
+            area: planarArea(hvacPoly),
             visible: true
         });
         console.log('[Layout Generator] Placed Rooftop HVAC Unit (W/SW - Vastu compliant)');
@@ -694,7 +696,7 @@ export function generateBuildingLayout(
                 type: UtilityType.EVStation,
                 geometry: evPoly as Feature<Polygon>,
                 centroid: turf.centroid(evPoly),
-                area: turf.area(evPoly),
+                area: planarArea(evPoly),
                 visible: true
             });
             console.log('[Layout Generator] Placed EV Charging Zone sub-polygon');
@@ -707,10 +709,14 @@ export function generateBuildingLayout(
     let obstacles: any = undefined;
 
     if (coreGeom) {
-        const corridorW = params.corridorWidth || 0.1;
-        const coreWithCorridor = turf.buffer(coreGeom, corridorW / 1000, { units: 'kilometers' });
-
-        obstacles = coreWithCorridor || coreGeom;
+        if (params.exactTypologyAllocation) {
+            // In exact typology mode: NO corridor buffer — units touch core directly
+            obstacles = coreGeom;
+        } else {
+            const corridorW = params.corridorWidth || 0.1;
+            const coreWithCorridor = turf.buffer(coreGeom, corridorW / 1000, { units: 'kilometers' });
+            obstacles = coreWithCorridor || coreGeom;
+        }
     }
 
     let leasablePoly = workingPoly; 
@@ -809,9 +815,10 @@ export function generateBuildingLayout(
         : turf.centroid(workingPoly);
     const coreCenter = coreCentroidPt.geometry.coordinates;
     
+    // Corridor buffer around core — same for both modes
     const corridorBuffer = params.corridorWidth || 1.5;
     const coreForStrips = coreGeom 
-        ? turf.buffer(coreGeom, corridorBuffer / 1000, { units: 'kilometers' })
+        ? (corridorBuffer > 0 ? turf.buffer(coreGeom, corridorBuffer / 1000, { units: 'kilometers' }) : coreGeom)
         : null;
     const coreBbox = coreForStrips ? turf.bbox(coreForStrips) : null;
     
@@ -823,42 +830,41 @@ export function generateBuildingLayout(
     let stripA: { minX: number, maxX: number, minY: number, maxY: number, depth: number, length: number };
     let stripB: { minX: number, maxX: number, minY: number, maxY: number, depth: number, length: number };
     
+    // Strips use core CENTER as boundary — same for both normal and exact typology.
+    // This makes strips span the full building depth (each ~half the building).
     if (isHorizontalBuilding) {
-        // Horizontal building: core runs E-W, strips are N and S
-        const coreMaxY = (params.exactTypologyAllocation && coreBbox) ? coreBbox[3] : coreCenter[1];
-        const coreMinY = (params.exactTypologyAllocation && coreBbox) ? coreBbox[1] : coreCenter[1];
         stripA = {
             minX: lMinX, maxX: lMaxX,
-            minY: coreMaxY, maxY: lMaxY,
-            depth: (lMaxY - coreMaxY) / degPerMeterY,
+            minY: coreCenter[1], maxY: lMaxY,
+            depth: turf.distance(turf.point([lMinX, coreCenter[1]]), turf.point([lMinX, lMaxY]), { units: 'meters' }),
             length: width
         };
         stripB = {
             minX: lMinX, maxX: lMaxX,
-            minY: lMinY, maxY: coreMinY,
-            depth: (coreMinY - lMinY) / degPerMeterY,
+            minY: lMinY, maxY: coreCenter[1],
+            depth: turf.distance(turf.point([lMinX, lMinY]), turf.point([lMinX, coreCenter[1]]), { units: 'meters' }),
             length: width
         };
     } else {
-        // Vertical building: core runs N-S, strips are E and W
-        const coreMaxX = (params.exactTypologyAllocation && coreBbox) ? coreBbox[2] : coreCenter[0];
-        const coreMinX = (params.exactTypologyAllocation && coreBbox) ? coreBbox[0] : coreCenter[0];
         stripA = {
-            minX: coreMaxX, maxX: lMaxX,
+            minX: coreCenter[0], maxX: lMaxX,
             minY: lMinY, maxY: lMaxY,
-            depth: (lMaxX - coreMaxX) / degPerMeterX,
+            depth: turf.distance(turf.point([coreCenter[0], lMinY]), turf.point([lMaxX, lMinY]), { units: 'meters' }),
             length: depth
         };
         stripB = {
-            minX: lMinX, maxX: coreMinX,
+            minX: lMinX, maxX: coreCenter[0],
             minY: lMinY, maxY: lMaxY,
-            depth: (coreMinX - lMinX) / degPerMeterX,
+            depth: turf.distance(turf.point([lMinX, lMinY]), turf.point([coreCenter[0], lMinY]), { units: 'meters' }),
             length: depth
         };
     }
     
-    console.log(`[Layout Generator] Strips: A depth=${stripA.depth.toFixed(1)}m len=${stripA.length.toFixed(1)}m, B depth=${stripB.depth.toFixed(1)}m len=${stripB.length.toFixed(1)}m`,
-        coreBbox ? `coreBbox=[${coreBbox.map((v: number) => v.toFixed(6)).join(',')}]` : 'no-core-bbox',
+    // Calculate total strip area for accurate allocation budget
+    const totalStripArea = stripA.depth * stripA.length + stripB.depth * stripB.length;
+    
+    console.log(`[Layout Generator] Strips: A depth=${stripA.depth.toFixed(1)}m len=${stripA.length.toFixed(1)}m (${(stripA.depth * stripA.length).toFixed(0)}m²), B depth=${stripB.depth.toFixed(1)}m len=${stripB.length.toFixed(1)}m (${(stripB.depth * stripB.length).toFixed(0)}m²)`,
+        `| totalStrip=${totalStripArea.toFixed(0)}m² vs leasable=${leasableAreaM2.toFixed(0)}m²`,
         `building=${width.toFixed(1)}×${depth.toFixed(1)}m`);
     
     const computeUnitWidths = (stripDepth: number) => {
@@ -896,199 +902,287 @@ export function generateBuildingLayout(
         unitCounts.map(u => `${u.name}=${u.count}×${u.unitWidth.toFixed(1)}m`).join(', '),
         `total=${totalWidthUsed.toFixed(0)}m / ${(totalLength*2).toFixed(0)}m`);
     
-    // EXACT TYPOLOGY ALLOCATION MODE
-    if (params.exactTypologyAllocation && leasableAreaM2 > 0) {
-        let targetTotalArea = 0;
+    // EXACT TYPOLOGY ALLOCATION MODE — Brute-Force Optimal Packing
+    // We strictly use leasableAreaM2 as the budget to ensure we do not over-allocate units
+    // (Strips mathematically exceed leasable space because they span across the core gap)
+    const allocBudget = params.exactTypologyAllocation ? leasableAreaM2 : 0;
+    if (params.exactTypologyAllocation && allocBudget > 0) {
+        const mixTypes = unitCounts.filter(u => u.mixRatio > 0);
         
-        unitCounts.forEach(u => {
-            if (u.mixRatio > 0) {
-                const rawProportion = leasableAreaM2 * u.mixRatio;
-                u.count = Math.max(1, Math.round(rawProportion / u.area));
-            } else {
-                u.count = 0;
+        // Calculate max possible count for each unit type
+        const maxCounts = mixTypes.map(u => Math.floor(allocBudget / u.area));
+        
+        // Check if we can afford at least 1 of each type
+        const minReserved = mixTypes.reduce((s, u) => s + u.area, 0);
+        // We no longer strictly force 1 of each if it hurts total area optimization too much.
+        // We'll let the brute force find the absolute mathematical maximum area.
+        
+        let bestTotal = 0;
+        let bestCounts: Record<string, number> = {};
+        let bestUniqueTypes = 0;
+        
+        // Recursive enumeration for N unit types
+        const enumerate = (typeIdx: number, remainingArea: number, currentCounts: Record<string, number>, currentTotal: number) => {
+            // Base case: all types assigned
+            if (typeIdx >= mixTypes.length) {
+                const uniqueTypes = Object.values(currentCounts).filter(c => c > 0).length;
+                
+                // NEW PRIORITY: (1) Highest total area ALWAYS wins
+                // (2) If areas are exactly identical, prefer the one with more unique types (better mix)
+                if (currentTotal > bestTotal || (currentTotal === bestTotal && uniqueTypes > bestUniqueTypes)) {
+                    bestTotal = currentTotal;
+                    bestCounts = { ...currentCounts };
+                    bestUniqueTypes = uniqueTypes;
+                }
+                return;
             }
-            targetTotalArea += u.count * u.area;
+            
+            const ut = mixTypes[typeIdx];
+            const maxForThis = Math.min(maxCounts[typeIdx], Math.floor(remainingArea / ut.area));
+            
+            // Start from 0 to allow skipping types if it results in better overall packing
+            for (let c = 0; c <= maxForThis; c++) {
+                currentCounts[ut.name] = c;
+                enumerate(typeIdx + 1, remainingArea - (c * ut.area), currentCounts, currentTotal + (c * ut.area));
+            }
+            currentCounts[ut.name] = 0; // reset for backtracking
+        };
+        
+        enumerate(0, allocBudget, {}, 0);
+        
+        // Apply the optimal result
+        unitCounts.forEach(u => {
+            u.count = bestCounts[u.name] || 0;
         });
 
-        while (targetTotalArea > leasableAreaM2 && targetTotalArea > 0) {
-            const validToTrim = [...unitCounts].filter(u => u.count > 0).sort((a, b) => b.area - a.area);
-            if (validToTrim.length > 0) {
-                const targetToTrim = unitCounts.find(u => u.name === validToTrim[0].name)!;
-                targetToTrim.count--;
-                targetTotalArea -= targetToTrim.area;
-            } else {
-                break;
-            }
-        }
-
-        let remainingSpace = leasableAreaM2 - targetTotalArea;
-        const typesSmallToLarge = [...unitCounts].sort((a, b) => a.area - b.area);
-        for (const u of typesSmallToLarge) {
-            while (remainingSpace >= u.area * 0.95) {
-                const originalU = unitCounts.find(x => x.name === u.name)!;
-                originalU.count++;
-                targetTotalArea += originalU.area;
-                remainingSpace -= originalU.area;
-            }
-        }
-
-        console.log(`[Layout Generator] [exactTypology] Fixed Allocation: sum=${targetTotalArea.toFixed(0)}m2 <= leasable=${leasableAreaM2.toFixed(0)}m2 | counts:`, 
+        const utilization = allocBudget > 0 ? ((bestTotal / allocBudget) * 100).toFixed(1) : '0';
+        console.log(`[Layout Generator] [exactTypology] Optimal packing: sum=${bestTotal.toFixed(0)}m² / stripBudget=${allocBudget.toFixed(0)}m² (${utilization}%) | counts:`, 
             unitCounts.map(u => `${u.name}=${u.count}`).join(', '));
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // UNIT PLACEMENT — Same visual layout for both modes.
+    // Exact typology differs only in unit counts (brute-force) and target areas.
+    // ══════════════════════════════════════════════════════════════════════════
 
     let deckA: { type: string, color: string, targetArea: number, unitWidth: number }[] = [];
     let deckB: { type: string, color: string, targetArea: number, unitWidth: number }[] = [];
 
+    const unitDeck: typeof deckA = [];
+    const remaining = unitCounts.map(u => ({ ...u, left: u.count, colorIdx: 0 }));
+    let left = remaining.reduce((s: number, u: any) => s + u.left, 0);
+
+    while (left > 0) {
+        for (const u of remaining) {
+            if (u.left > 0) {
+                const color = u.colorIdx % 2 === 0
+                    ? getColorForUnitType(u.name)
+                    : darkenColor(getColorForUnitType(u.name));
+                unitDeck.push({ type: u.name, color, targetArea: u.area, unitWidth: u.unitWidth });
+                u.left--;
+                u.colorIdx++;
+                left--;
+            }
+        }
+    }
+
+    // For exact typology: sort by area DESCENDING so 4BHK > 3BHK > 2BHK visually
+    // For normal mode: shuffle if requested
     if (params.exactTypologyAllocation) {
-        // ── EXACT TYPOLOGY PATH ──────────────────────────────────────────────────
-        const allUnitsToPlace: typeof deckA = [];
-        unitCounts.forEach(u => {
-            for (let i = 0; i < u.count; i++) {
-                allUnitsToPlace.push({
-                    type: u.name,
-                    color: getColorForUnitType(u.name),
-                    targetArea: u.area,
-                    unitWidth: u.area / avgStripDepth
-                });
-            }
-        });
-        allUnitsToPlace.sort((a, b) => b.targetArea - a.targetArea);
-
-        const typeGroups: Record<string, typeof allUnitsToPlace> = {};
-        for (const u of allUnitsToPlace) {
-            if (!typeGroups[u.type]) typeGroups[u.type] = [];
-            typeGroups[u.type].push(u);
+        unitDeck.sort((a, b) => b.targetArea - a.targetArea);
+    } else if (params.shuffleUnits) {
+        const buildingSeed = Math.floor(coreCenter[0] * 100000 + coreCenter[1] * 100000);
+        const seededRandom = (seed: number) => {
+            const x = Math.sin(seed++) * 10000;
+            return x - Math.floor(x);
+        };
+        let currentSeed = buildingSeed;
+        for (let i = unitDeck.length - 1; i > 0; i--) {
+            const j = Math.floor(seededRandom(currentSeed++) * (i + 1));
+            [unitDeck[i], unitDeck[j]] = [unitDeck[j], unitDeck[i]];
         }
-        for (const typeName of Object.keys(typeGroups)) {
-            const group = typeGroups[typeName];
-            for (let i = 0; i < group.length; i++) {
-                if (i % 2 === 0) deckA.push(group[i]);
-                else deckB.push(group[i]);
-            }
-        }
-        // Within each strip, largest units first
-        deckA.sort((a, b) => b.targetArea - a.targetArea);
-        deckB.sort((a, b) => b.targetArea - a.targetArea);
+    }
 
+    if (params.exactTypologyAllocation) {
+        // Interleave: even indices → strip A, odd → strip B
+        // This gives each strip a balanced mix of unit types (4BHK, 3BHK, 2BHK)
+        for (let i = 0; i < unitDeck.length; i++) {
+            if (i % 2 === 0) deckA.push(unitDeck[i]);
+            else deckB.push(unitDeck[i]);
+        }
     } else {
-        // ── NORMAL MIX PATH (original logic) ─────────────────────────────────────
-        const unitDeck: typeof deckA = [];
-        const remaining = unitCounts.map(u => ({ ...u, left: u.count, colorIdx: 0 }));
-        let left = remaining.reduce((s, u) => s + u.left, 0);
-        while (left > 0) {
-            for (const u of remaining) {
-                if (u.left > 0) {
-                    const color = u.colorIdx % 2 === 0
-                        ? getColorForUnitType(u.name)
-                        : darkenColor(getColorForUnitType(u.name));
-                    unitDeck.push({ type: u.name, color, targetArea: u.area, unitWidth: u.unitWidth });
-                    u.left--;
-                    u.colorIdx++;
-                    left--;
-                }
-            }
-        }
-
-        // Shuffle if requested
-        if (params.shuffleUnits) {
-            const buildingSeed = Math.floor(coreCenter[0] * 100000 + coreCenter[1] * 100000);
-            const seededRandom = (seed: number) => {
-                const x = Math.sin(seed++) * 10000;
-                return x - Math.floor(x);
-            };
-            let currentSeed = buildingSeed;
-            for (let i = unitDeck.length - 1; i > 0; i--) {
-                const j = Math.floor(seededRandom(currentSeed++) * (i + 1));
-                [unitDeck[i], unitDeck[j]] = [unitDeck[j], unitDeck[i]];
-            }
-        }
-
         const aSlots = Math.round(unitDeck.length * 0.5);
         deckA = unitDeck.slice(0, aSlots);
         deckB = unitDeck.slice(aSlots);
     }
-    
+
     const createStripUnits = (
         strip: typeof stripA,
         deck: typeof deckA,
-        unitStartIdx: number
-    ): number => {
-        if (deck.length === 0 || strip.depth < 1 || strip.length < 1) return unitStartIdx;
-        
-        const exactDeckWidth = params.exactTypologyAllocation 
-            ? deck.reduce((s, u) => s + (u.targetArea / strip.depth), 0)
-            : deck.reduce((s, u) => s + u.unitWidth, 0);
+        unitStartIdx: number,
+        colorOffset: number = 0
+    ): { nextIdx: number, spillover: typeof deckA } => {
+        const spillover: typeof deckA = [];
+        if (deck.length === 0 || strip.depth < 1 || strip.length < 1) return { nextIdx: unitStartIdx, spillover: deck };
 
-        const scaleFactor = params.exactTypologyAllocation ? 1 : (strip.length / exactDeckWidth);
-        
-        let currentPos = 0; 
-        
+        const exactDeckWidth = deck.reduce((s, u) => s + (u.targetArea / strip.depth), 0);
+        // Exact typology: NO scaling — units keep their exact target area dimensions.
+        // Normal mode: scale to fill the entire strip length.
+        const scaleFactor = params.exactTypologyAllocation
+            ? 1.0
+            : (exactDeckWidth > 0 ? (strip.length / exactDeckWidth) : 1);
+
+        let currentPos = 0;
+        const typeColorIdx: Record<string, number> = {};
+
         for (let d = 0; d < deck.length; d++) {
             const assignment = deck[d];
-            const exactWidthForThisStrip = params.exactTypologyAllocation ? (assignment.targetArea / strip.depth) : assignment.unitWidth;
-            const scaledWidth = exactWidthForThisStrip * scaleFactor;
-            
-            if (params.exactTypologyAllocation && currentPos + scaledWidth > strip.length * 1.05) {
-                console.log(`[Layout Generator] Exact Typology: Skipped unit ${assignment.type} due to strip length constraints. Trying smaller units in remaining space.`);
-                continue;
-            }
-
-            let nextPos = currentPos + scaledWidth;
-            if (d === deck.length - 1 && (!params.exactTypologyAllocation || (currentPos + scaledWidth > strip.length * 0.95))) {
-                nextPos = strip.length;
-            }
-            if (params.exactTypologyAllocation) {
-                 nextPos = Math.min(nextPos, strip.length); 
-            }
-            
-            let unitRect: Feature<Polygon>;
-            if (isHorizontalBuilding) {
-                const x1 = strip.minX + currentPos * degPerMeterX;
-                const x2 = strip.minX + nextPos * degPerMeterX;
-                unitRect = turf.bboxPolygon([x1, strip.minY, x2, strip.maxY]);
-            } else {
-                const y1 = strip.minY + currentPos * degPerMeterY;
-                const y2 = strip.minY + nextPos * degPerMeterY;
-                unitRect = turf.bboxPolygon([strip.minX, y1, strip.maxX, y2]);
-            }
             
             let finalGeom: Feature<Polygon> | null = null;
-            try {
-                // @ts-ignore
-                const clipped = turf.intersect(unitRect, leasablePoly);
-                if (clipped) {
-                    if (clipped.geometry.type === 'Polygon') {
-                        finalGeom = clipped as Feature<Polygon>;
-                    } else if (clipped.geometry.type === 'MultiPolygon') {
-                        const parts = (clipped.geometry.coordinates as any[]).map((c: any) => turf.polygon(c));
-                        parts.sort((a: any, b: any) => turf.area(b) - turf.area(a));
-                        finalGeom = parts[0] as Feature<Polygon>;
-                    }
+            let nextPos = currentPos;
+
+            if (params.exactTypologyAllocation) {
+                // Check if there's meaningful remaining strip length
+                const remainingLength = strip.length - currentPos;
+                const neededWidth = assignment.targetArea / strip.depth;
+                
+                // If remaining length is less than 30% of needed width, spill to other strip
+                if (remainingLength < neededWidth * 0.3) {
+                    spillover.push(assignment);
+                    continue;
                 }
-            } catch (e) {
-                finalGeom = unitRect;
+
+                // Binary search for exact area after clipping by leasablePoly (which excludes core)
+                let low = currentPos;
+                let high = Math.min(currentPos + neededWidth * 4, strip.length * 1.5);
+                
+                let bestPos = currentPos + neededWidth;
+                let bestGeom: any = null;
+                let bestArea = 0;
+
+                for (let it = 0; it < 12; it++) {
+                    const mid = (low + high) / 2;
+                    let unitRect: Feature<Polygon>;
+                    if (isHorizontalBuilding) {
+                        const x1 = strip.minX + currentPos * degPerMeterX;
+                        const x2 = strip.minX + mid * degPerMeterX;
+                        unitRect = turf.bboxPolygon([x1, strip.minY, x2, strip.maxY]);
+                    } else {
+                        const y1 = strip.minY + currentPos * degPerMeterY;
+                        const y2 = strip.minY + mid * degPerMeterY;
+                        unitRect = turf.bboxPolygon([strip.minX, y1, strip.maxX, y2]);
+                    }
+                    
+                    let actualArea = 0;
+                    let tempGeom: any = null;
+                    try {
+                        // @ts-ignore
+                        const clipped = turf.intersect(unitRect, leasablePoly);
+                        if (clipped) {
+                            if (clipped.geometry.type === 'Polygon') {
+                                tempGeom = clipped as Feature<Polygon>;
+                                actualArea = turf.area(tempGeom);
+                            } else if (clipped.geometry.type === 'MultiPolygon') {
+                                const parts = (clipped.geometry.coordinates as any[]).map((c: any) => turf.polygon(c));
+                                parts.sort((a: any, b: any) => turf.area(b) - turf.area(a));
+                                tempGeom = parts[0] as Feature<Polygon>;
+                                actualArea = turf.area(tempGeom);
+                            }
+                        }
+                    } catch (e) { /* ignore */ }
+                    
+                    if (actualArea < assignment.targetArea) {
+                        low = mid;
+                    } else {
+                        high = mid;
+                    }
+                    bestPos = mid;
+                    bestArea = actualArea;
+                    if (tempGeom) bestGeom = tempGeom;
+                }
+
+                // After binary search, if achieved area is less than 50% of target, spill to other strip
+                if (bestArea < assignment.targetArea * 0.5) {
+                    spillover.push(assignment);
+                    continue;
+                }
+
+                nextPos = bestPos;
+                finalGeom = bestGeom || null; 
+
+            } else {
+                // NORMAL MODE: 
+                const exactWidthForThisStrip = assignment.targetArea / strip.depth;
+                const scaledWidth = exactWidthForThisStrip * scaleFactor;
+
+                nextPos = currentPos + scaledWidth;
+                if (d === deck.length - 1) {
+                    nextPos = Math.max(nextPos, strip.length);
+                }
+                nextPos = Math.min(nextPos, strip.length);
+
+                let unitRect: Feature<Polygon>;
+                if (isHorizontalBuilding) {
+                    const x1 = strip.minX + currentPos * degPerMeterX;
+                    const x2 = strip.minX + nextPos * degPerMeterX;
+                    unitRect = turf.bboxPolygon([x1, strip.minY, x2, strip.maxY]);
+                } else {
+                    const y1 = strip.minY + currentPos * degPerMeterY;
+                    const y2 = strip.minY + nextPos * degPerMeterY;
+                    unitRect = turf.bboxPolygon([strip.minX, y1, strip.maxX, y2]);
+                }
+
+                try {
+                    // @ts-ignore
+                    const clipped = turf.intersect(unitRect, leasablePoly);
+                    if (clipped) {
+                        if (clipped.geometry.type === 'Polygon') {
+                            finalGeom = clipped as Feature<Polygon>;
+                        } else if (clipped.geometry.type === 'MultiPolygon') {
+                            const parts = (clipped.geometry.coordinates as any[]).map((c: any) => turf.polygon(c));
+                            parts.sort((a: any, b: any) => turf.area(b) - turf.area(a));
+                            finalGeom = parts[0] as Feature<Polygon>;
+                        }
+                    }
+                } catch (e) {
+                    finalGeom = unitRect;
+                }
             }
-            
+
             if (finalGeom && turf.area(finalGeom) > 5) {
+                if (typeColorIdx[assignment.type] === undefined) {
+                    typeColorIdx[assignment.type] = colorOffset;
+                }
+                const idx = typeColorIdx[assignment.type]++;
+                const finalColor = idx % 2 === 0
+                    ? getColorForUnitType(assignment.type)
+                    : darkenColor(getColorForUnitType(assignment.type));
+
                 units.push({
                     id: `unit-${unitStartIdx + d}`,
                     type: assignment.type,
                     geometry: finalGeom,
-                    color: assignment.color,
+                    color: finalColor,
                     targetArea: assignment.targetArea
                 });
             }
-            
+
             currentPos = nextPos;
         }
 
-        return unitStartIdx + deck.length + (params.exactTypologyAllocation ? 999 : 0); 
+        return { nextIdx: unitStartIdx + deck.length, spillover };
     };
-    
-    const nextIdx = createStripUnits(stripA, deckA, 0);
-    createStripUnits(stripB, deckB, nextIdx);
-    
-    console.log(`[Layout Generator] Final: ${units.length} units placed.`, 
+
+    // Place units on strip A, then spillover from A goes to B, then spillover from B is lost
+    const resultA = createStripUnits(stripA, deckA, 0, 0);
+    const combinedDeckB = [...deckB, ...resultA.spillover];
+    const resultB = createStripUnits(stripB, combinedDeckB, resultA.nextIdx, 1);
+    // If strip B also had spillover, try placing them back on strip A (it may have space at the end)
+    if (resultB.spillover.length > 0) {
+        createStripUnits(stripA, resultB.spillover, resultB.nextIdx, 0);
+    }
+
+    console.log(`[Layout Generator] Final: ${units.length} units placed.`,
         units.map(u => `${u.type}(${u.targetArea}sqm)`).join(', '));
 
     try {
@@ -1289,7 +1383,9 @@ export function generateSiteUtilities(
 
                 if (area > 0) {
                     const floors = b.numFloors || (b.properties && b.properties.floors) || 5;
-                    totalUnits += Math.floor(area / 80) * floors;
+                    // Use 100 sqm/unit to match regulation-engine.ts (calculateHousingMetrics) so
+                    // utility targetArea stays consistent with what the Dashboard shows.
+                    totalUnits += Math.floor((area * floors) / 100);
                 }
             } catch (e) {
                 console.warn('[Utility Generator] Error calculating building area for unit estimate:', e);
@@ -1653,7 +1749,7 @@ export function generateSiteUtilities(
                         name: util.name,
                         type: util.type,
                         geometry: poly as Feature<Polygon>,
-                        area: turf.area(poly),
+                        area: planarArea(poly),
                         targetArea: util.area,
                         centroid: turf.centroid(poly),
                         visible: util.level !== undefined && util.level < 0 ? false : true,

@@ -288,12 +288,22 @@ export function AdminPanel() {
                     continue;
                 }
 
-                const newRegulation: RegulationData = {
-                    ...JSON.parse(JSON.stringify(DEFAULT_REGULATION_DATA)),
-                    ...extractedData,
-                    location: extractedData.location,
-                    type: extractedData.type,
-                };
+                const newRegulation: RegulationData = produce(
+                    JSON.parse(JSON.stringify(DEFAULT_REGULATION_DATA)) as RegulationData,
+                    voidDraft => {
+                        const draft = voidDraft as any;
+                        draft.location = extractedData.location!;
+                        draft.type = extractedData.type!;
+                        
+                        // Deep merge properties
+                        const categories = ['geometry', 'facilities', 'sustainability', 'safety_and_services', 'administration'];
+                        categories.forEach(cat => {
+                            if ((extractedData as any)[cat]) {
+                                draft[cat] = { ...draft[cat], ...(extractedData as any)[cat] };
+                            }
+                        });
+                    }
+                );
 
                 const regulationId = `${newRegulation.location}-${newRegulation.type}`.replace(/\s+/g, '-');
                 const regulationRef = doc(db, 'regulations', regulationId);
@@ -439,46 +449,44 @@ export function AdminPanel() {
                                     {regulations.length > 0 ? (
                                         <Accordion type="single" collapsible className="w-full space-y-4">
                                             {Object.entries(groupedRegulations).map(([location, locationRegulations]) => (
-                                                <AccordionItem value={location} key={location} className="border rounded-lg bg-card px-4">
-                                                    <AccordionTrigger className="hover:no-underline py-4 group">
-                                                        <div className="flex items-center justify-between w-full pr-4">
+                                                <AccordionItem value={location} key={location} className="relative border rounded-lg bg-card px-4 group/item">
+                                                    <div className="absolute right-14 top-1/2 -translate-y-1/2 z-10">
+                                                        <AlertDialog>
+                                                            <AlertDialogTrigger asChild>
+                                                                <Button 
+                                                                    variant="ghost" 
+                                                                    size="icon" 
+                                                                    className="h-8 w-8 text-destructive/50 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/item:opacity-100 transition-opacity"
+                                                                    disabled={deletingId === location}
+                                                                >
+                                                                    {deletingId === location ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                                                </Button>
+                                                            </AlertDialogTrigger>
+                                                            <AlertDialogContent>
+                                                                <AlertDialogHeader>
+                                                                    <AlertDialogTitle>Delete all regulations for {location}?</AlertDialogTitle>
+                                                                    <AlertDialogDescription>
+                                                                        This will permanently delete all {locationRegulations.length} regulation types for this location. This action cannot be undone.
+                                                                    </AlertDialogDescription>
+                                                                </AlertDialogHeader>
+                                                                <AlertDialogFooter>
+                                                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                                    <AlertDialogAction 
+                                                                        className="bg-destructive hover:bg-destructive/90"
+                                                                        onClick={() => handleDeleteLocation(location)}
+                                                                    >
+                                                                        Delete All
+                                                                    </AlertDialogAction>
+                                                                </AlertDialogFooter>
+                                                            </AlertDialogContent>
+                                                        </AlertDialog>
+                                                    </div>
+                                                    <AccordionTrigger className="hover:no-underline py-4 group pr-8">
+                                                        <div className="flex items-center justify-between w-full">
                                                             <div className="flex items-center gap-4">
                                                                 <span className="text-xl font-semibold text-primary">{location}</span>
                                                                 <Badge variant="secondary" className="ml-2">{locationRegulations.length} Types</Badge>
                                                             </div>
-                                                            <AlertDialog>
-                                                                <AlertDialogTrigger asChild>
-                                                                    <Button 
-                                                                        variant="ghost" 
-                                                                        size="icon" 
-                                                                        className="h-8 w-8 text-destructive/50 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                                        onClick={(e) => e.stopPropagation()}
-                                                                        disabled={deletingId === location}
-                                                                    >
-                                                                        {deletingId === location ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                                                                    </Button>
-                                                                </AlertDialogTrigger>
-                                                                <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                                                                    <AlertDialogHeader>
-                                                                        <AlertDialogTitle>Delete all regulations for {location}?</AlertDialogTitle>
-                                                                        <AlertDialogDescription>
-                                                                            This will permanently delete all {locationRegulations.length} regulation types for this location. This action cannot be undone.
-                                                                        </AlertDialogDescription>
-                                                                    </AlertDialogHeader>
-                                                                    <AlertDialogFooter>
-                                                                        <AlertDialogCancel onClick={(e) => e.stopPropagation()}>Cancel</AlertDialogCancel>
-                                                                        <AlertDialogAction 
-                                                                            className="bg-destructive hover:bg-destructive/90"
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                handleDeleteLocation(location);
-                                                                            }}
-                                                                        >
-                                                                            Delete All
-                                                                        </AlertDialogAction>
-                                                                    </AlertDialogFooter>
-                                                                </AlertDialogContent>
-                                                            </AlertDialog>
                                                         </div>
                                                     </AccordionTrigger>
                                                     <AccordionContent className="pt-2 pb-6">

@@ -1,4 +1,5 @@
 import * as turf from '@turf/turf';
+import { planarDestination } from './generators/geometry-utils';
 import { Feature, Polygon } from 'geojson';
 import { EntryPoint } from './types';
 
@@ -17,7 +18,7 @@ function rayIntersectsPolygon(
     bearingDeg: number,
     plotGeometry: Feature<Polygon>
 ): [number, number] | null {
-    const destination = turf.destination(center, 10, bearingDeg, { units: 'kilometers' });
+    const destination = turf.point(planarDestination(center, 10000, bearingDeg));
     const ray = turf.lineString([center, destination.geometry.coordinates as [number, number]]);
 
     const boundary = turf.polygonToLine(plotGeometry);

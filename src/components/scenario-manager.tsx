@@ -11,9 +11,10 @@ import { useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
 import { ScenarioThumbnail } from './scenario-thumbnail';
 import { Separator } from './ui/separator';
+import { DEFAULT_FEASIBILITY_PARAMS } from '@/lib/development-calc';
 
 // Helper to calculate stats for a scenario
-const getScenarioStats = (plots: any[]) => {
+const getScenarioStats = (plots: any[], efficiencyFactor: number, weightedAvgUnitArea: number) => {
     let totalGFA = 0;
     let totalUnits = 0;
 
@@ -21,15 +22,21 @@ const getScenarioStats = (plots: any[]) => {
         plot.buildings.forEach((b: any) => {
             if (b.visible) {
                 totalGFA += b.area * (b.numFloors || 1);
+                // b.units already contains instances for all floors
+                if (b.units && b.units.length > 0) {
+                    totalUnits += b.units.length;
+                }
             }
         });
     });
 
-    // Simple estimation
-    const units = Math.floor((totalGFA * 0.85) / 70);
+    // Fallback: use weighted avg unit area from project params
+    if (totalUnits === 0) {
+        totalUnits = Math.floor((totalGFA * efficiencyFactor) / weightedAvgUnitArea);
+    }
     return {
         GFA: Math.round(totalGFA),
-        Units: units
+        Units: totalUnits
     };
 };
 
@@ -38,12 +45,23 @@ export function ScenarioContent() {
     const {
         designOptions,
         actions,
-        plots // Current plots to generate from
+        plots,
+        activeProjectId,
+        projects,
     } = useBuildingStore(state => ({
         designOptions: state.designOptions,
         actions: state.actions,
-        plots: state.plots
+        plots: state.plots,
+        activeProjectId: state.activeProjectId,
+        projects: state.projects,
     }));
+
+    const activeProject = projects.find(p => p.id === activeProjectId);
+    const unitMix = activeProject?.feasibilityParams?.unitMix || DEFAULT_FEASIBILITY_PARAMS.unitMix;
+    const weightedAvgUnitArea = unitMix.reduce((acc, u) => acc + u.area * u.mixRatio, 0) || 70;
+    const coreFactor = activeProject?.feasibilityParams?.coreFactor ?? DEFAULT_FEASIBILITY_PARAMS.coreFactor;
+    const circFactor = activeProject?.feasibilityParams?.circulationFactor ?? DEFAULT_FEASIBILITY_PARAMS.circulationFactor;
+    const efficiencyFactor = 1 - coreFactor - circFactor;
 
     const [newScenarioName, setNewScenarioName] = useState('');
     const [isCreating, setIsCreating] = useState(false);
@@ -103,7 +121,7 @@ export function ScenarioContent() {
                 ) : (
                     <div className="space-y-4 pb-20">
                         {designOptions.map(option => {
-                            const stats = getScenarioStats(option.data.plots);
+                            const stats = getScenarioStats(option.data.plots, efficiencyFactor, weightedAvgUnitArea);
                             return (
                                 <Card key={option.id}
                                     className="group relative overflow-hidden transition-all hover:ring-2 hover:ring-primary/50 cursor-pointer border-muted"

@@ -79,10 +79,33 @@ export function useRegulations(project: Project | null): UseRegulationsReturn {
                     }
                 }
 
+                // D. National NBC Fallback
+                if (!foundReg) {
+                    console.log(`⚠️ No local regulations found for ${location}. Falling back to National (NBC)...`);
+                    const nbcQ = query(
+                        collection(db, 'regulations'),
+                        where('location', '==', 'National (NBC)')
+                    );
+                    const nbcSnap = await getDocs(nbcQ);
+
+                    if (!nbcSnap.empty) {
+                        const nbcRegs = nbcSnap.docs.map(d => d.data() as RegulationData);
+                        
+                        // Try to match intended Use, otherwise take any
+                        foundReg = nbcRegs.find(r => r.type === intendedUse)
+                            || nbcRegs.find(r => r.type && r.type.includes(intendedUse))
+                            || nbcRegs[0];
+
+                        if (foundReg) {
+                            console.log(`✅ NBC Fallback selected: ${foundReg.type}`);
+                        }
+                    }
+                }
+
                 if (foundReg) {
                     setRegulations(foundReg);
                 } else {
-                    console.warn(`❌ No regulations found for ${location}`);
+                    console.warn(`❌ No regulations OR NBC fallback found for ${location}`);
                 }
 
 
