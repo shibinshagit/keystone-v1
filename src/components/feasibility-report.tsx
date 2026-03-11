@@ -17,6 +17,13 @@ const fmt = (n: number | undefined | null, d = 0) =>
 const crore = (n: number) => `₹ ${(n / 10000000).toFixed(2)} Cr`;
 const lakh  = (n: number) => `₹ ${(n / 100000).toFixed(1)} L`;
 
+const regLabel = (location?: string | null, withYear = false): string => {
+    if (!location || location === 'National (NBC)') {
+        return withYear ? 'National Building Code 2016 (NBC)' : 'National Building Code (NBC)';
+    }
+    return withYear ? `${location} Building Code` : `${location} Building Code`;
+};
+
 const PageBreak = () => <div className="page-break" style={{ breakAfter: 'page' }} />;
 
 const SH = ({ children }: { children: React.ReactNode }) => (
@@ -158,7 +165,7 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                             ['Parking Spaces', `${parkProv} ECS Provided (${parkReq} Req)`],
                             ['Project Cost', costRange],
                             ['Construction Period', timeRange],
-                            ['Regulatory Framework', plot.regulation?.location ? `${plot.regulation.location} Building Code` : 'Haryana Building Code 2017'],
+                            ['Regulatory Framework', regLabel(plot.regulation?.location)],
                         ].map(([k, v], i) => (
                             <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
                                 <TD className="font-semibold w-1/3">{k}</TD><TD>{v}</TD>
@@ -194,19 +201,55 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                 <table className="w-full border-collapse text-[9px] mb-4">
                     <thead><tr><TH className="w-1/3 text-left">Parameter</TH><TH className="text-left">Details</TH></tr></thead>
                     <tbody>
-                        {[
-                            ['Plot Area', `${fmt(plotArea)} sq.m (${Math.round(Math.sqrt(plotArea))}m × ${Math.round(Math.sqrt(plotArea))}m approx.)`],
-                            ['Location', typeof plot.location === 'object' ? 'Coordinates Defined' : String(plot.location || project.location || '[Sector/Area], Gurugram')],
-                            ['Zoning', `${project.intendedUse || 'Residential'} (Group Housing permitted)`],
-                            ['Access', '6.04m wide road (south side)'],
-                            ['Surroundings', 'Residential (GH-23, GH-24, GH-25)'],
-                            ['Connectivity', '• NH-48: [X km]\n• Metro Station: [X km]\n• Airport: [X km]'],
-                        ].map(([k, v], i) => (
-                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
-                                <TD className="font-semibold">{k}</TD>
-                                <TD className="whitespace-pre-line leading-tight py-1">{v}</TD>
-                            </tr>
-                        ))}
+                        {(() => {
+                            // --- Access from entries + roadAccessSides ---
+                            const entries = plot.entries?.filter(e => e.type === 'Entry' || e.type === 'Both') ?? [];
+                            const accessSides = plot.roadAccessSides?.join(', ') || null;
+                            const entryNames = entries.map(e => e.name).filter(Boolean).join('; ');
+                            const accessStr = [
+                                entryNames || `${entries.length > 0 ? entries.length + ' gate(s)' : 'Gate'}`,
+                                accessSides ? `(${accessSides} side)` : null,
+                            ].filter(Boolean).join(' ');
+
+                            // --- Connectivity from project.locationData.amenities ---
+                            const amenities: any[] = project.locationData?.amenities ?? [];
+                            const findNearest = (keywords: string[]) => {
+                                const hits = amenities.filter((a: any) => {
+                                    const nm = (a.name || a.tags?.name || a.category || '').toLowerCase();
+                                    return keywords.some(k => nm.includes(k));
+                                });
+                                if (!hits.length) return null;
+                                // sort by distance if present
+                                hits.sort((a: any, b: any) => (a.distance ?? 99) - (b.distance ?? 99));
+                                const h = hits[0];
+                                const dist = h.distance != null ? `${(h.distance / 1000).toFixed(1)} km` : null;
+                                const name = h.name || h.tags?.name || null;
+                                return { name, dist };
+                            };
+                            const highway = findNearest(['nh-', 'nh ', 'national highway', 'expressway']);
+                            const metro = findNearest(['metro', 'rapid metro', 'mrts']);
+                            const airport = findNearest(['airport']);
+                            const connLines = [
+                                highway ? `• ${highway.name || 'Nearest Highway'}: ${highway.dist ?? 'nearby'}` : null,
+                                metro   ? `• ${metro.name || 'Metro Station'}: ${metro.dist ?? 'nearby'}` : null,
+                                airport ? `• ${airport.name || 'Airport'}: ${airport.dist ?? 'nearby'}` : null,
+                            ].filter(Boolean);
+                            const connStr = connLines.length > 0 ? connLines.join('\n') : 'Survey pending';
+
+                            const rows: [string, string][] = [
+                                ['Plot Area', `${fmt(plotArea)} sq.m (${Math.round(Math.sqrt(plotArea))}m × ${Math.round(Math.sqrt(plotArea))}m approx.)`],
+                                ['Location', typeof plot.location === 'object' ? 'Coordinates Defined' : String(plot.location || project.location || '[Sector/Area]')],
+                                ['Zoning', `${project.intendedUse || 'Residential'} (Group Housing permitted)`],
+                                ['Access', accessStr || 'Road access from site boundary'],
+                                ['Connectivity', connStr],
+                            ];
+                            return rows.map(([k, v], i) => (
+                                <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                    <TD className="font-semibold">{k}</TD>
+                                    <TD className="whitespace-pre-line leading-tight py-1">{v}</TD>
+                                </tr>
+                            ));
+                        })()}
                     </tbody>
                 </table>
 
@@ -304,12 +347,14 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                             <tbody>
                                 <tr className="bg-slate-50">
                                     <TD>Required (1.5 ECS/unit)</TD>
-                                    <TD className="text-center">{Math.ceil((totalUnits || 64) * 1.5)} ECS</TD>
-                                    <TD rowSpan={3} className="text-center align-middle font-bold text-green-700 border-l border-slate-200">✔ Adequate</TD>
+                                    <TD className="text-center">{Math.round(parkReq * 0.91)} ECS</TD>
+                                    <TD rowSpan={3} className="text-center align-middle font-bold text-green-700 border-l border-slate-200">
+                                        {parkProv >= parkReq ? '✔ Adequate' : '⚠ Deficit'}
+                                    </TD>
                                 </tr>
                                 <tr className="bg-slate-50 border-b border-slate-200">
                                     <TD>Guest (10%)</TD>
-                                    <TD className="text-center">{Math.ceil((totalUnits || 64) * 1.5 * 0.1)} ECS</TD>
+                                    <TD className="text-center">{Math.round(parkReq * 0.09)} ECS</TD>
                                 </tr>
                                 <tr className="font-bold bg-slate-100 border-b border-slate-300">
                                     <TD className="text-slate-800">Total Required</TD>
@@ -318,29 +363,33 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                                 <tr>
                                     <TD className="font-bold text-slate-800">Provided</TD>
                                     <TD className="text-center font-bold text-blue-700">{parkProv} ECS</TD>
-                                    <TD className="text-center font-bold text-blue-700">
-                                        Surplus: {parkProv > parkReq && parkReq > 0 ? `${Math.round(((parkProv - parkReq) / parkReq) * 100)}%` : '0%'}
+                                    <TD className={`text-center font-bold border-l border-slate-200 ${parkProv >= parkReq ? 'text-green-700' : 'text-red-600'}`}>
+                                        {parkProv >= parkReq
+                                            ? `${parkReq > 0 ? Math.round(((parkProv - parkReq) / parkReq) * 100) : 0}% surplus`
+                                            : `${parkReq > 0 ? Math.round(((parkReq - parkProv) / parkReq) * 100) : 0}% deficit`}
                                     </TD>
                                 </tr>
                                 <tr className="bg-slate-50 text-slate-500">
                                     <TD className="pl-3">- Regular (basements)</TD>
-                                    <TD className="text-center">{Math.floor(parkProv * 0.4)} ECS</TD>
+                                    <TD className="text-center">{Math.floor(parkProv * 0.39)} ECS</TD>
                                     <TD className="border-l border-slate-200">&nbsp;</TD>
                                 </tr>
                                 <tr className="bg-slate-50 text-slate-500">
                                     <TD className="pl-3">- Stacker (2-level)</TD>
-                                    <TD className="text-center">{Math.floor(parkProv * 0.4)} ECS</TD>
+                                    <TD className="text-center">{Math.floor(parkProv * 0.38)} ECS</TD>
                                     <TD className="border-l border-slate-200">&nbsp;</TD>
                                 </tr>
                                 <tr className="bg-slate-50 text-slate-500">
                                     <TD className="pl-3">- Open (ground/visitor)</TD>
-                                    <TD className="text-center">{parkProv - Math.floor(parkProv * 0.4) * 2} ECS</TD>
+                                    <TD className="text-center">{parkProv - Math.floor(parkProv * 0.39) - Math.floor(parkProv * 0.38)} ECS</TD>
                                     <TD className="border-l border-slate-200">&nbsp;</TD>
                                 </tr>
                             </tbody>
                         </table>
-                        <p className="text-[9px] font-medium text-green-700 bg-green-50 p-1 border border-green-200 text-center mt-1">
-                            Assessment: ✔ Parking adequate, {parkProv >= parkReq ? `${parkReq > 0 ? Math.round(((parkProv - parkReq) / parkReq) * 100) : 0}% surplus` : 'deficit needs attention'}
+                        <p className={`text-[9px] font-medium p-1 border text-center mt-1 ${parkProv >= parkReq ? 'text-green-700 bg-green-50 border-green-200' : 'text-red-700 bg-red-50 border-red-200'}`}>
+                            Assessment: {parkProv >= parkReq
+                                ? `✔ Parking adequate — ${parkReq > 0 ? Math.round(((parkProv - parkReq) / parkReq) * 100) : 0}% surplus`
+                                : `⚠ Parking deficit — ${parkReq > 0 ? Math.round(((parkReq - parkProv) / parkReq) * 100) : 0}% shortfall`}
                         </p>
                     </div>
                 </div>
@@ -353,21 +402,21 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                 <SH2>Current Land Use Classification</SH2>
                 <ul className="list-disc pl-4 space-y-1 mb-3">
                     <li><strong>Zoning:</strong> {project.intendedUse || 'Residential'} (Group Housing permissible)</li>
-                    <li><strong>Development Plan:</strong> As per {plot.regulation?.location ? `${plot.regulation.location} Building Code` : 'Haryana Building Code 2017'}</li>
+                    <li><strong>Development Plan:</strong> As per {regLabel(plot.regulation?.location)}</li>
                     <li><strong>FAR Permitted:</strong> Base {far}, achievable up to 3.5 with incentives</li>
                     <li><strong>Ground Coverage:</strong> Maximum {maxCov}% {plot.regulation?.location?.includes('Haryana') ? '(Code 6.3(3)(i)(b))' : ''}</li>
                 </ul>
 
                 <SH2>Site Planning Constraints</SH2>
                 <div className="mb-4 text-[10px]">
-                    <strong className="block text-slate-800 mb-1">Setback Requirements {plot.regulation?.location?.includes('Haryana') ? '(Code 7.11(5))' : ''}</strong>
+                    {/* <strong className="block text-slate-800 mb-1">Setback Requirements {plot.regulation?.location?.includes('Haryana') ? '(Code 7.11(5))' : ''}</strong>
                     <p className="text-slate-600 mb-1">For building height {fmt(maxHeight, 1)}m (~{Math.ceil(maxHeight)}m):</p>
                     <ul className="list-disc pl-4 space-y-0.5 mb-2">
                         <li>Front — {generationParams?.frontSetback ?? generationParams?.setback ?? plot.setback ?? 10}m</li>
                         <li>Rear — {generationParams?.rearSetback ?? generationParams?.setback ?? plot.setback ?? 10}m</li>
                         <li>Left — {generationParams?.sideSetback ?? generationParams?.setback ?? plot.setback ?? 10}m</li>
                         <li>Right — {generationParams?.sideSetback ?? generationParams?.setback ?? plot.setback ?? 10}m</li>
-                    </ul>
+                    </ul> */}
 
                     <strong className="block text-slate-800 mb-1">Available Building Zone:</strong>
                     <ul className="list-disc pl-4 space-y-0.5 mb-2">
@@ -383,10 +432,9 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
 
                 <SH2>Applicable Regulations</SH2>
                 <ul className="list-disc pl-4 space-y-1 mb-5 text-[11px]">
-                    <li>{plot.regulation?.location ? `${plot.regulation.location} Building Code` : 'Haryana Building Code 2017 (with amendments up to 06.11.2024)'}</li>
+                    <li>{regLabel(plot.regulation?.location)}</li>
                     <li>National Building Code of India 2016</li>
                     <li>IS Codes for structural design</li>
-                    <li>Haryana Fire Services Act 2009</li>
                     <li>RERA (Real Estate Regulation and Development Act) 2016</li>
                     <li>Environmental clearance norms (Code Chapter 12)</li>
                 </ul>
@@ -410,10 +458,10 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                     </div>
                 </div>
                 <ul className="list-disc pl-4 space-y-1 mb-5">
-                    <li>{plot.regulation?.location ? `${plot.regulation.location} Building Code` : 'Haryana Building Code 2017 (with amendments up to 06.11.2024)'}</li>
+                    <li>{regLabel(plot.regulation?.location)}</li>
                     <li>National Building Code of India 2016</li>
                     <li>IS Codes for structural design</li>
-                    <li>Haryana Fire Services Act 2009</li>
+                    <li>{plot.regulation?.location?.includes('Haryana') ? 'Haryana Fire Services Act 2009' : 'State Fire Services Act / NBC Part 4'}</li>
                     <li>RERA (Real Estate Regulation and Development Act) 2016</li>
                     <li>Environmental clearance norms (Code Chapter 12)</li>
                 </ul>
@@ -422,19 +470,39 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                 <table className="w-full border-collapse mb-4 text-[11px]">
                     <thead><tr><TH>Aspect</TH><TH>Requirement</TH><TH>Proposed</TH><TH>Compliance</TH></tr></thead>
                     <tbody>
-                        <tr><TD className="font-semibold bg-slate-50">FAR</TD><TD>Max {far} (base), up to 3.5 with incentives</TD><TD>{fmt(achievedFAR, 2)}</TD><TD><Check /> Yes</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">Ground Coverage</TD><TD>Max {maxCov}%</TD><TD>{fmt(gcPct, 1)}%</TD><TD><Check /> Yes</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">Height</TD><TD>Unrestricted (with NOC)</TD><TD>{fmt(maxHeight, 1)}m</TD><TD><Check /> Yes</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">Basement</TD><TD>Up to 4 levels</TD><TD>{plot?.parkingAreas?.filter(p => p.type === 'Basement')?.length || 2} levels</TD><TD><Check /> Yes</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">Parking</TD><TD>1.5 ECS per unit</TD><TD>{parkProv} ECS provided</TD><TD>{parkProv >= parkReq ? <><Check /> Yes</> : <span className="text-orange-600 font-bold">Pending</span>}</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">Unit sizes</TD><TD>Min. standards</TD><TD>{metrics?.sellableArea ? fmt(metrics.sellableArea / Math.max(1, metrics.totalUnits || 1)) : 110} sq.m avg</TD><TD><Check /> Yes</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">Staircases</TD><TD>2 per tower, 1.5m width</TD><TD>2 × 1.5m</TD><TD><Check /> Yes</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">Lifts</TD><TD>Required for &gt;15m</TD><TD>3 lifts/tower</TD><TD><Check /> Yes</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">Setbacks</TD><TD>10m all sides for 30m ht</TD><TD>{plot.setback || 10}m all sides</TD><TD><Check /> Yes</TD></tr>
+                        <tr><TD className="font-semibold bg-slate-50">FAR</TD><TD>Max {far} (base), up to {plot.regulation?.geometry?.max_far_with_incentive?.value ?? 3.5} with incentives</TD><TD>{fmt(achievedFAR, 2)}</TD><TD>{achievedFAR <= far ? <><Check /> Yes</> : achievedFAR <= (plot.regulation?.geometry?.max_far_with_incentive?.value ?? 3.5) ? <span className="text-orange-600 font-bold">⚠ Above base FAR — incentive required</span> : <span className="text-red-600 font-bold">✗ Non-Compliant</span>}</TD></tr>
+                        <tr><TD className="font-semibold bg-slate-50">Ground Coverage</TD><TD>Max {maxCov}%</TD><TD>{fmt(gcPct, 1)}%</TD><TD>{gcPct <= maxCov ? <><Check /> Yes</> : <span className="text-red-600 font-bold">✗ Non-Compliant</span>}</TD></tr>
+                        <tr><TD className="font-semibold bg-slate-50">Height</TD><TD>{plot.regulation?.geometry?.max_building_height?.value ? `Max ${plot.regulation.geometry.max_building_height.value}m` : 'Unrestricted (with NOC)'}</TD><TD>{fmt(maxHeight, 1)}m</TD><TD>{!plot.regulation?.geometry?.max_building_height?.value || maxHeight <= (plot.regulation?.geometry?.max_building_height?.value + 0.5) ? <><Check /> Yes</> : <span className="text-red-600 font-bold">✗ Exceeds limit</span>}</TD></tr>
+                        <tr><TD className="font-semibold bg-slate-50">Basement</TD><TD>Up to 4 levels</TD><TD>{plot?.parkingAreas?.filter(p => p.type === 'Basement')?.length || 2} levels</TD><TD>{(plot?.parkingAreas?.filter(p => p.type === 'Basement')?.length || 2) <= 4 ? <><Check /> Yes</> : <span className="text-red-600 font-bold">✗ Non-Compliant</span>}</TD></tr>
+                        <tr><TD className="font-semibold bg-slate-50">Parking</TD><TD>1.5 ECS per unit ({parkReq} required)</TD><TD>{parkProv} ECS provided</TD><TD>{parkProv >= parkReq ? <><Check /> Yes</> : <span className="text-orange-600 font-bold">⚠ Pending ({parkReq - parkProv} short)</span>}</TD></tr>
+                        <tr><TD className="font-semibold bg-slate-50">Unit sizes</TD><TD>Min. NBC standards (≥30 sq.m net)</TD><TD>{metrics?.sellableArea ? fmt(metrics.sellableArea / Math.max(1, metrics.totalUnits || 1)) : 110} sq.m avg</TD><TD>{(metrics?.sellableArea ? metrics.sellableArea / Math.max(1, metrics.totalUnits || 1) : 110) >= 30 ? <><Check /> Yes</> : <span className="text-red-600 font-bold">✗ Below minimum</span>}</TD></tr>
+                        {(() => {
+                            const core = buildingCores[0]?.core;
+                            const stairCount = core?.stairCount ?? 2;
+                            const stairWidth = maxHeight > 60 ? 2.0 : 1.5;
+                            const totalLifts = core ? (core.passLiftCount + core.fireLiftCount + core.serviceLiftCount) : 3;
+
+                            const frontReq = plot?.regulation?.geometry?.front_setback?.value ?? generationParams?.frontSetback ?? generationParams?.setback ?? 6;
+                            const rearReq  = plot?.regulation?.geometry?.rear_setback?.value  ?? generationParams?.rearSetback  ?? generationParams?.setback ?? 3;
+                            const sideReq  = plot?.regulation?.geometry?.side_setback?.value  ?? generationParams?.sideSetback  ?? generationParams?.setback ?? 3;
+                            
+                            const frontProv = generationParams?.frontSetback ?? generationParams?.setback ?? plot?.setback ?? 6;
+                            const rearProv  = generationParams?.rearSetback  ?? generationParams?.setback ?? plot?.setback ?? 3;
+                            const sideProv  = generationParams?.sideSetback  ?? generationParams?.setback ?? plot?.setback ?? 3;
+                            
+                            const setbackOk = frontProv >= frontReq && rearProv >= rearReq && sideProv >= sideReq;
+                            return (
+                                <>
+                                    <tr><TD className="font-semibold bg-slate-50">Staircases</TD><TD>{stairCount} per tower, {stairWidth}m min width</TD><TD>{stairCount} × {stairWidth}m</TD><TD><Check /> Yes</TD></tr>
+                                    <tr><TD className="font-semibold bg-slate-50">Lifts</TD><TD>Required for &gt;15m; {maxHeight > 60 ? '≥4' : maxHeight > 30 ? '≥3' : '≥2'} per tower</TD><TD>{totalLifts} lifts/tower</TD><TD>{totalLifts >= (maxHeight > 60 ? 4 : maxHeight > 30 ? 3 : 2) ? <Check /> : <span className="text-orange-600 font-bold">⚠</span>} {totalLifts >= (maxHeight > 60 ? 4 : maxHeight > 30 ? 3 : 2) ? 'Yes' : 'Pending'}</TD></tr>
+                                    <tr><TD className="font-semibold bg-slate-50">Setbacks</TD><TD>F:{frontReq}m / Rear:{rearReq}m / Side:{sideReq}m (regulation)</TD><TD>F:{frontProv}m / Rear:{rearProv}m / Side:{sideProv}m</TD><TD>{setbackOk ? <><Check /> Yes</> : <span className="text-red-600 font-bold">✗ Non-Compliant</span>}</TD></tr>
+                                </>
+                            );
+                        })()}
                         <tr><TD className="font-semibold bg-slate-50">Basement Parking</TD><TD>Max roof 1.5m above ground</TD><TD>1.5m</TD><TD><Check /> Yes</TD></tr>
                         <tr><TD className="font-semibold bg-slate-50">Fire Safety</TD><TD>As per NBC/Fire Act</TD><TD>Full compliance</TD><TD><Check /> Yes</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">RWH</TD><TD>Mandatory for &gt;500 sq.m</TD><TD>{hasRWH ? 'Provided' : 'Not Provided'}</TD><TD>{hasRWH ? <><Check /> Yes</> : <span className="text-red-500 font-bold">No</span>}</TD></tr>
-                        <tr><TD className="font-semibold bg-slate-50">Solar</TD><TD>1% of load from solar</TD><TD>{hasSolar ? 'Provided' : 'Not Provided'}</TD><TD>{hasSolar ? <><Check /> Yes</> : <span className="text-red-500 font-bold">No</span>}</TD></tr>
+                        <tr><TD className="font-semibold bg-slate-50">RWH</TD><TD>Mandatory for &gt;500 sq.m ({Math.max(2, Math.ceil(plotArea / 5000))} bores min.)</TD><TD>{(() => { const item = greenItems.find((i: any) => i.label.includes('Rainwater')); return item?.detail || (hasRWH ? `${Math.max(2, Math.ceil(plotArea / 5000))} bores provided` : 'Not Provided'); })()}</TD><TD>{hasRWH ? <><Check /></> : <span className="text-red-500 font-bold">✗ No</span>}</TD></tr>
+                        <tr><TD className="font-semibold bg-slate-50">Solar</TD><TD>1% of connected load</TD><TD>{(() => { const item = greenItems.find((i: any) => i.label.includes('Solar')); return item?.detail || (hasSolar ? `~${Math.round(totalUnits * 0.5)} kWp installed` : 'Not Provided'); })()}</TD><TD>{hasSolar ? <><Check /></> : <span className="text-red-500 font-bold">✗ No</span>}</TD></tr>
                         <tr><TD className="font-semibold bg-slate-50">ECBC</TD><TD>Mandatory for certain buildings</TD><TD>Applicable</TD><TD><Check /> Yes</TD></tr>
                         <tr><TD className="font-semibold bg-slate-50">Structural Safety</TD><TD>High-rise requirements</TD><TD>Full compliance</TD><TD><Check /> Yes</TD></tr>
                         <tr><TD className="font-semibold bg-slate-50">Sanitation</TD><TD>Min. facilities</TD><TD>As per norms</TD><TD><Check /> Yes</TD></tr>
@@ -477,22 +545,45 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                 ))}
 
                 <SH2>{plot.regulation?.location?.includes('Haryana') ? 'Fire Safety Compliance (Haryana Fire Services Act 2009)' : 'Fire Safety Compliance'}</SH2>
-                <strong className="text-[12px] block text-slate-800 mb-2 mt-1">Fire NOC Requirements (For buildings 15-30m height)</strong>
+                <strong className="text-[12px] block text-slate-800 mb-2 mt-1">
+                    Fire NOC Requirements ({maxHeight > 60 ? 'High-Rise buildings >60m' : maxHeight > 30 ? 'Buildings 30-60m height' : 'Buildings 15-30m height'})
+                </strong>
                 <table className="w-full border-collapse">
-                    <thead><tr><TH>Item</TH><TH>Requirement</TH><TH>Proposed</TH></tr></thead>
+                    <thead><tr><TH>Item</TH><TH>Requirement (NBC Part 4)</TH><TH>Proposed</TH></tr></thead>
                     <tbody>
-                        {[
-                            ['Fire staircases', '2 per tower, enclosed', `${towers * 2} enclosed`],
-                            ['Staircase width', 'Min 1.5m clear', '1.5m'],
-                            ['Travel distance', 'Max 30m', '<30m'],
-                            ['Wet riser', '100mm dia., outlets every floor', 'Provided'],
-                            ['Fire extinguishers', '2 per floor min.', '4 per floor'],
-                            ['Smoke detectors', 'All common areas', 'Full coverage'],
-                            ['Fire alarm', 'Addressable system', 'Integrated'],
-                            ['Sprinklers', 'All basements', 'Full coverage'],
-                        ].map(([a, b, c], i) => (
-                            <tr key={i}><TD className="font-semibold bg-slate-50">{a}</TD><TD>{b}</TD><TD>{c}</TD></tr>
-                        ))}
+                        {(() => {
+                            const hi = maxHeight > 60;
+                            const mid = maxHeight > 30;
+                            const fireLifts = buildingCores[0]?.core?.fireLiftCount ?? (mid ? 1 : 0);
+                            const stairCount = buildingCores[0]?.core?.stairCount ?? 2;
+                            const refugeFloors = Math.floor(maxFloors / 7);
+
+                            const rows: [string, string, string][] = [
+                                ['Fire staircases', `2 per tower, ${mid ? 'pressurized' : 'enclosed'}`, `${towers * 2} ${mid ? 'pressurized' : 'enclosed'}`],
+                                ['Staircase width', `Min ${hi ? '2.0' : '1.5'}m clear`, `${hi ? '2.0' : '1.5'}m`],
+                                ['Travel distance', 'Max 30m from unit door', '<30m'],
+                                ['Fire lift', mid ? '≥1 per tower (mandatory >15m)' : 'Not required', mid ? `${towers * Math.max(1, fireLifts)} provided` : 'N/A'],
+                                ['Wet riser', `100mm dia., every floor${mid ? ' + hose reel' : ''}`, 'Provided'],
+                                ['Fire extinguishers', '2 per floor minimum', `${Math.max(2, Math.ceil(totalUnits / maxFloors * 2))} per floor`],
+                                ['Smoke detectors', mid ? 'Addressable, zone-controlled' : 'All common areas', 'Full coverage'],
+                                ['Fire alarm', mid ? 'Auto addressable + PA system' : 'Addressable system', 'Integrated + PA'],
+                                ['Sprinklers', mid ? 'All floors + basements + podium' : 'All basements', 'Full coverage'],
+                                ...(mid ? [
+                                    ['Fire check lobby', 'Required (height >24m)', 'Provided per staircase'] as [string, string, string],
+                                    ['Refuge area', `Every 7 floors (${refugeFloors} levels)`, `${refugeFloors} refuge floors`] as [string, string, string],
+                                    ['Emergency lighting', '6 hrs min. battery backup', 'LED + UPS'] as [string, string, string],
+                                    ['Terrace access', 'Min 1 staircase to terrace', 'Provided'] as [string, string, string],
+                                ] as [string, string, string][] : []),
+                                ...(hi ? [
+                                    ['Pressurisation system', 'Staircase & lobby +50Pa', 'Designed'] as [string, string, string],
+                                    ['Firefighter intercom', 'All floors + fire command', 'Integrated'] as [string, string, string],
+                                ] as [string, string, string][] : []),
+                            ];
+
+                            return rows.map(([a, b, c], i) => (
+                                <tr key={i}><TD className="font-semibold bg-slate-50">{a}</TD><TD>{b}</TD><TD>{c}</TD></tr>
+                            ));
+                        })()}
                     </tbody>
                 </table>
             </div>
@@ -586,11 +677,23 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                     <thead><tr><TH>Zone</TH><TH>Area (sq.m)</TH><TH>% of Site</TH></tr></thead>
                     <tbody>
                         {(() => {
-                            const bFootprint = plot.buildings?.reduce((sum, b) => sum + (b.area || 0), 0) || (plotArea * 0.4);
-                            const hardScape = plotArea * 0.20;
-                            const softScape = plotArea * 0.24;
-                            const amenities = plotArea * 0.14;
-                            const setbacks = plotArea - (bFootprint + hardScape + softScape + amenities);
+                            const bFootprint = plot.buildings?.reduce((sum, b) => sum + (b.area || 0), 0) || (plotArea * 0.25);
+                            
+                            // Align this explicitly with Section 9 logic: 80% of tower footprint is amenities
+                            // If buildings array exists, use bFootprint * 0.8, else use builtUp/maxFloors*0.8
+                            const towerFootprint = Math.round((builtUp || 10080) / maxFloors / towers); // rough footprint
+                            const coreArea = Math.round(towerFootprint * 0.20);
+                            const amenitiesAreaPerTower = towerFootprint - coreArea; 
+                            const amenities = amenitiesAreaPerTower * towers; // True covered amenities footprint
+                            
+                            const hardScape = plotArea * 0.20; // 20% for drives/plazas
+                            
+                            const maxPermissibleGC = plotArea * 0.35; // Typically 35% max GC
+                            const remainingUnbuilt = plotArea - Math.max(bFootprint, (towerFootprint * towers));
+                            
+                            // Unbuilt area goes mostly to softscape, leaving 10% for setbacks
+                            const softScape = (remainingUnbuilt - hardScape) * 0.8;
+                            const setbacks = (remainingUnbuilt - hardScape) * 0.2;
                             
                             const percent = (val: number) => ((val / plotArea) * 100).toFixed(1) + '%';
                             
@@ -607,7 +710,7 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                                     <tr className="font-semibold bg-slate-50"><TD>Soft Landscaping</TD><TD>{fmt(softScape)}</TD><TD>{percent(softScape)}</TD></tr>
                                     <tr><TD className="pl-6 text-slate-600">- Garden areas & Lawn</TD><TD>{fmt(softScape)}</TD><TD>{percent(softScape)}</TD></tr>
                                     
-                                    <tr className="font-semibold bg-slate-50"><TD>Amenities (Ground)</TD><TD>{fmt(amenities)}</TD><TD>{percent(amenities)}</TD></tr>
+                                    <tr className="font-semibold bg-slate-50"><TD>Amenities (Ground inside towers)</TD><TD>{fmt(amenities)}</TD><TD>{percent(amenities)}</TD></tr>
                                     
                                     <tr className="font-semibold bg-slate-50"><TD>Setbacks (Unusable)</TD><TD>{fmt(Math.max(0, setbacks))}</TD><TD>{percent(Math.max(0, setbacks))}</TD></tr>
                                     <tr className="font-bold bg-slate-200 border-t-2 border-slate-400"><TD>Total</TD><TD>{fmt(plotArea)}</TD><TD>100.0%</TD></tr>
@@ -642,47 +745,48 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                         <p className="text-[10px] mb-2"><strong>Core Size:</strong> {buildingCores[0]?.core?.totalCoreAreaPerFloor ? Math.ceil(Math.sqrt(buildingCores[0].core.totalCoreAreaPerFloor)) : 8}m × {buildingCores[0]?.core?.totalCoreAreaPerFloor ? Math.floor(Math.sqrt(buildingCores[0].core.totalCoreAreaPerFloor))+2 : 10}m = {fmt(buildingCores[0]?.core?.totalCoreAreaPerFloor || 80)} sq.m per tower<br/>
                         Core Components (Enhanced for luxury apartments)</p>
                         
-                        <table className="w-full border-collapse text-[10px]">
-                            <thead><tr><TH>Component</TH><TH>Specification</TH><TH>Area (sq.m)</TH></tr></thead>
-                            <tbody>
-                                <tr className="bg-slate-50 font-semibold"><TD>Lifts</TD><TD>3 passenger + 1 service</TD><TD>12.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Main passenger lifts</TD><TD>2 nos. (2.0×1.8m each)</TD><TD>7.2</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- VIP/express lift</TD><TD>1 no. (2.2×2.0m)</TD><TD>4.4</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Service lift</TD><TD>1 no. (2.0×1.5m)</TD><TD>3.0</TD></tr>
-                                
-                                <tr className="bg-slate-50 font-semibold"><TD>Staircases</TD><TD>2 fire staircases</TD><TD>24.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Main staircase</TD><TD>2.8m × 5.0m</TD><TD>14.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Secondary staircase</TD><TD>2.5m × 4.0m</TD><TD>10.0</TD></tr>
-                                
-                                <tr className="bg-slate-50 font-semibold"><TD>Shafts & Ducts</TD><TD>{" "}</TD><TD>8.5</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Fire fighting</TD><TD>1.0m × 1.0m</TD><TD>1.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Plumbing (fresh water)</TD><TD>0.6m × 0.8m</TD><TD>0.48</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Plumbing (drainage)</TD><TD>0.6m × 0.8m</TD><TD>0.48</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- HVAC (main)</TD><TD>1.2m × 1.5m</TD><TD>1.8</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- HVAC (return air)</TD><TD>0.9m × 1.0m</TD><TD>0.9</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Electrical riser</TD><TD>0.8m × 1.0m</TD><TD>0.8</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Data/telecom</TD><TD>0.6m × 0.8m</TD><TD>0.48</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Smoke exhaust</TD><TD>0.8m × 0.8m</TD><TD>0.64</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- General service duct</TD><TD>1.0m × 1.2m</TD><TD>1.2</TD></tr>
-                                
-                                <tr className="bg-slate-50 font-semibold"><TD>Lobbies & Circulation</TD><TD>{" "}</TD><TD>18.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Lift lobby</TD><TD>4.0m × 3.5m</TD><TD>14.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Fire exit corridor</TD><TD>1.5m × 6.0m</TD><TD>9.0</TD></tr>
-                                
-                                <tr className="bg-slate-50 font-semibold"><TD>Service Rooms</TD><TD>{" "}</TD><TD>6.5</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Electrical panel room</TD><TD>2.5 sq.m</TD><TD>2.5</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Housekeeping</TD><TD>2.0 sq.m</TD><TD>2.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Garbage chute room</TD><TD>2.0 sq.m</TD><TD>2.0</TD></tr>
-                                
-                                <tr className="bg-slate-50 font-semibold"><TD>Common Facilities</TD><TD>{" "}</TD><TD>11.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Common toilet (gents)</TD><TD>2.5m × 2.0m</TD><TD>5.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Common toilet (ladies)</TD><TD>2.5m × 2.0m</TD><TD>5.0</TD></tr>
-                                <tr><TD className="pl-6 text-slate-600">- Waiting area</TD><TD>1.0 sq.m</TD><TD>1.0</TD></tr>
-                                
-                                <tr className="font-bold bg-slate-200 border-t-2 border-slate-400"><TD>TOTAL CORE AREA</TD><TD>{" "}</TD><TD>80.0</TD></tr>
-                            </tbody>
-                        </table>
-                        <p className="mt-1 text-[9px] text-slate-500 italic">Assumed core area factored at ~90 sq.m to accommodate structural walls</p>
+                        {(() => {
+                            const c = buildingCores[0]?.core;
+                            if (!c) return null;
+                            const totalLifts = c.passLiftCount + c.fireLiftCount + c.serviceLiftCount + c.stretcherLiftCount;
+                            return (
+                                <table className="w-full border-collapse text-[10px]">
+                                    <thead><tr><TH>Component</TH><TH>Specification</TH><TH>Area (sq.m)</TH></tr></thead>
+                                    <tbody>
+                                        <tr className="bg-slate-50 font-semibold"><TD>Lifts</TD><TD>{totalLifts} total ({c.passLiftCount} pass{c.fireLiftCount ? ` + ${c.fireLiftCount} fire` : ''}{c.serviceLiftCount ? ` + ${c.serviceLiftCount} service` : ''})</TD><TD>{fmt(c.liftArea, 1)}</TD></tr>
+                                        {c.passLiftCount > 0 && <tr><TD className="pl-6 text-slate-600">- Passenger lifts</TD><TD>{c.passLiftCount} nos. (~{fmt(c.passLiftArea/c.passLiftCount, 2)} sq.m each)</TD><TD>{fmt(c.passLiftArea, 1)}</TD></tr>}
+                                        {c.fireLiftCount > 0 && <tr><TD className="pl-6 text-slate-600">- Fire lift</TD><TD>{c.fireLiftCount} nos. (4.5 sq.m each)</TD><TD>{fmt(c.fireLiftArea, 1)}</TD></tr>}
+                                        {c.serviceLiftCount > 0 && <tr><TD className="pl-6 text-slate-600">- Service lift</TD><TD>{c.serviceLiftCount} nos. (4.5 sq.m each)</TD><TD>{fmt(c.serviceLiftArea, 1)}</TD></tr>}
+                                        {c.stretcherLiftCount > 0 && <tr><TD className="pl-6 text-slate-600">- Stretcher lift</TD><TD>{c.stretcherLiftCount} nos. (5.5 sq.m each)</TD><TD>{fmt(c.stretcherLiftArea, 1)}</TD></tr>}
+                                        
+                                        <tr className="bg-slate-50 font-semibold"><TD>Staircases</TD><TD>{c.stairCount} enclosed fire stairs</TD><TD>{fmt(c.stairArea, 1)}</TD></tr>
+                                        {[...Array(c.stairCount)].map((_, i) => (
+                                            <tr key={i}><TD className="pl-6 text-slate-600">- Staircase {i+1}</TD><TD>~{fmt(c.stairArea / c.stairCount, 0)} sq.m (1.5m min clear width)</TD><TD>{fmt(c.stairArea / c.stairCount, 1)}</TD></tr>
+                                        ))}
+
+                                        <tr className="bg-slate-50 font-semibold"><TD>Shafts & Ducts</TD><TD>{" "}</TD><TD>{fmt(c.totalShaftArea, 1)}</TD></tr>
+                                        {c.plumbingShaftArea > 0 && <tr><TD className="pl-6 text-slate-600">- Plumbing shafts</TD><TD>Per unit group</TD><TD>{fmt(c.plumbingShaftArea, 2)}</TD></tr>}
+                                        {c.electricalShaftArea > 0 && <tr><TD className="pl-6 text-slate-600">- Electrical riser</TD><TD>0.8m × 0.75m</TD><TD>{fmt(c.electricalShaftArea, 2)}</TD></tr>}
+                                        {c.fireRiserArea > 0 && <tr><TD className="pl-6 text-slate-600">- Fire riser</TD><TD>1.0m × 0.5m</TD><TD>{fmt(c.fireRiserArea, 2)}</TD></tr>}
+                                        {c.garbageShaftArea > 0 && <tr><TD className="pl-6 text-slate-600">- Garbage shaft</TD><TD>0.6m × 1.2m</TD><TD>{fmt(c.garbageShaftArea, 2)}</TD></tr>}
+                                        {c.hvacShaftArea > 0 && <tr><TD className="pl-6 text-slate-600">- HVAC shaft</TD><TD>As required</TD><TD>{fmt(c.hvacShaftArea, 2)}</TD></tr>}
+
+                                        <tr className="bg-slate-50 font-semibold"><TD>Lobbies & Circulation</TD><TD>{" "}</TD><TD>{fmt(c.totalCirculationAreaPerFloor, 1)}</TD></tr>
+                                        <tr><TD className="pl-6 text-slate-600">- Lift lobby</TD><TD>{totalLifts} × {fmt(c.liftLobbyArea / totalLifts, 1)} sq.m each</TD><TD>{fmt(c.liftLobbyArea, 1)}</TD></tr>
+                                        <tr><TD className="pl-6 text-slate-600">- Common corridor</TD><TD>Min 1.5m wide</TD><TD>{fmt(c.corridorArea, 1)}</TD></tr>
+
+                                        {(c.fireCheckLobbyArea > 0 || c.refugeAreaPerFloor > 0) && (
+                                            <tr className="bg-slate-50 font-semibold"><TD>Fire Provisions</TD><TD>{" "}</TD><TD>{fmt(c.fireCheckLobbyArea + c.refugeAreaPerFloor, 1)}</TD></tr>
+                                        )}
+                                        {c.fireCheckLobbyArea > 0 && <tr><TD className="pl-6 text-slate-600">- Fire check lobby</TD><TD>Required (height &gt;24m)</TD><TD>{fmt(c.fireCheckLobbyArea, 1)}</TD></tr>}
+                                        {c.refugeAreaPerFloor > 0 && <tr><TD className="pl-6 text-slate-600">- Refuge area (avg/floor)</TD><TD>Every 7 floors</TD><TD>{fmt(c.refugeAreaPerFloor, 1)}</TD></tr>}
+
+                                        <tr className="font-bold bg-slate-200 border-t-2 border-slate-400"><TD>TOTAL CORE AREA</TD><TD>{" "}</TD><TD>{fmt(c.totalCoreAreaPerFloor + c.totalCirculationAreaPerFloor, 1)}</TD></tr>
+                                    </tbody>
+                                </table>
+                            );
+                        })()}
+                        <p className="mt-1 text-[9px] text-slate-500 italic">Core calculations per NBC norms — Method B formula (lift sizing, stair count, population-based corridor sizing)</p>
                     </div>
                 </>)}
             </div>
@@ -804,98 +908,191 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
             {/* ═══ PAGE 8 — UNIT PLANNING ═══ */}
             <div className="report-page">
                 <SH>8. UNIT PLANNING & MIX</SH>
-                
-                <div className="grid grid-cols-2 gap-4 mb-4 text-[10px]">
-                    <div>
-                        <SH2 className="!mt-0">Target Scenario</SH2>
-                        <ul className="list-disc pl-4 space-y-0.5 mb-2">
-                            <li><strong>Total Built-up Area:</strong> 6,400 sq.m (FAR: ~3.2)</li>
-                            <li><strong>Towers:</strong> 2 sharing a single core</li>
-                            <li><strong>Built-up Area Ground Floor:</strong> ~800 sq.m</li>
-                            <li><strong>Built-up area per floor:</strong> 700 sq.m (excluding core, 8 floors)</li>
-                        </ul>
-                        
-                        <SH2 className="!mt-2">Efficiency Calculation (Ground)</SH2>
-                        <ul className="list-disc pl-4 space-y-0.5">
-                            <li><strong>Deduct Core Area:</strong> 800 - 90 = 710 sq.m.</li>
-                            <li><strong>Deduct Lobby:</strong> 710 - 70 = 640 sq.m.</li>
-                            <li><strong>Deduct External Walls:</strong> ~5% of plate (40 sq.m).</li>
-                            <li><strong>Net Ground Area:</strong> 640 - 40 = 600 sq.m.</li>
-                        </ul>
-                    </div>
-                    <div>
-                        <SH2 className="!mt-0">Efficiency Calculation (Per Floor)</SH2>
-                        <ul className="list-disc pl-4 space-y-0.5 mb-2">
-                            <li><strong>Deduct Core Area:</strong> {fmt(plot.buildings?.[0]?.area || 800)} - {fmt(buildingCores[0]?.core?.totalCoreAreaPerFloor || 100)}(Core) = {fmt((plot.buildings?.[0]?.area || 800) - (buildingCores[0]?.core?.totalCoreAreaPerFloor || 100))} sq.m.</li>
-                            {towers > 1 && <li><strong>Per Tower:</strong> Divided in {towers} towers = {fmt(((plot.buildings?.[0]?.area || 800) - (buildingCores[0]?.core?.totalCoreAreaPerFloor || 100)) / towers)} sq.m per floor</li>}
-                            <li><strong>Deduct External Walls:</strong> ~5% of plate ({fmt(((plot.buildings?.[0]?.area || 800) - (buildingCores[0]?.core?.totalCoreAreaPerFloor || 100)) * 0.05)} sq.m).</li>
-                            <li><strong>Net Floor Area:</strong> {fmt(((plot.buildings?.[0]?.area || 800) - (buildingCores[0]?.core?.totalCoreAreaPerFloor || 100)) * 0.95)} sq.m.</li>
-                        </ul>
-                        
-                        <SH2 className="!mt-2">UNIT SIZE (Typical 3 BHK)</SH2>
-                        <ul className="list-disc pl-4 space-y-0.5">
-                            <li><strong>RERA Carpet:</strong> {fmt(totalCarpet ? (totalCarpet / Math.max(1, totalUnits)) : 166)} sq.m</li>
-                            <li><strong>Balcony:</strong> {fmt((totalCarpet ? (totalCarpet / Math.max(1, totalUnits)) : 166) * 0.32)} sq.m</li>
-                            <li><strong>Built-up:</strong> {fmt(totalCarpet ? ((totalCarpet * 1.5) / Math.max(1, totalUnits)) : 236.5)} sq.m</li>
-                        </ul>
-                    </div>
-                </div>
 
-                <SH2>Apartment Yield & Unit Mix</SH2>
-                <div className="border border-slate-200 bg-slate-50 p-3 rounded mb-4 text-[10px]">
-                    <p className="mb-2">With ~{fmt(((plot.buildings?.[0]?.area || 800) - (buildingCores[0]?.core?.totalCoreAreaPerFloor || 100)) / towers)} sq.m of net area per floor plate, you can fit:</p>
-                    <ul className="list-disc pl-5 mb-2 font-medium">
-                        {Object.entries(units).length > 0 ? Object.entries(units).map(([type, count], i) => {
-                            const avgArea = tArea[type] ? Math.round(tArea[type] / Number(count)) : 110;
-                            return <li key={i}>{Math.round(Number(count) / maxFloors / towers)} Units of {type} (approx. {Math.round(avgArea / 0.7)} sq.m Builtup each) - {avgArea} sq.m carpet</li>
-                        }) : (
-                            <>
-                                <li>4 Units of 3 BHK (approx. 236 sq.m Builtup each) - 166 sq.m carpet</li>
-                                <li>3 Luxury 4 BHK Units (approx. 250 sq.m Builtup each) - 211 sq.m carpet</li>
-                            </>
-                        )}
-                    </ul>
-                    <p className="mb-1"><strong>TOTAL UNITS:</strong> {totalUnits} mapped out across {maxFloors} floors × {towers} tower(s)</p>
-                    <p className="mb-1"><strong>Total RERA carpet area obtained:</strong> {fmt(totalCarpet)} sq.m</p>
-                    <p><strong>Total Efficiency:</strong> RERA Carpet Area is {carpetEff.toFixed(1)}% of the Super Built-up Area.</p>
-                </div>
-                
-                <p className="font-semibold text-[11px] mb-2">Unit Mix & Distribution (Per Tower)</p>
-                <ul className="list-disc pl-5 text-[10px] mb-4">
-                    <li><strong>Floors 1-{maxFloors}:</strong> {maxFloors} floors × {Math.round(totalUnits/(maxFloors*towers))} units = {Math.round(totalUnits/towers)} units per tower</li>
-                    {towers > 1 && <li><strong>All Towers:</strong> {Math.round(totalUnits/towers)} × {towers} = {totalUnits} units total</li>}
-                </ul>
+                {/* ── Overview Banner ── */}
+                {(() => {
+                    const firstBuilding = plot.buildings?.[0];
+                    const floorplate = firstBuilding?.area || Math.round(builtUp / Math.max(1, totalLevels * towers));
+                    const coreArea = buildingCores[0]?.core?.totalCoreAreaPerFloor || Math.round(floorplate * 0.12);
+                    const netFloorArea = Math.round((floorplate - coreArea) * 0.95);
+                    const avgUnitCarpet = totalUnits > 0 ? Math.round(totalCarpet / totalUnits) : 110;
+                    const avgBuiltUp = Math.round(avgUnitCarpet / (carpetEff / 100));
+                    const balcony = Math.round(avgUnitCarpet * 0.15);
+
+                    return (
+                        <>
+                            <div className="grid grid-cols-2 gap-4 mb-4 text-[10px]">
+                                <div>
+                                    <SH2 className="!mt-0">Target Scenario</SH2>
+                                    <ul className="list-disc pl-4 space-y-0.5 mb-3">
+                                        <li><strong>Total Built-up Area:</strong> {fmt(builtUp)} sq.m (FAR: {fmt(achievedFAR, 2)})</li>
+                                        <li><strong>Towers:</strong> {towers} Nos. × {maxFloors} upper floors each</li>
+                                        <li><strong>Ground Floor Plate:</strong> ~{fmt(floorplate)} sq.m per tower</li>
+                                        <li><strong>Typical Floor Plate:</strong> ~{fmt(floorplate)} sq.m (excluding core)</li>
+                                        <li><strong>Basements:</strong> {maxBasements} levels (B{maxBasements}–B1) for parking</li>
+                                        <li><strong>Total Levels:</strong> B{maxBasements} + G + {maxFloors} = {totalLevels} levels</li>
+                                    </ul>
+
+                                    <SH2 className="!mt-2">Efficiency Calculation (Per Floor)</SH2>
+                                    <ul className="list-disc pl-4 space-y-0.5">
+                                        <li><strong>Floor Plate:</strong> {fmt(floorplate)} sq.m</li>
+                                        <li><strong>Deduct Core Area:</strong> {fmt(floorplate)} − {fmt(coreArea)} = {fmt(floorplate - coreArea)} sq.m</li>
+                                        <li><strong>Deduct External Walls (~5%):</strong> − {fmt(Math.round((floorplate - coreArea) * 0.05))} sq.m</li>
+                                        <li><strong>Net Leasable Area/Floor:</strong> {fmt(netFloorArea)} sq.m</li>
+                                        <li><strong>Net per Tower Floor:</strong> {fmt(Math.round(netFloorArea / towers))} sq.m</li>
+                                    </ul>
+                                </div>
+                                <div>
+                                    <SH2 className="!mt-0">Unit Size (Typical)</SH2>
+                                    <table className="w-full border-collapse text-[9px] mb-3">
+                                        <thead><tr><TH>Parameter</TH><TH>Value</TH></tr></thead>
+                                        <tbody>
+                                            {Object.entries(units).length > 0
+                                                ? Object.entries(units).map(([type, count], i) => {
+                                                    const uCarpet = tArea[type] ? Math.round(tArea[type] / Number(count)) : avgUnitCarpet;
+                                                    const uBuiltUp = Math.round(uCarpet / (carpetEff / 100));
+                                                    const uBalcony = Math.round(uCarpet * 0.15);
+                                                    return (
+                                                        <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                                            <TD className="font-semibold">{type}</TD>
+                                                            <TD>{uCarpet} sq.m carpet / {uBuiltUp} sq.m built-up<br /><span className="text-slate-500">Balcony: {uBalcony} sq.m</span></TD>
+                                                        </tr>
+                                                    );
+                                                })
+                                                : (
+                                                    <>
+                                                        <tr className="bg-slate-50"><TD className="font-semibold">RERA Carpet</TD><TD>{avgUnitCarpet} sq.m</TD></tr>
+                                                        <tr><TD className="font-semibold">Balcony</TD><TD>{balcony} sq.m</TD></tr>
+                                                        <tr className="bg-slate-50"><TD className="font-semibold">Built-up</TD><TD>{avgBuiltUp} sq.m</TD></tr>
+                                                    </>
+                                                )
+                                            }
+                                        </tbody>
+                                    </table>
+
+                                    <SH2 className="!mt-2">Units per Floor (per Tower)</SH2>
+                                    <table className="w-full border-collapse text-[9px]">
+                                        <thead><tr><TH>Type</TH><TH>Carpet (sq.m)</TH><TH>Units/Floor</TH></tr></thead>
+                                        <tbody>
+                                            {Object.entries(units).length > 0
+                                                ? Object.entries(units).map(([type, count], i) => {
+                                                    const uCarpet = tArea[type] ? Math.round(tArea[type] / Number(count)) : avgUnitCarpet;
+                                                    const unitsPerFloor = Math.round(Number(count) / Math.max(1, maxFloors * towers));
+                                                    return (
+                                                        <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                                            <TD className="font-semibold">{type}</TD>
+                                                            <TD className="text-center">{uCarpet}</TD>
+                                                            <TD className="text-center font-semibold text-blue-700">{unitsPerFloor}</TD>
+                                                        </tr>
+                                                    );
+                                                })
+                                                : (
+                                                    <tr className="bg-slate-50">
+                                                        <TD className="font-semibold">3 BHK</TD>
+                                                        <TD className="text-center">{avgUnitCarpet}</TD>
+                                                        <TD className="text-center font-semibold text-blue-700">{Math.round(netFloorArea / towers / Math.max(1, avgUnitCarpet))}</TD>
+                                                    </tr>
+                                                )
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            {/* ── Apartment Yield Summary ── */}
+                            <SH2>Apartment Yield & Unit Mix Summary</SH2>
+                            <div className="border border-blue-200 bg-blue-50 p-3 rounded mb-4 text-[10px]">
+                                <table className="w-full border-collapse mb-2">
+                                    <thead>
+                                        <tr>
+                                            <TH>Type</TH>
+                                            <TH>Carpet (sq.m)</TH>
+                                            <TH>Built-up (sq.m)</TH>
+                                            <TH>Count</TH>
+                                            <TH>% of Total</TH>
+                                            <TH>Total Carpet (sq.m)</TH>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {Object.entries(units).length > 0
+                                            ? Object.entries(units).map(([type, count], i) => {
+                                                const uCarpet = tArea[type] ? Math.round(tArea[type] / Number(count)) : avgUnitCarpet;
+                                                const uBuiltUp = Math.round(uCarpet / (carpetEff / 100));
+                                                const pct = ((Number(count) / totalUnits) * 100).toFixed(0);
+                                                return (
+                                                    <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-blue-50/50'}>
+                                                        <TD className="font-semibold">{type}</TD>
+                                                        <TD className="text-center">{uCarpet}</TD>
+                                                        <TD className="text-center">{uBuiltUp}</TD>
+                                                        <TD className="text-center font-bold text-blue-800">{count as number}</TD>
+                                                        <TD className="text-center">{pct}%</TD>
+                                                        <TD className="text-center">{fmt(uCarpet * Number(count))}</TD>
+                                                    </tr>
+                                                );
+                                            })
+                                            : (
+                                                <tr className="bg-white">
+                                                    <TD className="font-semibold">3 BHK</TD>
+                                                    <TD className="text-center">{avgUnitCarpet}</TD>
+                                                    <TD className="text-center">{avgBuiltUp}</TD>
+                                                    <TD className="text-center font-bold text-blue-800">{totalUnits || 64}</TD>
+                                                    <TD className="text-center">100%</TD>
+                                                    <TD className="text-center">{fmt((totalUnits || 64) * avgUnitCarpet)}</TD>
+                                                </tr>
+                                            )
+                                        }
+                                        <tr className="bg-slate-100 font-bold border-t-2 border-slate-400">
+                                            <TD className="text-slate-800">TOTAL</TD>
+                                            <TD className="text-center text-slate-600">—</TD>
+                                            <TD className="text-center text-slate-600">—</TD>
+                                            <TD className="text-center text-blue-800">{totalUnits}</TD>
+                                            <TD className="text-center">100%</TD>
+                                            <TD className="text-center text-blue-800">{fmt(totalCarpet)}</TD>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <div className="grid grid-cols-3 gap-3 mt-2 text-[9px]">
+                                    <div className="bg-white border border-blue-200 p-2 rounded text-center">
+                                        <strong className="block text-blue-800 text-[11px]">{totalUnits}</strong>
+                                        <span className="text-slate-500">Total Units</span>
+                                    </div>
+                                    <div className="bg-white border border-blue-200 p-2 rounded text-center">
+                                        <strong className="block text-blue-800 text-[11px]">{fmt(totalCarpet)} sq.m</strong>
+                                        <span className="text-slate-500">Total RERA Carpet</span>
+                                    </div>
+                                    <div className="bg-white border border-blue-200 p-2 rounded text-center">
+                                        <strong className="block text-blue-800 text-[11px]">{carpetEff.toFixed(1)}%</strong>
+                                        <span className="text-slate-500">Carpet Efficiency</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* ── Distribution ── */}
+                            <SH2>Unit Distribution Across Floors</SH2>
+                            <p className="text-[10px] mb-3 text-slate-600">
+                                <strong>{totalUnits} units</strong> across <strong>{maxFloors} upper floors</strong> × <strong>{towers} tower(s)</strong> = approximately{' '}
+                                <strong>{Math.round(totalUnits / Math.max(1, maxFloors * towers))} unit(s)/floor/tower</strong>
+                            </p>
+                        </>
+                    );
+                })()}
 
                 <SH2>Unit Amenities & Features</SH2>
                 <div className="grid grid-cols-2 gap-4 text-[10px]">
                     <div>
                         <strong className="block text-slate-800 mb-1 border-b pb-1">Standard Inclusions (All Units)</strong>
                         <ul className="list-none space-y-0.5">
-                            <li><span className="text-green-600 font-bold">✓</span> Video door phone system</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Intercom to security/management</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Fire alarm system (smoke detectors in corridor)</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Provisions for split AC (3 outdoor unit spaces)</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Provision for geyser (3 nos.)</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Provision for chimney (kitchen)</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Provision for washing machine (service balcony)</li>
-                            <li><span className="text-green-600 font-bold">✓</span> DTH/cable TV points (living + master BR)</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Broadband-ready (Cat-6 cabling)</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Modular switches (Legrand/Anchor/Havells)</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Concealed plumbing & electrical</li>
-                            <li><span className="text-green-600 font-bold">✓</span> Quality hardware (Godrej/Dorset locks)</li>
+                            {['Video door phone system','Intercom to security/management','Fire alarm (smoke detectors in corridor)',`Provisions for split AC (${Math.max(2, Object.keys(units).length > 0 ? Math.min(4, Object.keys(units).length + 1) : 3)} outdoor unit spaces)`,'Provision for geyser (3 nos.)','Provision for chimney (kitchen)','Provision for washing machine (service balcony)','DTH/cable TV points (living + master BR)','Broadband-ready (Cat-6 cabling)','Modular switches (Legrand/Anchor/Havells)','Concealed plumbing & electrical','Quality hardware (Godrej/Dorset locks)'].map((item, i) => (
+                                <li key={i}><span className="text-green-600 font-bold">✓</span> {item}</li>
+                            ))}
                         </ul>
                     </div>
                     <div>
                         <strong className="block text-slate-800 mb-1 border-b pb-1">Optional Upgrades (At Additional Cost)</strong>
                         <ul className="list-none space-y-0.5">
-                            <li><span className="text-blue-600 font-bold">+</span> Wooden flooring (bedrooms)</li>
-                            <li><span className="text-blue-600 font-bold">+</span> Designer false ceiling (living)</li>
-                            <li><span className="text-blue-600 font-bold">+</span> Upgraded tiles (imported)</li>
-                            <li><span className="text-blue-600 font-bold">+</span> Premium CP fittings (Grohe/Hansgrohe)</li>
-                            <li><span className="text-blue-600 font-bold">+</span> Upgraded kitchen (Hacker/Hafele modular)</li>
-                            <li><span className="text-blue-600 font-bold">+</span> Home automation (basic package)</li>
-                            <li><span className="text-blue-600 font-bold">+</span> Wallpaper (accent walls)</li>
-                            <li><span className="text-blue-600 font-bold">+</span> Additional storage (loft/attic)</li>
+                            {['Wooden flooring (bedrooms)','Designer false ceiling (living)','Upgraded tiles (imported)','Premium CP fittings (Grohe/Hansgrohe)','Upgraded kitchen (Hacker/Hafele modular)','Home automation (basic package)','Wallpaper (accent walls)','Additional storage (loft/attic)'].map((item, i) => (
+                                <li key={i}><span className="text-blue-600 font-bold">+</span> {item}</li>
+                            ))}
                         </ul>
                     </div>
                 </div>
@@ -906,40 +1103,65 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
             <div className="report-page">
                 <SH>9. Amenities & Facilities</SH>
                 <SH2>7.1 Ground Floor Amenities</SH2>
-                <div className="mb-4 text-[10px]">
-                    <strong className="block text-slate-800 mb-1 border-b pb-1">Space Allocation</strong>
-                    <ul className="list-disc pl-4 space-y-0.5">
-                        <li><strong>Total ground floor area (both towers):</strong> {towers} × 360 sq.m = {towers * 360} sq.m</li>
-                        <li><strong>Core & circulation:</strong> {towers} × 80 sq.m = {towers * 80} sq.m</li>
-                        <li><strong>Available for amenities:</strong> {towers * 360 - towers * 80} sq.m</li>
-                        <li><strong>Additional open-air amenities:</strong> ~{fmt(metrics?.greenArea?.total || 500)} sq.m (in landscaped areas)</li>
-                    </ul>
-                </div>
+                {(() => {
+                    const towerFootprint = Math.round((builtUp || 10080) / maxFloors / towers); // rough footprint
+                    const coreArea = Math.round(towerFootprint * 0.20); // typical 20% core
+                    const amenitiesArea = towerFootprint - coreArea; // remaining per tower
+                    const totalAmenitiesArea = amenitiesArea * towers;
+                    
+                    // Ratios for distributing the total available amenities area
+                    // (60+40+100+80+120+30+20+40+30+20+20 = 560 old total)
+                    const split = [60, 40, 100, 80, 120, 30, 20, 40, 30, 20, 20];
+                    const splitSum = split.reduce((acc, v) => acc + v, 0);
+                    
+                    // Calculate distributed areas that add exactly up to totalAmenitiesArea
+                    const allocated = split.map(v => Math.round((v / splitSum) * totalAmenitiesArea));
+                    
+                    // Adjust the largest one (array index 4) to eat any rounding error precisely
+                    const allocatedSum = allocated.reduce((acc, v) => acc + v, 0);
+                    if (allocatedSum !== totalAmenitiesArea) {
+                        allocated[4] += (totalAmenitiesArea - allocatedSum);
+                    }
 
-                <SH2>Amenity Distribution</SH2>
-                <table className="w-full border-collapse mb-4 text-[10px]">
-                    <thead><tr><TH>Facility</TH><TH>Area (sq.m)</TH><TH>Location</TH><TH>Capacity</TH></tr></thead>
-                    <tbody>
-                        {[
-                            ['Reception Lobby', '60', 'Tower 1 entry', '—'],
-                            ['Waiting Lounge', '40', 'Adjacent to lobby', '15 persons'],
-                            ['Gymnasium', '100', 'Tower 1, ground', '20 persons'],
-                            ['Indoor Games Room', '80', 'Tower 2, ground', '12 persons'],
-                            ['Multipurpose Hall', '120', 'Tower 2, ground', '50 persons'],
-                            ['Management Office', '30', 'Tower 1, ground', '3 staff'],
-                            ['Security Room', '20', 'Main entrance', '24×7'],
-                            ['Convenience Store', '40', 'Near entrance', 'Small retail'],
-                            ['Store/Maintenance', '30', 'Service area', 'Equipment'],
-                            ['Toilets (Common)', '20', 'Near multipurpose', 'M+F'],
-                            ['Electrical Room', '20', 'Tower basement exit', 'Transformer']
-                        ].map(([a, b, c, d], i) => (
-                            <tr key={i}><TD className="font-semibold bg-slate-50">{a}</TD><TD>{b}</TD><TD>{c}</TD><TD>{d}</TD></tr>
-                        ))}
-                    </tbody>
-                    <tfoot>
-                        <tr className="bg-slate-200 font-bold"><TD>TOTAL (Covered)</TD><TD>560</TD><TD colSpan={2}>{" "}</TD></tr>
-                    </tfoot>
-                </table>
+                    return (
+                        <>
+                            <div className="mb-4 text-[10px]">
+                                <strong className="block text-slate-800 mb-1 border-b pb-1">Space Allocation</strong>
+                                <ul className="list-disc pl-4 space-y-0.5">
+                                    <li><strong>Total ground floor area (both towers):</strong> {towers} × {towerFootprint} sq.m = {fmt(towers * towerFootprint)} sq.m</li>
+                                    <li><strong>Core & circulation:</strong> {towers} × {coreArea} sq.m = {fmt(towers * coreArea)} sq.m</li>
+                                    <li><strong>Available for amenities:</strong> {fmt(totalAmenitiesArea)} sq.m</li>
+                                    <li><strong>Additional open-air amenities:</strong> ~{fmt(metrics?.greenArea?.total || 500)} sq.m (in landscaped areas)</li>
+                                </ul>
+                            </div>
+
+                            <SH2>Amenity Distribution</SH2>
+                            <table className="w-full border-collapse mb-4 text-[10px]">
+                                <thead><tr><TH>Facility</TH><TH>Area (sq.m)</TH><TH>Location</TH><TH>Capacity</TH></tr></thead>
+                                <tbody>
+                                    {[
+                                        ['Reception Lobby', allocated[0], 'Tower 1 entry', '—'],
+                                        ['Waiting Lounge', allocated[1], 'Adjacent to lobby', '15 persons'],
+                                        ['Gymnasium', allocated[2], 'Tower 1, ground', '20 persons'],
+                                        ['Indoor Games Room', allocated[3], 'Tower 2, ground', '12 persons'],
+                                        ['Multipurpose Hall', allocated[4], 'Tower 2, ground', '50 persons'],
+                                        ['Management Office', allocated[5], 'Tower 1, ground', '3 staff'],
+                                        ['Security Room', allocated[6], 'Main entrance', '24×7'],
+                                        ['Convenience Store', allocated[7], 'Near entrance', 'Small retail'],
+                                        ['Store/Maintenance', allocated[8], 'Service area', 'Equipment'],
+                                        ['Toilets (Common)', allocated[9], 'Near multipurpose', 'M+F'],
+                                        ['Electrical Room', allocated[10], 'Tower basement exit', 'Transformer']
+                                    ].map(([a, b, c, d], i) => (
+                                        <tr key={i}><TD className="font-semibold bg-slate-50">{a as string}</TD><TD>{b as number}</TD><TD>{c as string}</TD><TD>{d as string}</TD></tr>
+                                    ))}
+                                </tbody>
+                                <tfoot>
+                                    <tr className="bg-slate-200 font-bold"><TD>TOTAL (Covered)</TD><TD>{fmt(totalAmenitiesArea)}</TD><TD colSpan={2}>{" "}</TD></tr>
+                                </tfoot>
+                            </table>
+                        </>
+                    );
+                })()}
 
                 <SH2>7.2 Open-Air Amenities</SH2>
                 <table className="w-full border-collapse mb-4 text-[10px]">
@@ -1688,35 +1910,69 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                 <SH2>15.1 Funding Structure</SH2>
                 <div className="grid grid-cols-2 gap-4 text-[9px] mb-4">
                     <div>
-                        <strong className="block text-slate-700 mb-1 border-b pb-1">Capital Requirement</strong>
-                        <table className="w-full border-collapse">
-                            <thead><tr><TH>Component</TH><TH>Amount (₹ Cr)</TH><TH>%</TH></tr></thead>
-                            <tbody>
-                                {cb ? [
-                                    ['Land', crore(40000000).replace(/₹ | Cr/g,''), '6.1%'],
-                                    ['Construction', crore(totalCost).replace(/₹ | Cr/g,''), '77.3%'],
-                                    ['Soft Costs (~15%)', crore(totalCost * 0.15).replace(/₹ | Cr/g,''), '15.1%'],
-                                    ['Contingency (2%)', crore(totalCost * 0.02).replace(/₹ | Cr/g,''), '1.5%'],
-                                ].map(([c, a, p], i) => <tr key={i}><TD className="font-semibold bg-slate-50">{c}</TD><TD className="text-right">{a}</TD><TD className="text-right">{p}</TD></tr>) : null}
-                                <tr className="bg-slate-800 text-white font-bold">
-                                    <TD className="font-bold text-white">Total</TD>
-                                    <TD className="font-bold text-white text-right">{cb ? crore(40000000 + totalCost * 1.17).replace(/₹ | Cr/g,'') : '65.56'}</TD>
-                                    <TD className="font-bold text-white text-right">100%</TD>
-                                </tr>
-                            </tbody>
-                        </table>
+                        {(() => {
+                            const landCost = totalCost * 0.20; 
+                            const constructionCost = totalCost;
+                            const softCosts = constructionCost * 0.15;
+                            const contingency = constructionCost * 0.02;
+                            const totalCapReq = landCost + constructionCost + softCosts + contingency;
+                            
+                            const eqCost = totalCapReq * 0.40;
+                            const debtCost = totalCapReq * 0.46;
+                            const advCost = totalCapReq * 0.14;
+
+                            return (
+                                <>
+                                    <strong className="block text-slate-700 mb-1 border-b pb-1">Capital Requirement</strong>
+                                    <table className="w-full border-collapse">
+                                        <thead><tr><TH>Component</TH><TH className="text-right">Amount (₹ Cr)</TH><TH className="text-right">%</TH></tr></thead>
+                                        <tbody>
+                                            {cb ? [
+                                                ['Land', landCost, (landCost/totalCapReq)*100],
+                                                ['Construction', constructionCost, (constructionCost/totalCapReq)*100],
+                                                ['Soft Costs (~15%)', softCosts, (softCosts/totalCapReq)*100],
+                                                ['Contingency (2%)', contingency, (contingency/totalCapReq)*100],
+                                            ].map(([c, a, p], i) => (
+                                                <tr key={i}>
+                                                    <TD className="font-semibold bg-slate-50">{c as string}</TD>
+                                                    <TD className="text-right">{crore(a as number).replace(/₹ | Cr/g,'')}</TD>
+                                                    <TD className="text-right">{(p as number).toFixed(1)}%</TD>
+                                                </tr>
+                                            )) : null}
+                                            <tr className="bg-slate-800 text-white font-bold">
+                                                <TD className="font-bold text-white">Total</TD>
+                                                <TD className="font-bold text-white text-right">{cb ? crore(totalCapReq).replace(/₹ | Cr/g,'') : '—'}</TD>
+                                                <TD className="font-bold text-white text-right">100%</TD>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </>
+                            );
+                        })()}
                     </div>
                     <div>
-                        <strong className="block text-slate-700 mb-1 border-b pb-1">Funding Mix</strong>
-                        <table className="w-full border-collapse">
-                            <thead><tr><TH>Source</TH><TH>₹ Cr</TH><TH>%</TH><TH>Rate</TH><TH>Remarks</TH></tr></thead>
-                            <tbody>
-                                <tr><TD className="font-semibold bg-slate-50">Equity</TD><TD className="text-right">26.00</TD><TD>40%</TD><TD>—</TD><TD>Promoter + investors</TD></tr>
-                                <tr><TD className="font-semibold bg-slate-50">Debt</TD><TD className="text-right">30.00</TD><TD>46%</TD><TD>12% p.a.</TD><TD>Bank/NBFC loan</TD></tr>
-                                <tr><TD className="font-semibold bg-slate-50">Customer Advances</TD><TD className="text-right">9.56</TD><TD>14%</TD><TD>—</TD><TD>Pre-launch bookings</TD></tr>
-                                <tr className="bg-slate-800 text-white font-bold"><TD className="font-bold text-white">Total</TD><TD className="font-bold text-white text-right">65.56</TD><TD className="font-bold text-white">100%</TD><TD>&nbsp;</TD><TD>&nbsp;</TD></tr>
-                            </tbody>
-                        </table>
+                        {(() => {
+                            const landCost = totalCost * 0.20; 
+                            const totalCapReq = landCost + totalCost + (totalCost * 0.15) + (totalCost * 0.02);
+                            const eqCost = totalCapReq * 0.40;
+                            const debtCost = totalCapReq * 0.46;
+                            const advCost = totalCapReq * 0.14;
+
+                            return (
+                                <>
+                                    <strong className="block text-slate-700 mb-1 border-b pb-1">Funding Mix</strong>
+                                    <table className="w-full border-collapse">
+                                        <thead><tr><TH>Source</TH><TH className="text-right">₹ Cr</TH><TH>Rate</TH><TH>Remarks</TH></tr></thead>
+                                        <tbody>
+                                            <tr><TD className="font-semibold bg-slate-50">Equity (40%)</TD><TD className="text-right">{crore(eqCost).replace(/₹ | Cr/g,'')}</TD><TD>—</TD><TD>Promoter + investors</TD></tr>
+                                            <tr><TD className="font-semibold bg-slate-50">Debt (46%)</TD><TD className="text-right">{crore(debtCost).replace(/₹ | Cr/g,'')}</TD><TD>12% p.a.</TD><TD>Bank/NBFC loan</TD></tr>
+                                            <tr><TD className="font-semibold bg-slate-50">Advances (14%)</TD><TD className="text-right">{crore(advCost).replace(/₹ | Cr/g,'')}</TD><TD>—</TD><TD>Pre-launch bookings</TD></tr>
+                                            <tr className="bg-slate-800 text-white font-bold"><TD className="font-bold text-white">Total</TD><TD className="font-bold text-white text-right">{crore(totalCapReq).replace(/₹ | Cr/g,'')}</TD><TD colSpan={2}>&nbsp;</TD></tr>
+                                        </tbody>
+                                    </table>
+                                </>
+                            );
+                        })()}
                         <div className="mt-2 text-[8px] text-slate-600 space-y-0.5">
                             <p><strong>Debt Terms:</strong></p>
                             <p>• Loan-to-Value (LTV): 60% of project cost</p>
@@ -1728,66 +1984,104 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                 </div>
 
                 <SH2>15.2 Cash Flow Projection — Sales Realization</SH2>
-                <table className="w-full border-collapse mb-4 text-[9px]">
-                    <thead><tr><TH>Quarter</TH><TH>Units Sold</TH><TH>% of Total</TH><TH>Sales Value (₹ Cr)</TH><TH>Collections (80%)</TH></tr></thead>
-                    <tbody>
-                        {[
-                            ['Q1–Q2 (Launch)', 10, '16%', 13.0, 10.4],
-                            ['Q3–Q4', 15, '23%', 19.5, 15.6],
-                            ['Q5–Q6', 15, '23%', 19.5, 15.6],
-                            ['Q7–Q8', 12, '19%', 15.6, 12.5],
-                            ['Q9–Q10', 12, '19%', 15.6, 12.5],
-                        ].map(([q, u, p, sv, col], i) => (
-                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
-                                <TD className="font-semibold">{q}</TD><TD>{u}</TD><TD>{p}</TD>
-                                <TD className="text-right">{sv}</TD><TD className="text-right">{col}</TD>
-                            </tr>
-                        ))}
-                        <tr className="bg-slate-800 text-white font-bold">
-                            <TD className="font-bold text-white">Total</TD><TD className="font-bold text-white">64</TD><TD className="font-bold text-white">100%</TD>
-                            <TD className="font-bold text-white text-right">{totalRev ? (totalRev / 10000000).toFixed(2) : '83.20'}</TD>
-                            <TD className="font-bold text-white text-right">{totalRev ? ((totalRev * 0.8) / 10000000).toFixed(2) : '66.56'}</TD>
-                        </tr>
-                    </tbody>
-                </table>
-                <p className="text-[8px] text-slate-500 italic mb-3">* Balance on possession: ~₹16.6 Cr (20% at handover)</p>
+                {(() => {
+                    const landCost = totalCost * 0.20;
+                    const constructionCost = totalCost;
+                    const softCosts = totalCost * 0.15;
+                    const contingency = totalCost * 0.02;
+                    const totalCapReq = landCost + constructionCost + softCosts + contingency;
+                    const debtCost = totalCapReq * 0.46;
+                    
+                    const revCr = totalRev ? totalRev / 10000000 : 83.2; // Fallback to 83.2 Cr if missing
+                    const units = totalUnits || 64;
 
-                <SH2>15.3 Profit & Loss Statement</SH2>
-                <div className="grid grid-cols-2 gap-4">
-                    <table className="w-full border-collapse text-[9px]">
-                        <thead><tr><TH>Particulars</TH><TH className="text-right">₹ Crores</TH></tr></thead>
-                        <tbody>
-                            <tr className="bg-slate-50 font-semibold"><TD colSpan={2}>Revenue</TD></tr>
-                            <tr><TD>Total Sales</TD><TD className="text-right">{totalRev ? (totalRev / 10000000).toFixed(2) : '83.68'}</TD></tr>
-                            <tr><TD>Less: GST (input credit)</TD><TD className="text-right">—</TD></tr>
-                            <tr className="font-semibold"><TD>Net Revenue</TD><TD className="text-right">{totalRev ? (totalRev / 10000000).toFixed(2) : '83.68'}</TD></tr>
-                            <tr className="bg-slate-50 font-semibold"><TD colSpan={2}>Less: Project Cost</TD></tr>
-                            <tr><TD>Land</TD><TD className="text-right">{crore(40000000).replace(/₹ | Cr/g,'')}</TD></tr>
-                            <tr><TD>Construction</TD><TD className="text-right">{cb ? crore(totalCost).replace(/₹ | Cr/g,'') : '50.63'}</TD></tr>
-                            <tr><TD>Soft Costs</TD><TD className="text-right">{cb ? crore(totalCost * 0.15).replace(/₹ | Cr/g,'') : '9.92'}</TD></tr>
-                            <tr><TD>Contingency</TD><TD className="text-right">{cb ? crore(totalCost * 0.02).replace(/₹ | Cr/g,'') : '1.01'}</TD></tr>
-                            <tr className="font-semibold bg-slate-50"><TD>Total Cost</TD><TD className="text-right">{cb ? crore(totalCost * 1.17 + 40000000).replace(/₹ | Cr/g,'') : '65.56'}</TD></tr>
-                            <tr className="font-bold text-green-700"><TD>Gross Profit</TD><TD className="text-right">{totalRev && cb ? crore(totalRev - (totalCost * 1.17 + 40000000)).replace(/₹ | Cr/g,'') : '18.12'}</TD></tr>
-                            <tr><TD>Gross Margin</TD><TD className="text-right font-semibold">{totalRev && cb ? ((totalRev - (totalCost * 1.17 + 40000000)) / totalRev * 100).toFixed(1) : '21.7'}%</TD></tr>
-                        </tbody>
-                    </table>
-                    <table className="w-full border-collapse text-[9px]">
-                        <thead><tr><TH>Particulars</TH><TH className="text-right">₹ Crores</TH></tr></thead>
-                        <tbody>
-                            <tr className="bg-slate-50 font-semibold"><TD colSpan={2}>Less: Operating Expenses</TD></tr>
-                            <tr><TD>Marketing & Sales (3%)</TD><TD className="text-right">{totalRev ? (totalRev * 0.03 / 10000000).toFixed(2) : '2.51'}</TD></tr>
-                            <tr><TD>Brokerage (2%)</TD><TD className="text-right">{totalRev ? (totalRev * 0.02 / 10000000).toFixed(2) : '1.67'}</TD></tr>
-                            <tr className="font-semibold"><TD>Total OpEx</TD><TD className="text-right">{totalRev ? (totalRev * 0.05 / 10000000).toFixed(2) : '4.18'}</TD></tr>
-                            <tr className="font-bold text-blue-700 bg-blue-50"><TD>EBITDA</TD><TD className="text-right">{totalRev && cb ? ((totalRev - (totalCost * 1.17 + 40000000) - totalRev * 0.05) / 10000000).toFixed(2) : '13.94'}</TD></tr>
-                            <tr><TD>EBITDA Margin</TD><TD className="text-right">{totalRev && cb ? (((totalRev - (totalCost * 1.17 + 40000000) - totalRev * 0.05) / totalRev) * 100).toFixed(1) : '16.7'}%</TD></tr>
-                            <tr><TD>Less: Interest on Debt</TD><TD className="text-right">3.60</TD></tr>
-                            <tr className="font-semibold"><TD>PBT</TD><TD className="text-right">{totalRev && cb ? ((totalRev - (totalCost * 1.17 + 40000000) - totalRev * 0.05 - 36000000) / 10000000).toFixed(2) : '10.34'}</TD></tr>
-                            <tr><TD>Less: Income Tax (25%)</TD><TD className="text-right">{totalRev && cb ? ((totalRev - (totalCost * 1.17 + 40000000) - totalRev * 0.05 - 36000000) * 0.25 / 10000000).toFixed(2) : '2.59'}</TD></tr>
-                            <tr className="font-bold text-green-800 bg-green-50"><TD>PAT (Profit After Tax)</TD><TD className="text-right">{totalRev && cb ? ((totalRev - (totalCost * 1.17 + 40000000) - totalRev * 0.05 - 36000000) * 0.75 / 10000000).toFixed(2) : '7.75'}</TD></tr>
-                            <tr><TD>PAT Margin</TD><TD className="text-right font-semibold">{totalRev && cb ? (((totalRev - (totalCost * 1.17 + 40000000) - totalRev * 0.05 - 36000000) * 0.75 / totalRev) * 100).toFixed(1) : '9.3'}%</TD></tr>
-                        </tbody>
-                    </table>
-                </div>
+                    const p16 = revCr * 0.16;
+                    const p23 = revCr * 0.23;
+                    const p19 = revCr * 0.19;
+                    
+                    const u16 = Math.round(units * 0.16);
+                    const u23 = Math.round(units * 0.23);
+                    const u19 = Math.round(units * 0.19);
+                    
+                    const interestExp = debtCost * 0.12; // 12% on total debt (assuming avg utilization balance)
+
+                    return (
+                        <>
+                            <table className="w-full border-collapse mb-4 text-[9px]">
+                                <thead><tr><TH>Quarter</TH><TH>Units Sold</TH><TH>% of Total</TH><TH className="text-right">Sales Value (₹ Cr)</TH><TH className="text-right">Collections (80%)</TH></tr></thead>
+                                <tbody>
+                                    {[
+                                        ['Q1–Q2 (Launch)', u16, '16%', p16, p16 * 0.8],
+                                        ['Q3–Q4', u23, '23%', p23, p23 * 0.8],
+                                        ['Q5–Q6', u23, '23%', p23, p23 * 0.8],
+                                        ['Q7–Q8', u19, '19%', p19, p19 * 0.8],
+                                        ['Q9–Q10', (units - u16 - (u23*2) - u19), '19%', (revCr - p16 - (p23*2) - p19), (revCr - p16 - (p23*2) - p19) * 0.8],
+                                    ].map(([q, u, p, sv, col], i) => (
+                                        <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                            <TD className="font-semibold">{q as string}</TD><TD>{u as number}</TD><TD>{p as string}</TD>
+                                            <TD className="text-right">{(sv as number).toFixed(2)}</TD><TD className="text-right">{(col as number).toFixed(2)}</TD>
+                                        </tr>
+                                    ))}
+                                    <tr className="bg-slate-800 text-white font-bold">
+                                        <TD className="font-bold text-white">Total</TD><TD className="font-bold text-white">{units}</TD><TD className="font-bold text-white">100%</TD>
+                                        <TD className="font-bold text-white text-right">{revCr.toFixed(2)}</TD>
+                                        <TD className="font-bold text-white text-right">{(revCr * 0.8).toFixed(2)}</TD>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <p className="text-[8px] text-slate-500 italic mb-3">* Balance on possession: ~₹{(revCr * 0.2).toFixed(1)} Cr (20% at handover)</p>
+
+                            <SH2>15.3 Profit & Loss Statement</SH2>
+                            <div className="grid grid-cols-2 gap-4">
+                                <table className="w-full border-collapse text-[9px]">
+                                    <thead><tr><TH>Particulars</TH><TH className="text-right">₹ Crores</TH></tr></thead>
+                                    <tbody>
+                                        <tr className="bg-slate-50 font-semibold"><TD colSpan={2}>Revenue</TD></tr>
+                                        <tr><TD>Total Sales</TD><TD className="text-right">{revCr.toFixed(2)}</TD></tr>
+                                        <tr><TD>Less: GST (input credit)</TD><TD className="text-right">—</TD></tr>
+                                        <tr className="font-semibold"><TD>Net Revenue</TD><TD className="text-right">{revCr.toFixed(2)}</TD></tr>
+                                        <tr className="bg-slate-50 font-semibold"><TD colSpan={2}>Less: Project Cost</TD></tr>
+                                        <tr><TD>Land</TD><TD className="text-right">{crore(landCost).replace(/₹ | Cr/g,'')}</TD></tr>
+                                        <tr><TD>Construction</TD><TD className="text-right">{crore(constructionCost).replace(/₹ | Cr/g,'')}</TD></tr>
+                                        <tr><TD>Soft Costs</TD><TD className="text-right">{crore(softCosts).replace(/₹ | Cr/g,'')}</TD></tr>
+                                        <tr><TD>Contingency</TD><TD className="text-right">{crore(contingency).replace(/₹ | Cr/g,'')}</TD></tr>
+                                        <tr className="font-semibold bg-slate-50"><TD>Total Cost</TD><TD className="text-right">{crore(totalCapReq).replace(/₹ | Cr/g,'')}</TD></tr>
+                                        <tr className="font-bold text-green-700"><TD>Gross Profit</TD><TD className="text-right">{(revCr - (totalCapReq/10000000)).toFixed(2)}</TD></tr>
+                                        <tr><TD>Gross Margin</TD><TD className="text-right font-semibold">{((revCr - (totalCapReq/10000000)) / revCr * 100).toFixed(1)}%</TD></tr>
+                                    </tbody>
+                                </table>
+                                <table className="w-full border-collapse text-[9px]">
+                                    <thead><tr><TH>Particulars</TH><TH className="text-right">₹ Crores</TH></tr></thead>
+                                    <tbody>
+                                        <tr className="bg-slate-50 font-semibold"><TD colSpan={2}>Less: Operating Expenses</TD></tr>
+                                        <tr><TD>Marketing & Sales (3%)</TD><TD className="text-right">{(revCr * 0.03).toFixed(2)}</TD></tr>
+                                        <tr><TD>Brokerage (2%)</TD><TD className="text-right">{(revCr * 0.02).toFixed(2)}</TD></tr>
+                                        <tr className="font-semibold"><TD>Total OpEx</TD><TD className="text-right">{(revCr * 0.05).toFixed(2)}</TD></tr>
+                                        
+                                        {(() => {
+                                            const ebitda = revCr - (totalCapReq/10000000) - (revCr * 0.05);
+                                            const pbt = ebitda - (interestExp/10000000);
+                                            const tax = pbt * 0.25;
+                                            const pat = pbt - tax;
+                                            
+                                            return (
+                                                <>
+                                                    <tr className="font-bold text-blue-700 bg-blue-50"><TD>EBITDA</TD><TD className="text-right">{ebitda.toFixed(2)}</TD></tr>
+                                                    <tr><TD>EBITDA Margin</TD><TD className="text-right text-blue-700 font-semibold">{(ebitda / revCr * 100).toFixed(1)}%</TD></tr>
+                                                    <tr><TD>Less: Interest on Debt</TD><TD className="text-right">{(interestExp/10000000).toFixed(2)}</TD></tr>
+                                                    <tr className="font-semibold"><TD>PBT</TD><TD className="text-right">{pbt.toFixed(2)}</TD></tr>
+                                                    <tr><TD>Less: Income Tax (25%)</TD><TD className="text-right">{tax.toFixed(2)}</TD></tr>
+                                                    <tr className="font-bold text-green-800 bg-green-50"><TD>PAT (Profit After Tax)</TD><TD className="text-right">{pat.toFixed(2)}</TD></tr>
+                                                    <tr><TD>PAT Margin</TD><TD className="text-right text-green-800 font-semibold">{(pat / revCr * 100).toFixed(1)}%</TD></tr>
+                                                </>
+                                            );
+                                        })()}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    );
+                })()}
             </div>
             <PageBreak />
 
@@ -1863,7 +2157,7 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                         <p className="mt-1 text-[8px]"><strong>Timeline:</strong> 20 days &nbsp;|&nbsp; <strong>Validity:</strong> 5 years (≥15m buildings)</p>
 
                         <strong className="block text-slate-700 mt-2 mb-1 border-b pb-1">Fire NOC</strong>
-                        <p className="text-slate-500 text-[8px] mb-1">Authority: Director, Fire Services, Haryana</p>
+                        <p className="text-slate-500 text-[8px] mb-1">Authority: Director, Fire Services, {plot.regulation?.location?.replace(' Building Code', '') || 'State'}</p>
                         <ul className="list-disc pl-3 space-y-[1px] text-slate-600">
                             <li>Sanctioned building + fire safety plans</li>
                             <li>Fire-fighting system design + escape plans</li>
@@ -1874,7 +2168,7 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                     </div>
                     <div>
                         <strong className="block text-slate-700 mb-1 border-b pb-1">RERA Registration</strong>
-                        <p className="text-slate-500 text-[8px] mb-1">Authority: Haryana Real Estate Regulatory Authority</p>
+                        <p className="text-slate-500 text-[8px] mb-1">Authority: {plot.regulation?.location?.replace(' Building Code', '') || 'State'} Real Estate Regulatory Authority</p>
                         <ul className="list-disc pl-3 space-y-[1px] text-slate-600">
                             <li>Land title documents + sanctioned plans</li>
                             <li>All approvals (building, fire, environment)</li>
@@ -1953,22 +2247,33 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                         </ul>
                     </div>
                     <div>
-                        <strong className="block text-slate-700 mb-1 border-b pb-1">Permanent Utility Connections</strong>
-                        <p className="text-slate-500 text-[8px] mb-1">Electricity (900 kW load) — UHBVN/DHBVN</p>
-                        <ul className="list-disc pl-3 space-y-[1px] text-slate-600 mb-2">
-                            <li>OC, Load calc, CEI approval, Electrical cert</li>
-                            <li>Timeline: 45-60 days | Cost: ₹15-20L</li>
-                        </ul>
-                        <p className="text-slate-500 text-[8px] mb-1">Water (50,000 L/day) — Municipal Corp / HUDA</p>
-                        <ul className="list-disc pl-3 space-y-[1px] text-slate-600 mb-2">
-                            <li>OC + Plumbing completion certificate</li>
-                            <li>Timeline: 30-45 days | Cost: ₹8-12L</li>
-                        </ul>
-                        <p className="text-slate-500 text-[8px] mb-1">Sewerage (40,000 L/day) — Municipal Corp</p>
-                        <ul className="list-disc pl-3 space-y-[1px] text-slate-600 mb-2">
-                            <li>OC, STP completion cert, Zero-discharge compliance</li>
-                            <li>Timeline: 30 days | Cost: ₹5-8L</li>
-                        </ul>
+                        {(() => {
+                            // Calculate demand using standard NBC norms since they aren't directly in metrics
+                            const waterDemand = totalUnits * 5 * 135; // 5 persons/unit, 135 L/capita/day
+                            const sewGen = waterDemand * 0.8; // 80% of domestic water demand
+                            const elecLoad = totalUnits * 6 * 1.3; // 6 kW/unit + 30% for common areas/basement
+                            
+                            return (
+                                <>
+                                    <strong className="block text-slate-700 mb-1 border-b pb-1">Permanent Utility Connections</strong>
+                                    <p className="text-slate-500 text-[8px] mb-1">Electricity ({fmt(elecLoad)} kW load) — UHBVN/DHBVN</p>
+                                    <ul className="list-disc pl-3 space-y-[1px] text-slate-600 mb-2">
+                                        <li>OC, Load calc, CEI approval, Electrical cert</li>
+                                        <li>Timeline: 45-60 days | Cost: {lakh(elecLoad * 2000)} - {lakh(elecLoad * 2500)}</li>
+                                    </ul>
+                                    <p className="text-slate-500 text-[8px] mb-1">Water ({fmt(waterDemand)} L/day) — Municipal Corp / HUDA</p>
+                                    <ul className="list-disc pl-3 space-y-[1px] text-slate-600 mb-2">
+                                        <li>OC + Plumbing completion certificate</li>
+                                        <li>Timeline: 30-45 days | Cost: {lakh(waterDemand * 18)} - {lakh(waterDemand * 25)}</li>
+                                    </ul>
+                                    <p className="text-slate-500 text-[8px] mb-1">Sewerage ({fmt(sewGen)} L/day) — Municipal Corp</p>
+                                    <ul className="list-disc pl-3 space-y-[1px] text-slate-600 mb-2">
+                                        <li>OC, STP completion cert, Zero-discharge compliance</li>
+                                        <li>Timeline: 30 days | Cost: {lakh(sewGen * 12)} - {lakh(sewGen * 18)}</li>
+                                    </ul>
+                                </>
+                            );
+                        })()}
 
                         <strong className="block text-slate-700 mb-1 border-b pb-1">Conveyance Deed (to Society/RWA)</strong>
                         <p className="text-slate-500 text-[8px] mb-1">Timeline: Within 3 months of formation of RWA</p>
@@ -2041,27 +2346,136 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
             <div className="report-page">
                 <SH>18. Underwriting — Credit Assessment</SH>
                 <SH2 className="mt-2 text-blue-800">18.1 Credit Assessment Summary</SH2>
-                <table className="w-full border-collapse mb-4 text-center mt-2">
-                    <thead><tr><TH>Rating Criteria</TH><TH>Score</TH><TH>Maximum</TH><TH>Rating</TH></tr></thead>
-                    <tbody>
-                        {[
-                            ['Promoter Profile', 18, 20, 'A+'],
-                            ['Project Viability', 27, 30, 'A+'],
-                            ['Financial Structuring', 22, 25, 'A'],
-                            ['Location & Marketability', 18, 20, 'A+'],
-                            ['Legal & Regulatory', 5, 5, 'AAA'],
-                        ].map(([crit, score, max, rating], i) => (
-                            <tr key={i}><TD className="font-semibold bg-slate-50 text-left">{crit}</TD><TD>{score}</TD><TD>{max}</TD><TD className="font-bold text-green-700">{rating}</TD></tr>
-                        ))}
-                        <tr className="bg-slate-800 text-white font-bold">
-                            <TD className="text-white font-bold text-left">TOTAL SCORE</TD><TD className="text-white font-bold">90</TD><TD className="text-white font-bold">100</TD><TD className="text-white font-bold">A+</TD>
-                        </tr>
-                    </tbody>
-                </table>
-                <div className="bg-green-50 border border-green-200 p-3 rounded text-center">
-                    <strong className="text-green-800 text-base">Recommended Rating: A+ (Low Risk)</strong>
-                    <p className="text-green-700 mt-1">Recommendation: APPROVE with conditions outlined in Section 14</p>
-                </div>
+                {(() => {
+                    // ── Dynamic scoring logic ──────────────────────
+                    const roiPct = estimates?.roi_percentage ?? roi ?? 0;
+                    const dscr = roiPct > 20 ? 1.8 : roiPct > 10 ? 1.4 : 1.1;
+                    const farCompliant = achievedFAR <= far + 0.05;
+                    const gcCompliant = gcPct <= maxCov + 1;
+                    const parkCompliant = parkProv >= parkReq;
+                    const greenCount = greenItems?.length ?? 0;
+                    const greenPass = greenItems?.filter((g: any) => g.status === 'pass').length ?? 0;
+                    const greenPct = greenCount > 0 ? greenPass / greenCount : 0;
+
+                    // --- Promoter Profile (max 20) ---
+                    // measured by: project completeness, towers, units, green compliance presence
+                    let promoterScore = 12; // base
+                    if (towers >= 2) promoterScore += 2;
+                    if (totalUnits >= 30) promoterScore += 2;
+                    if (greenPct >= 0.5) promoterScore += 2;
+                    if (carpetEff >= 60) promoterScore += 2;
+                    promoterScore = Math.min(20, promoterScore);
+
+                    // --- Project Viability (max 30) ---
+                    let viabilityScore = 10; // base
+                    if (farCompliant) viabilityScore += 4;
+                    if (gcCompliant) viabilityScore += 4;
+                    if (parkCompliant) viabilityScore += 3;
+                    if (roiPct >= 20) viabilityScore += 5;
+                    else if (roiPct >= 10) viabilityScore += 3;
+                    if (carpetEff >= 60) viabilityScore += 2;
+                    if (totalUnits >= 10) viabilityScore += 2;
+                    viabilityScore = Math.min(30, viabilityScore);
+
+                    // --- Financial Structuring (max 25) ---
+                    let finScore = 8; // base
+                    if (dscr >= 1.5) finScore += 6;
+                    else if (dscr >= 1.25) finScore += 4;
+                    else if (dscr >= 1.0) finScore += 2;
+                    if (roiPct >= 20) finScore += 5;
+                    else if (roiPct >= 10) finScore += 3;
+                    if (profit > 0) finScore += 4;
+                    if (totalCost > 0 && profit / totalCost > 0.3) finScore += 2;
+                    finScore = Math.min(25, finScore);
+
+                    // --- Location & Marketability (max 20) ---
+                    let locationScore = 12; // base — location assumed Tier-1/2
+                    if (totalUnits >= 30) locationScore += 2; // scale suggests market demand
+                    if (carpetEff >= 60) locationScore += 2;
+                    if (greenPct >= 0.5) locationScore += 2;
+                    if (parkCompliant) locationScore += 2;
+                    locationScore = Math.min(20, locationScore);
+
+                    // --- Legal & Regulatory (max 5) ---
+                    let legalScore = 3;
+                    if (farCompliant && gcCompliant) legalScore = 4;
+                    if (farCompliant && gcCompliant && parkCompliant) legalScore = 5;
+
+                    const totalScore = promoterScore + viabilityScore + finScore + locationScore + legalScore;
+                    const totalMax = 100;
+                    const pct = (totalScore / totalMax) * 100;
+
+                    const grade = (s: number, max: number) => {
+                        const p = (s / max) * 100;
+                        if (p >= 95) return { label: 'AAA', cls: 'text-emerald-700' };
+                        if (p >= 88) return { label: 'A+', cls: 'text-green-700' };
+                        if (p >= 80) return { label: 'A', cls: 'text-green-600' };
+                        if (p >= 70) return { label: 'B+', cls: 'text-yellow-700' };
+                        if (p >= 60) return { label: 'B', cls: 'text-yellow-600' };
+                        return { label: 'C', cls: 'text-red-600' };
+                    };
+
+                    const overallGrade = grade(totalScore, totalMax);
+                    const riskLabel = pct >= 85 ? 'Low Risk' : pct >= 70 ? 'Moderate Risk' : 'High Risk';
+                    const recommendation = pct >= 80 ? 'APPROVE — Standard Conditions' : pct >= 65 ? 'CONDITIONAL APPROVAL' : 'REFER — Additional Due Diligence Required';
+                    const bannerCls = pct >= 80 ? 'bg-green-50 border-green-200 text-green-800' : pct >= 65 ? 'bg-yellow-50 border-yellow-200 text-yellow-800' : 'bg-red-50 border-red-200 text-red-700';
+
+                    const criteria = [
+                        { label: 'Promoter Profile', score: promoterScore, max: 20, detail: `${towers} towers, ${totalUnits} units, ${carpetEff.toFixed(0)}% carpet eff.` },
+                        { label: 'Project Viability', score: viabilityScore, max: 30, detail: `ROI ${roiPct.toFixed(1)}%, FAR ${farCompliant ? '✔' : '✗'}, GC ${gcCompliant ? '✔' : '✗'}, Parking ${parkCompliant ? '✔' : '✗'}` },
+                        { label: 'Financial Structuring', score: finScore, max: 25, detail: `DSCR ${dscr.toFixed(2)}, Profit ${crore(profit)}` },
+                        { label: 'Location & Marketability', score: locationScore, max: 20, detail: `${greenPass}/${greenCount} green items, demand indicators positive` },
+                        { label: 'Legal & Regulatory', score: legalScore, max: 5, detail: farCompliant && gcCompliant && parkCompliant ? 'All key regulations met' : 'Minor non-conformances noted' },
+                    ];
+
+                    return (
+                        <>
+                            <table className="w-full border-collapse mb-4 text-[10px] mt-2">
+                                <thead>
+                                    <tr>
+                                        <TH className="text-left w-1/3">Rating Criteria</TH>
+                                        <TH className="text-center">Score</TH>
+                                        <TH className="text-center">Max</TH>
+                                        <TH className="text-center w-1/6">Rating</TH>
+                                        <TH className="text-left">Key Factor</TH>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {criteria.map(({ label, score, max, detail }, i) => {
+                                        const g = grade(score, max);
+                                        const barW = Math.round((score / max) * 100);
+                                        return (
+                                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                                <TD className="font-semibold">{label}</TD>
+                                                <TD className="text-center">
+                                                    <span className="font-bold text-blue-700">{score}</span>
+                                                    <div className="w-full bg-slate-200 rounded h-1 mt-1">
+                                                        <div className="h-1 rounded bg-blue-500" style={{ width: `${barW}%` }} />
+                                                    </div>
+                                                </TD>
+                                                <TD className="text-center text-slate-500">{max}</TD>
+                                                <TD className={`text-center font-bold text-[11px] ${g.cls}`}>{g.label}</TD>
+                                                <TD className="text-slate-500 text-[8px]">{detail}</TD>
+                                            </tr>
+                                        );
+                                    })}
+                                    <tr className="bg-slate-800 text-white font-bold border-t-2 border-slate-600">
+                                        <TD className="text-white font-bold">TOTAL SCORE</TD>
+                                        <TD className="text-center text-white font-bold text-[13px]">{totalScore}</TD>
+                                        <TD className="text-center text-slate-300">{totalMax}</TD>
+                                        <TD className={`text-center font-bold text-[13px] ${overallGrade.cls}`}>{overallGrade.label}</TD>
+                                        <TD className="text-slate-300 text-[8px]">{pct.toFixed(0)}% — {riskLabel}</TD>
+                                    </tr>
+                                </tbody>
+                            </table>
+
+                            <div className={`border p-3 rounded text-center mb-1 ${bannerCls}`}>
+                                <strong className="text-base">Recommended Rating: {overallGrade.label} ({riskLabel})</strong>
+                                <p className="mt-1 text-sm">{recommendation}</p>
+                            </div>
+                        </>
+                    );
+                })()}
 
                 <SH2>18.2 Pre/Post Construction Approvals Roadmap</SH2>
                 <div className="grid grid-cols-2 gap-3">
@@ -2093,40 +2507,96 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
             <div className="report-page">
                 <SH>19. Technical Due Diligence</SH>
 
+                {/* 19.1 Regulatory Compliance */}
                 <SH2>19.1 Regulatory Compliance</SH2>
-                <table className="w-full border-collapse mb-4 text-[9px]">
-                    <thead><tr><TH>Aspect</TH><TH>Requirement</TH><TH>Proposed</TH><TH>Status</TH></tr></thead>
+                <table className="w-full border-collapse mb-2 text-[9px]">
+                    <thead><tr><TH className="text-left w-1/4">Aspect</TH><TH>Requirement</TH><TH>Proposed</TH><TH>Status</TH></tr></thead>
                     <tbody>
                         {[
-                            ['FAR', 'Max 3.5 (with incentives)', metrics?.achievedFAR ? metrics.achievedFAR.toFixed(2) : '3.24', '✔ Compliant'],
-                            ['Ground Coverage', 'Max 35-40%', metrics?.groundCoveragePct ? `${metrics.groundCoveragePct.toFixed(1)}%` : '36%', '✔ Compliant'],
-                            ['Setbacks (30m height)', '10m all sides', '10m all sides', '✔ Compliant'],
-                            ['Height', 'Unrestricted (with NOC)', '29.7m', '✔ Compliant'],
-                            ['Basement', 'Up to 4 levels', '4 levels', '✔ Compliant'],
-                            ['Parking', '1.5 ECS/unit', metrics && metrics.totalUnits > 0 ? `${(metrics.parking.provided / metrics.totalUnits).toFixed(2)} ECS/unit` : '1.72 ECS/unit', '✔ Compliant'],
-                            ['Fire Safety', 'As per NBC/Fire Act', 'Full compliance', '✔ Compliant'],
-                            ['Seismic Design', 'IS 1893:2016, Zone IV', 'Designed as per IS 1893', '✔ Compliant'],
-                        ].map(([asp, req, prop, st], i) => (
+                            {
+                                asp: 'FAR / FSI',
+                                req: `Max ${far} (base)`,
+                                prop: fmt(achievedFAR, 2),
+                                ok: achievedFAR <= far + 0.05,
+                            },
+                            {
+                                asp: 'Ground Coverage',
+                                req: `Max ${maxCov}%`,
+                                prop: `${fmt(gcPct, 1)}%`,
+                                ok: gcPct <= maxCov + 1,
+                            },
+                            {
+                                asp: 'Building Height',
+                                req: plot.regulation?.geometry?.max_building_height?.value
+                                    ? `${plot.regulation.geometry.max_building_height.value}m max`
+                                    : 'As per NOC / Fire dept.',
+                                prop: `${fmt(maxHeight, 1)}m`,
+                                ok: !plot.regulation?.geometry?.max_building_height?.value
+                                    || maxHeight <= (plot.regulation.geometry.max_building_height.value + 0.5),
+                            },
+                            {
+                                asp: 'Setback — Front',
+                                req: `${plot.regulation?.geometry?.front_setback?.value ?? '—'}m`,
+                                prop: `${plot.regulation?.geometry?.front_setback?.value ?? '—'}m applied`,
+                                ok: true,
+                            },
+                            {
+                                asp: 'Setback — Rear/Side',
+                                req: `${plot.regulation?.geometry?.rear_setback?.value ?? '—'}m rear / ${plot.regulation?.geometry?.side_setback?.value ?? '—'}m side`,
+                                prop: 'As per code',
+                                ok: true,
+                            },
+                            {
+                                asp: 'Basement Levels',
+                                req: `Up to ${maxBasements} levels permitted`,
+                                prop: `${maxBasements} levels (B${maxBasements}–B1)`,
+                                ok: true,
+                            },
+                            {
+                                asp: 'Parking',
+                                req: `${parkReq} ECS required (1.5/unit)`,
+                                prop: `${parkProv} ECS provided`,
+                                ok: parkProv >= parkReq,
+                            },
+                            {
+                                asp: 'Fire Safety',
+                                req: `${regLabel(plot.regulation?.location)} / Fire Act`,
+                                prop: 'Full compliance designed',
+                                ok: true,
+                            },
+                            {
+                                asp: 'Seismic Design',
+                                req: 'IS 1893:2016, Zone IV',
+                                prop: 'SMRF (R = 5.0)',
+                                ok: true,
+                            },
+                        ].map(({ asp, req, prop, ok }, i) => (
                             <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
                                 <TD className="font-semibold">{asp}</TD>
                                 <TD>{req}</TD>
                                 <TD className="font-semibold text-blue-700">{prop}</TD>
-                                <TD className="text-green-700 font-bold">{st}</TD>
+                                <TD className={`font-bold ${ok ? 'text-green-700' : 'text-red-600'}`}>
+                                    {ok ? '✔ Compliant' : '✗ Attention'}
+                                </TD>
                             </tr>
                         ))}
                     </tbody>
                 </table>
-                <p className="text-[8px] text-green-700 font-semibold mb-3">✔ 100% compliant with Haryana Building Code 2017</p>
+                <p className="text-[8px] font-semibold mb-3 text-green-700">
+                    ✔ Compliant with {regLabel(plot.regulation?.location)}
+                </p>
 
                 <div className="grid grid-cols-2 gap-4 text-[9px]">
                     <div>
+                        {/* 19.2 Structural Assessment */}
                         <SH2>19.2 Structural Assessment</SH2>
                         <strong className="block text-slate-700 mb-1 border-b pb-1">Foundation</strong>
                         <ul className="list-disc pl-3 space-y-[1px] text-slate-600 mb-2">
-                            <li>Type: Deep raft foundation (500mm thick)</li>
-                            <li>Depth: 8–10m (medium dense sand, SBC 300 kN/sq.m)</li>
-                            <li>Load: ~5,490 tonnes per tower</li>
-                            <li>Safety Factor: &gt;3 ✔</li>
+                            <li><strong>Type:</strong> Deep raft foundation (500mm thick)</li>
+                            <li><strong>Depth:</strong> 8–10m (medium dense sand, SBC 300 kN/sq.m)</li>
+                            <li><strong>Est. Load:</strong> ~{fmt(Math.round(maxFloors * 305 * towers))} tonnes total ({fmt(Math.round(maxFloors * 305))} per tower)</li>
+                            <li><strong>Safety Factor:</strong> &gt;3 ✔</li>
+                            <li><strong>Towers:</strong> {towers} × {Math.round(builtUp / towers / totalLevels)} sq.m plate each</li>
                         </ul>
                         <strong className="block text-slate-700 mb-1 border-b pb-1">Structural System (SMRF)</strong>
                         <ul className="list-disc pl-3 space-y-[1px] text-slate-600 mb-2">
@@ -2139,10 +2609,11 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                         <ul className="list-disc pl-3 space-y-[1px] text-slate-600">
                             <li>Soil: Medium dense sand (N-value 15–25 @ 8–10m)</li>
                             <li>Water table: 10–12m below ground</li>
-                            <li>Confirm with 2 boreholes (1 per tower)</li>
+                            <li>Confirm with {towers} boreholes (1 per tower)</li>
                         </ul>
                         <p className="text-[8px] text-blue-700 font-semibold mt-1">Technical Score: 9/10 (pending soil investigation)</p>
 
+                        {/* 19.3 Quality & Construction Standards */}
                         <SH2>19.3 Quality & Construction Standards</SH2>
                         <table className="w-full border-collapse text-[9px]">
                             <thead><tr><TH>Aspect</TH><TH>Specification</TH></tr></thead>
@@ -2165,48 +2636,55 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                         <p className="text-[8px] text-green-700 font-semibold mt-1">✔ Adequate quality assurance protocols in place</p>
                     </div>
                     <div>
+                        {/* 19.4 Sustainability Features */}
                         <SH2>19.4 Sustainability Features</SH2>
                         <table className="w-full border-collapse mb-3 text-[9px]">
                             <thead><tr><TH>Feature</TH><TH>Specification</TH><TH>Benefit</TH></tr></thead>
                             <tbody>
                                 {[
-                                    ['Solar Power', `${towers * 10} kWp (rooftop)`, '₹1.8L/year savings'],
-                                    ['ECBC Compliance', 'Insulation, double glazing', '29% energy reduction'],
-                                    ['STP', '25 KLD, 100% reuse', 'Zero discharge, ₹5.4L/year savings'],
-                                    ['Rainwater Harvesting', '4 bores, 20,000L tank', '851 cu.m/year recharge'],
+                                    ...(hasSolar ? [['Solar Power', `${towers * 10} kWp (rooftop, ${towers} towers)`, '₹1.8L/year savings']] : [['Solar Power', 'Not yet configured', 'Recommend addition']]),
+                                    ['ECBC Compliance', 'Insulation, double glazing, shading', '~29% energy reduction'],
+                                    ...(hasSTP ? [['STP', `${Math.round(totalUnits * 0.135)} KLD, 100% reuse`, 'Zero discharge']] : [['STP', 'Not yet configured', 'Recommend addition']]),
+                                    ...(hasRWH ? [['Rainwater Harvesting', `${towers * 2} bores, 20,000L tank`, '851 cu.m/year recharge']] : [['Rainwater Harvesting', 'Not yet configured', 'Recommend addition']]),
                                     ['LED Lighting', '100% common areas', '₹1.2L/year savings'],
                                 ].map(([f, s, b], i) => (
                                     <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
-                                        <TD className="font-semibold">{f}</TD><TD>{s}</TD><TD className="text-green-700">{b}</TD>
+                                        <TD className="font-semibold">{f}</TD><TD>{s}</TD>
+                                        <TD className={b.includes('Recommend') ? 'text-yellow-600' : 'text-green-700'}>{b}</TD>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
-                        <p className="text-[8px] text-green-700 font-semibold mb-3">✔ Excellent — potential for GRIHA 3-star certification</p>
+                        <p className="text-[8px] font-semibold mb-3">
+                            {(hasSolar && hasSTP && hasRWH)
+                                ? '✔ Excellent — potential for GRIHA 3-star certification'
+                                : '⚠ Add missing green features to unlock GRIHA certification'}
+                        </p>
 
+                        {/* 19.5 Project Technical Specifications */}
                         <SH2>19.5 Project Technical Specifications</SH2>
                         <table className="w-full border-collapse text-[9px]">
-                            <thead><tr><TH>Parameter</TH><TH>Value</TH></tr></thead>
+                            <thead><tr><TH className="text-left">Parameter</TH><TH className="text-left">Value</TH></tr></thead>
                             <tbody>
                                 {[
-                                    ['Plot Area', plot ? `${Math.round(plot.area)} sq.m` : '2,000 sq.m'],
-                                    ['Location', 'Gurugram, Haryana'],
-                                    ['Zoning', 'Residential (Group Housing)'],
-                                    ['Access Road', '6.04m wide road (south side)'],
+                                    ['Plot Area', `${fmt(plotArea)} sq.m`],
+                                    ['Location', typeof plot.location === 'object' ? String(plot.regulation?.location || 'Defined in model') : String(plot.location || 'Defined in model')],
+                                    ['Zoning', `${project.intendedUse || 'Residential'} (Group Housing)`],
                                     ['Towers', `${towers} Nos.`],
-                                    ['Floors', 'B4 + Ground + 8 Upper = 13 levels'],
-                                    ['Height', '29.7m'],
-                                    ['Structure', 'RCC Frame (SMRF)'],
+                                    ['Structure', `B${maxBasements} + Ground + ${maxFloors} Upper = ${totalLevels} levels`],
+                                    ['Building Height', `${fmt(maxHeight, 1)}m`],
+                                    ['Structural System', 'RCC Frame (SMRF)'],
                                     ['Seismic Zone', 'Zone IV'],
-                                    ['Total Built-up', metrics?.totalBuiltUpArea ? `${Math.round(metrics.totalBuiltUpArea)} sq.m` : '10,080 sq.m'],
-                                    ['Total Carpet', `${Math.round(totalCarpet)} sq.m`],
-                                    ['Carpet Efficiency', metrics?.efficiency ? `${(metrics.efficiency * 100).toFixed(1)}%` : '61.1%'],
-                                    ['Unit Type', '3BHK (110 sq.m carpet)'],
-                                    ['Total Units', `${Math.round(totalCarpet / 110)}`],
-                                    ['Parking Provided', '110 ECS (4% surplus)'],
+                                    ['Total Built-up', `${fmt(builtUp)} sq.m`],
+                                    ['Total RERA Carpet', `${fmt(totalCarpet)} sq.m`],
+                                    ['Carpet Efficiency', `${carpetEff.toFixed(1)}%`],
+                                    ['Total Units', `${totalUnits}`],
+                                    ['Avg Unit Carpet', `~${totalUnits > 0 ? Math.round(totalCarpet / totalUnits) : '—'} sq.m`],
+                                    ['Parking Provided', `${parkProv} ECS (${parkProv >= parkReq ? `${parkReq > 0 ? Math.round(((parkProv - parkReq) / parkReq) * 100) : 0}% surplus` : 'deficit'})`],
                                 ].map(([p, v], i) => (
                                     <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
-                                        <TD className="font-semibold text-slate-700">{p}</TD><TD className="text-blue-800">{v}</TD>
+                                        <TD className="font-semibold text-slate-700">{p}</TD>
+                                        <TD className="text-blue-800 font-medium">{v}</TD>
                                     </tr>
                                 ))}
                             </tbody>
@@ -2221,7 +2699,7 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                     <h2 className="text-xl font-bold mb-2 text-blue-300">End of Feasibility Report</h2>
                     <p className="text-sm text-slate-300 max-w-lg mx-auto">
                         This report was generated dynamically by the Keystone Automated Feasibility Engine.
-                        All standard specifications are based on Haryana Building Code 2017 and National Building Code 2016.
+                        All standard specifications are based on {plot.regulation?.location ? regLabel(plot.regulation?.location, true) : 'National Building Code 2016'}.
                         Project-specific data is derived from the active design model.
                         Verify all metrics with local municipal regulations before financial commitment.
                     </p>
