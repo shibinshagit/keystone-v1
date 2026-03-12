@@ -182,7 +182,7 @@ export function SimSCurveBand({ p10, p50, p90, totalMonths, revenueTarget, title
                         wrapperStyle={{ zIndex: 100 }}
                         formatter={(v: number) => [`₹${v.toFixed(1)} Cr`]}
                     />
-                    <Area type="monotone" dataKey="p90" stroke="transparent" fill="url(#bandGrad)" />
+                    <Area type="monotone" dataKey="p90" stroke="transparent" fill="url(#bandGrad)" tooltipType="none" />
                     <Area type="monotone" dataKey="p10" stroke="#10b981" fill="transparent" strokeWidth={1} strokeDasharray="4 3" />
                     <Area type="monotone" dataKey="p50" stroke="#3b82f6" fill="transparent" strokeWidth={2} />
                     <Area type="monotone" dataKey="p90" stroke="#ef4444" fill="transparent" strokeWidth={1} strokeDasharray="4 3" />
@@ -251,13 +251,23 @@ export function SimGanttUncertainty({ data, title }: GanttProps) {
                     );
                 })}
             </div>
-            {/* Month scale */}
-            <div className="mt-2 ml-[88px] flex justify-between pr-14">
-                {Array.from({ length: 5 }, (_, i) => (
-                    <span key={i} className="text-xs text-muted-foreground">
-                        {((i / 4) * maxEnd).toFixed(0)}m
-                    </span>
-                ))}
+            {/* Month scale — 3-month intervals */}
+            <div className="mt-2 ml-[88px] pr-14 relative h-4">
+                {(() => {
+                    const interval = 3;
+                    const ticks: number[] = [];
+                    for (let m = 0; m <= maxEnd; m += interval) ticks.push(m);
+                    if (ticks[ticks.length - 1] < maxEnd) ticks.push(Math.ceil(maxEnd));
+                    return ticks.map((m) => (
+                        <span
+                            key={m}
+                            className="absolute text-[10px] text-muted-foreground -translate-x-1/2"
+                            style={{ left: `${(m / maxEnd) * 100}%` }}
+                        >
+                            {m}m
+                        </span>
+                    ));
+                })()}
             </div>
         </div>
     );
@@ -562,9 +572,9 @@ export function StandardTimelineChart({ data }: { data: StandardTimeEstimation }
 
     // Hardcode a palette for standard phases
     const PHASE_COLORS: Record<string, string> = {
-        'Earthwork & Excavation': '#8b5cf6',
+        'Earthwork & Excavation': '#fdd407',
         'Foundation': '#3b82f6',
-        'Basement Levels': '#0ea5e9',
+        'Basement Levels': '#04f78e50',
         'Superstructure': '#10b981',
         'Finishes & MEP': '#f59e0b',
         'Risk & Weather Buffer': '#ef4444',

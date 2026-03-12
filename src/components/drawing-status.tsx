@@ -17,6 +17,7 @@ export function DrawingStatus() {
     }
 
     const isRoad = drawingState.objectType === 'Road';
+    const isRotate = drawingState.objectType === 'Rotate';
     const canFinish = isRoad ? drawingPoints.length >= 2 : drawingPoints.length > 2;
 
     const handleFinish = () => {
@@ -26,6 +27,11 @@ export function DrawingStatus() {
             window.dispatchEvent(new CustomEvent('closePolygon'));
         }
     };
+
+    // Hide instructions for Rotate tool
+    if (isRotate) {
+        return null;
+    }
 
     return (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20">

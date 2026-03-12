@@ -6,7 +6,7 @@ export const StandardProductivityRates = {
   // Substructure
   EarthworkAndExcavation: 300,
   Foundation: 2.5,             // 1.67-4.00 m²/day (based on total GFA proxy)
-  BasementPerLevel: 1.15,      // 0.93-1.37 m²/day (based on footprint area)
+  BasementPerLevel: 6.5,       // ~6-7 m²/day (based on footprint area per level)
   
   // Superstructure
   StructurePerFloor: 24.3,     // 20-28.6 m²/day (based on typical floor plate)
@@ -51,14 +51,14 @@ export function calculateStandardTimeEstimates(
     const excDays = Math.max(7, Math.ceil((totalExcavationArea / StandardProductivityRates.EarthworkAndExcavation) / (parallelCrews * 1.5)));
     phases.push({ name: 'Earthwork & Excavation', durationDays: excDays, durationMonths: excDays / DAYS_PER_MONTH });
 
-    // 2. Foundation
-    const fndDays = Math.max(15, Math.ceil((b.gfaSqm / StandardProductivityRates.Foundation) / (parallelCrews * 1.5)));
+    // 2. Foundation (uses footprint area — foundation is only at ground level)
+    const fndDays = Math.max(15, Math.ceil((b.footprintSqm / StandardProductivityRates.Foundation) / (parallelCrews * 1.5)));
     phases.push({ name: 'Foundation', durationDays: fndDays, durationMonths: fndDays / DAYS_PER_MONTH });
 
     // 3. Basements
     let bsmntDays = 0;
     if (b.basements > 0) {
-        bsmntDays = Math.ceil((b.footprintSqm * b.basements / StandardProductivityRates.BasementPerLevel) / parallelCrews);
+        bsmntDays = Math.ceil((b.footprintSqm * b.basements / StandardProductivityRates.BasementPerLevel) / (parallelCrews * 1.5));
         phases.push({ name: 'Basement Levels', durationDays: bsmntDays, durationMonths: bsmntDays / DAYS_PER_MONTH });
     }
 

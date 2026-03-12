@@ -108,6 +108,8 @@ export function MapEditor({
   const dragStartPosRef = useRef<mapboxgl.LngLat | null>(null);
   const draggedObjectRef = useRef<{ id: string; type: SelectableObjectType; plotId: string } | null>(null);
 
+  // ...rotation tool state removed...
+
   // Timed selection highlight
   const [showSelectionHighlight, setShowSelectionHighlight] = useState(false);
   const selectionHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -298,6 +300,8 @@ export function MapEditor({
 
 
   const handleDragMove = useCallback((e: mapboxgl.MapLayerMouseEvent) => {
+    // ...rotation tool drag logic removed...
+
     if (!isDraggingRef.current || !draggedObjectRef.current || !dragStartPosRef.current) return;
 
     const currentPos = e.lngLat;
@@ -326,7 +330,15 @@ export function MapEditor({
 
       const { drawingState, drawingPoints, activeBhuvanLayer, plots } = getStoreState();
 
-      if (drawingState.objectType === 'Move') return;
+      if (typeof drawingState.objectType !== 'string' || drawingState.objectType.toLowerCase() === 'move') return;
+
+      // ...rotation tool map click logic removed...
+
+      // Defensive check for Rotate tool (fix invalid comparison)
+      if (typeof drawingState.objectType === 'string' && drawingState.objectType.toLowerCase() === 'rotate') {
+        // Rotation tool logic (if any) would go here
+        return;
+      }
 
       if (activeBhuvanLayer) {
         if (actions) actions.setBhuvanData(null, true);
@@ -405,7 +417,7 @@ export function MapEditor({
       if (drawingState.isDrawing) {
         const coords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
 
-        if (drawingState.objectType !== 'Road' && drawingPoints.length > 2) {
+        if (typeof drawingState.objectType !== 'string' || drawingState.objectType.toLowerCase() !== 'road' && drawingPoints.length > 2) {
           const firstPoint = drawingPoints[0];
           const clickPoint: LngLatLike = { lng: e.lngLat.lng, lat: e.lngLat.lat };
           const firstMapPoint: LngLatLike = { lng: firstPoint[0], lat: firstPoint[1] };
@@ -416,10 +428,18 @@ export function MapEditor({
             return;
           }
         }
-        actions.addDrawingPoint(coords);
+        try {
+          actions.addDrawingPoint(coords);
+        } catch (err) {
+          toast({
+            variant: 'destructive',
+            title: 'Drawing Error',
+            description: 'Failed to add drawing point. Please try again.',
+          });
+        }
       } else {
         const { drawingState: currentDrawingState, plots } = getStoreState();
-        if (currentDrawingState.objectType !== 'Select') return;
+        if (typeof currentDrawingState.objectType !== 'string' || currentDrawingState.objectType.toLowerCase() !== 'select') return;
 
         const allMapLayers = mapInst.getStyle().layers.map(l => l.id);
         const clickableLayers = plots.flatMap(p =>
@@ -2000,6 +2020,7 @@ useEffect(() => {
   }, [selectedObjectId, plots, isMapLoaded, styleLoaded]);
 
   useEffect(() => {
+
     if (!isMapLoaded || !styleLoaded || !map.current) {
       if (map.current && map.current.isStyleLoaded() && !styleLoaded) {
         setStyleLoaded(true);
@@ -2009,6 +2030,8 @@ useEffect(() => {
       }
     }
     const mapInstance = map.current;
+
+    // ...rotation tool overlay hiding removed...
 
     if (mapInstance.getLayer('building')) {
       mapInstance.setLayoutProperty('building', 'visibility', 'none');
@@ -2060,7 +2083,7 @@ useEffect(() => {
           'text-color': '#ffffff',
           'text-halo-color': '#000000',
           'text-halo-width': 1.5,
-          'text-opacity': ['case',
+          'text-opacity': false ? 0 : ['case',
             ['boolean', ['feature-state', 'hover'], false], 1,
             ['==', ['get', 'linkedId'], 'SELECTED_ID_PLACEHOLDER'], 1,
             0
@@ -2070,7 +2093,7 @@ useEffect(() => {
     }
 
     if (mapInstance.getLayer(LABELS_LAYER_ID)) {
-      mapInstance.setPaintProperty(LABELS_LAYER_ID, 'text-opacity', [
+      mapInstance.setPaintProperty(LABELS_LAYER_ID, 'text-opacity', false ? 0 : [
         'case',
         ['==', ['get', 'linkedId'], hoveredId || ''], 1,
         0
@@ -3309,7 +3332,14 @@ useEffect(() => {
     });
 
     const onMouseMove = (e: mapboxgl.MapMouseEvent) => {
-      const { componentVisibility: cv, uiState: us, plots } = getStoreState();
+      const { componentVisibility: cv, uiState: us, plots, drawingState: ds } = getStoreState();
+
+      // Hide tooltip during rotation to keep the view clear
+      if (typeof ds.objectType === 'string' && ds.objectType.toLowerCase() === 'rotate') {
+        popup.remove();
+        return;
+      }
+
       const internalsVisible = cv.units || cv.cores || cv.electrical || cv.hvac || us.ghostMode;
 
       const features = m.queryRenderedFeatures(e.point).filter(f => {
@@ -3491,10 +3521,10 @@ useEffect(() => {
         {/* Compass */}
         <div className="flex gap-0">
           {[
-            { label: 'N', angle: 0 },
-            { label: 'E', angle: 90 },
-            { label: 'S', angle: 180 },
-            { label: 'W', angle: 270 }
+            { label: 'N', angle: 180 },
+            { label: 'E', angle: 270 },
+            { label: 'S', angle: 0 },
+            { label: 'W', angle: 90 }
           ].map(dir => (
             <button
               key={dir.label}
@@ -3508,7 +3538,7 @@ useEffect(() => {
                 }
               }}
               className="w-7 h-7 flex items-center justify-center rounded-sm text-[11px] font-semibold hover:bg-muted transition-colors text-muted-foreground hover:text-primary"
-              title={`Face ${dir.label === 'N' ? 'North' : dir.label === 'E' ? 'East' : dir.label === 'S' ? 'South' : 'West'}`}
+              title={`View from ${dir.label === 'N' ? 'North' : dir.label === 'E' ? 'East' : dir.label === 'S' ? 'South' : 'West'}`}
             >
               {dir.label}
             </button>

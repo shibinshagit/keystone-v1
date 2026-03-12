@@ -12,7 +12,7 @@ import { calculateDevelopmentStats, DEFAULT_FEASIBILITY_PARAMS } from '@/lib/dev
 import { calculateTotalParkingSpaces } from '@/lib/parking-calc';
 import { produce } from 'immer';
 import { Button } from './ui/button';
-import { Plus, Trash2, X, Info, WandSparkles, Loader2, PieChart, BarChart3, Calculator, PenTool, Zap, AlertTriangle, Fan, Car, Layers, ArrowDownToLine, Box, Grid2x2, Eye, EyeOff, ChevronDown, ChevronRight, PanelRightClose, LandPlot, Leaf, MapPin } from 'lucide-react';
+import { Plus, Trash2, X, Info, WandSparkles, Loader2, PieChart, BarChart3, Calculator, PenTool, Zap, AlertTriangle, Fan, Car, Layers, ArrowDownToLine, Box, Grid2x2, Eye, EyeOff, ChevronDown, ChevronRight, PanelRightClose, LandPlot, Leaf, MapPin, RotateCw } from 'lucide-react';
 import { ScrollArea } from './ui/scroll-area';
 import { Separator } from './ui/separator';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -20,6 +20,7 @@ import { useProjectData } from '@/hooks/use-building-store';
 import { cn } from '@/lib/utils';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 
 
 function BuildingProperties() {
@@ -27,11 +28,38 @@ function BuildingProperties() {
     const selectedBuilding = useSelectedBuilding();
     const selectedPlot = useSelectedPlot();
     const [showInternals, setShowInternals] = React.useState(true);
+    const [rotationInput, setRotationInput] = React.useState('');
+    const [rotateOpen, setRotateOpen] = React.useState(false);
     const projectData = useProjectData();
 
     if (!selectedBuilding || !selectedPlot) return null;
 
     const regulation = selectedPlot.regulation;
+
+    const handleRotate = (angle: number) => {
+        if (angle === 0) return;
+        actions.rotateBuilding(selectedPlot.id, selectedBuilding.id, angle);
+    };
+
+    // Restore rotation handler: resets geometry, centroid, and alignmentRotation
+    const handleRestoreRotation = () => {
+        if (selectedBuilding.originalGeometry && selectedBuilding.originalCentroid) {
+            actions.updateBuilding(selectedBuilding.id, {
+                geometry: selectedBuilding.originalGeometry,
+                centroid: selectedBuilding.originalCentroid,
+                alignmentRotation: 0
+            });
+        } else if (selectedBuilding.geometry && selectedBuilding.centroid) {
+            // Fallback: set current as original for future restores
+            actions.updateBuilding(selectedBuilding.id, {
+                originalGeometry: JSON.parse(JSON.stringify(selectedBuilding.geometry)),
+                originalCentroid: JSON.parse(JSON.stringify(selectedBuilding.centroid)),
+                alignmentRotation: 0
+            });
+        } else {
+            actions.updateBuilding(selectedBuilding.id, { alignmentRotation: 0 });
+        }
+    };
 
     const handleFloorCountChange = (newCount: number | '') => {
         actions.updateBuilding(selectedBuilding.id, { numFloors: newCount === '' ? 1 : newCount });
@@ -116,12 +144,55 @@ function BuildingProperties() {
                 </div>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-1">
                 {!selectedBuilding.id.endsWith('-tower') && (
                     <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => actions.addParkingFloor(selectedBuilding.id, ParkingType.Basement)}>
                         <ArrowDownToLine className="h-3.5 w-3.5 mr-1.5" /> Basement
                     </Button>
                 )}
+                <Popover open={rotateOpen} onOpenChange={setRotateOpen}>
+                    <PopoverTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-7 text-xs">
+                            <RotateCw className="h-3.5 w-3.5 mr-1.5" /> Rotate
+                        </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-56 p-3" side="top" align="center">
+                        <div className="space-y-2.5">
+                            <div className="text-xs font-medium text-muted-foreground">Rotate Building</div>
+                            <div className="grid grid-cols-3 gap-1">
+                                {[-90, -45, -15, 15, 45, 90].map(a => (
+                                    <Button key={a} variant="outline" size="sm" className="h-7 text-[10px] px-1"
+                                        onClick={() => handleRotate(a)}>
+                                        {a > 0 ? '+' : ''}{a}°
+                                    </Button>
+                                ))}
+                            </div>
+                            <div className="flex gap-1.5 items-center">
+                                <Input
+                                    className="h-7 text-xs flex-1"
+                                    type="number"
+                                    placeholder="Custom °"
+                                    value={rotationInput}
+                                    onChange={e => setRotationInput(e.target.value)}
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter') {
+                                            const v = parseFloat(rotationInput);
+                                            if (!isNaN(v)) { handleRotate(v); setRotationInput(''); }
+                                        }
+                                    }}
+                                />
+                                <Button size="sm" className="h-7 text-xs px-2" onClick={() => {
+                                    const v = parseFloat(rotationInput);
+                                    if (!isNaN(v)) { handleRotate(v); setRotationInput(''); }
+                                }}>Apply</Button>
+                            </div>
+                            <Separator className="my-2" />
+                            <Button variant="ghost" size="sm" className="w-full h-7 text-xs" onClick={handleRestoreRotation}>
+                                Restore Original
+                            </Button>
+                        </div>
+                    </PopoverContent>
+                </Popover>
                 <p className='text-[10px] text-muted-foreground ml-auto'>
                     Height: <span className='font-semibold text-foreground'>{selectedBuilding.height.toFixed(1)}m</span>
                 </p>

@@ -233,9 +233,22 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                     }
                 }
 
+                // Parallel crews factor (same as standard-time-calc)
+                const typicalFloorPlate = bGFA / (aboveGroundFloors || 1);
+                const parallelCrews = Math.max(1, Math.ceil(typicalFloorPlate / 600));
+
                 // Towers don't need their own excavation/foundation - they use the podium's
-                const excMonths = isTower ? 0 : bTimeParam.excavation_timeline_months;
-                const fndMonths = isTower ? 0 : bTimeParam.foundation_timeline_months;
+                // Use area-based calculation (matching Standard Timeline), but allow admin override if explicitly > 0
+                const totalExcavationArea = footprint * (1 + (basementFloors * 0.5));
+                const excDays = Math.max(7, Math.ceil((totalExcavationArea / 300) / (parallelCrews * 1.5)));
+                const excMonthsCalc = excDays / 26;
+                const excMonths = isTower ? 0 : (bTimeParam.excavation_timeline_months > 0 ? Math.min(bTimeParam.excavation_timeline_months, excMonthsCalc) : excMonthsCalc);
+                const fndDays = Math.max(15, Math.ceil((footprint / 2.5) / (parallelCrews * 1.5)));
+                const fndMonthsCalc = fndDays / 26;
+                const fndMonths = isTower ? 0 : (bTimeParam.foundation_timeline_months > 0 ? Math.min(bTimeParam.foundation_timeline_months, fndMonthsCalc) : fndMonthsCalc);
+                const basementMonths = basementFloors > 0
+                    ? (footprint * basementFloors / 6.5 / (parallelCrews * 1.5)) / 26
+                    : 0;
 
                 const structureDays = totalFloors * bTimeParam.structure_per_floor_days;
                 const finishingDays = totalFloors * bTimeParam.finishing_per_floor_days;
@@ -244,6 +257,7 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                 const totalDays = 
                     (excMonths * 30) +
                     (fndMonths * 30) +
+                    (basementMonths * 26) +
                     structureDays +
                     finishingDays - 
                     (overlapMonths * 30) +
@@ -270,8 +284,11 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                     buildingName: b.name || `Building ${b.id.slice(0, 4)}`,
                     timeline: {
                         startOffset: startOffset,
-                        total: bMonths, // duration of just this building
-                        substructure: excMonths + fndMonths,
+                        total: bMonths,
+                        excavation: excMonths,
+                        foundation: fndMonths,
+                        basement: basementMonths,
+                        substructure: excMonths + fndMonths + basementMonths,
                         structure: structureDays / 30,
                         finishing: (finishingDays / 30) - overlapMonths,
                         contingency: bTimeParam.contingency_buffer_months
@@ -399,6 +416,10 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                 ? (Math.ceil(metrics.achievedFAR / (metrics.groundCoveragePct / 100 || 0.4)) || 10)
                 : (buildings.length > 0 ? Math.max(...buildings.map(b => b.numFloors || Math.ceil(b.height / (b.typicalFloorHeight || 3)))) : 10);
 
+        // Count actual lifts from building core data for accurate budget
+        const totalLiftCount = buildings.reduce((sum, b) => 
+            sum + (b.cores ? b.cores.filter(c => c.type === 'Lift').length : 0), 0);
+
         let simulation;
         try {
             // Skip simulation entirely if nothing to simulate
@@ -410,6 +431,7 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                     floors: simFloors,
                     numPhases: 3, // Default; UI can override
                     iterations: 3000, // ~3000 for performance
+                    numLifts: totalLiftCount > 0 ? totalLiftCount : undefined,
                     utilitiesPresent: utilitiesPresent,
                     perBuildingBreakdown: perBuildingBreakdown,
                 });
@@ -435,9 +457,7 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                 const bInputs: BuildingTimeInput[] = buildings.map(b => {
                     const floors = b.numFloors || Math.ceil(b.height / (b.typicalFloorHeight || 3));
                     const bGFA = b.area * floors;
-                    // For typical basements: check if parking has levels -1, -2, etc under this footprint
-                    // A simple proxy: if the plots have basements, we distribute them or assume 0 for now
-                    const bsmntLevels = 0; // Enhance later if basement parking overlaps this building
+                    const bsmntLevels = b.floors ? b.floors.filter(f => f.level !== undefined && f.level < 0).length : 0;
                     
                     return {
                         buildingId: b.id,

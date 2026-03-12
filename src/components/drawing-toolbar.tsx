@@ -1,4 +1,3 @@
-
 'use client';
 import { Button } from '@/components/ui/button';
 import { useBuildingStore, type DrawingObjectType } from '@/hooks/use-building-store';
@@ -15,12 +14,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { BuildingIntendedUse } from '@/lib/types';
 
 export function DrawingToolbar() {
-    const { actions, drawingState, plots, selectedObjectId, drawingPoints } = useBuildingStore(s => ({
+    const { actions, drawingState, plots, selectedObjectId, drawingPoints, uiState } = useBuildingStore(s => ({
         actions: s.actions,
         drawingState: s.drawingState,
         plots: s.plots,
         selectedObjectId: s.selectedObjectId,
-        drawingPoints: s.drawingPoints
+        drawingPoints: s.drawingPoints,
+        uiState: s.uiState
     }));
     const { toast } = useToast();
 
@@ -45,7 +45,6 @@ export function DrawingToolbar() {
             });
             return;
         }
-
         let activePlotId = null;
         if (selectedObjectId?.type === 'Plot') {
             activePlotId = selectedObjectId.id;
@@ -56,7 +55,6 @@ export function DrawingToolbar() {
                 return bTime - aTime;
             })[0].id;
         }
-
         actions.startDrawing(tool, activePlotId);
     }
 

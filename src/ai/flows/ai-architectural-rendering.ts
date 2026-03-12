@@ -39,10 +39,12 @@ function createArchitecturalPrompt(input: GenerateRenderingInput): string {
 
   // ── Building descriptions ────────────────────────────────────────
   const buildingDescriptions = buildings.map((b, i) => {
-    const floorH = b.numFloors > 0 ? (b.height / b.numFloors).toFixed(1) : '3.0';
+    const effectiveFloors = Math.max(1, b.numFloors);
+    const floorH = (b.height / effectiveFloors).toFixed(1);
     const w = b.footprintWidth;
     const d = b.footprintDepth;
     const label = isSingle ? 'The building' : `Building ${i + 1} ("${b.name}")`;
+    const positionDesc = b.position ? `, positioned on the ${b.position}` : '';
 
     let useStyle = '';
     if (b.intendedUse === 'Residential') useStyle = 'residential apartment';
@@ -79,9 +81,13 @@ function createArchitecturalPrompt(input: GenerateRenderingInput): string {
       if (f === 1) floorLines.push('Ground floor (1st storey)');
       else if (f === b.numFloors) floorLines.push(`Top floor (${f}${f === 2 ? 'nd' : f === 3 ? 'rd' : 'th'} storey) with rooftop/terrace`);
     }
-    const floorListDesc = b.numFloors <= 8
-      ? ` It has ${b.numFloors} visible above-ground floor slabs: ${floorLines.join(', ')}, and ${b.numFloors - 2 > 0 ? b.numFloors - 2 : 0} middle floors between them.`
-      : '';
+    let floorListDesc = '';
+    if (b.numFloors === 1) {
+      floorListDesc = ' It has 1 visible above-ground floor (single storey, ground level only).';
+    } else if (b.numFloors <= 8) {
+      const middleCount = b.numFloors - 2;
+      floorListDesc = ` It has ${b.numFloors} visible above-ground floor slabs: ${floorLines.join(', ')}${middleCount > 0 ? `, and ${middleCount} middle floor${middleCount > 1 ? 's' : ''} between them` : ''}.`;
+    }
 
     const basementDesc = b.basementFloors > 0
       ? ` The building has ${b.basementFloors} underground basement level${b.basementFloors > 1 ? 's' : ''} (not visible above ground — only the ramp entrance should be visible).`
@@ -95,7 +101,7 @@ function createArchitecturalPrompt(input: GenerateRenderingInput): string {
       : maxSide > b.height ? 'wider than it is tall — a horizontally-oriented building'
       : 'taller than it is wide — a vertically-oriented tower';
 
-    return `${label}: ${useStyle}, ${typologyDesc}, a ${cat} building, ${Math.round(b.height)}m total height (${floorH}m floor-to-floor), footprint: ${w}m wide × ${d}m deep (~${Math.round(b.footprintArea)} sqm). The building is ${proportionDesc}.${floorListDesc}${basementDesc}${mixDesc}`;
+    return `${label}: ${useStyle}, ${typologyDesc}, a ${cat} building${positionDesc}, ${Math.round(b.height)}m total height (${floorH}m floor-to-floor), footprint: ${w}m wide × ${d}m deep (~${Math.round(b.footprintArea)} sqm). The building is ${proportionDesc}.${floorListDesc}${basementDesc}${mixDesc}`;
   }).join('\n');
 
   // ── Plot context ─────────────────────────────────────────────────
@@ -145,7 +151,11 @@ function createArchitecturalPrompt(input: GenerateRenderingInput): string {
   }).join('; ');
 
   // ── Compose final prompt ─────────────────────────────────────────
+  const buildingCountNote = `CRITICAL CONSTRAINT — BUILDING COUNT: There are EXACTLY ${numBuildings} building${isSingle ? '' : 's'} on this plot. Do NOT add extra buildings. Show ONLY ${numBuildings} building structure${isSingle ? '' : 's'}.`;
+
   const prompt = `Photorealistic 3D architectural rendering of a development site in ${plot.location}.
+
+${buildingCountNote}
 
 BUILDINGS:
 ${buildingDescriptions}

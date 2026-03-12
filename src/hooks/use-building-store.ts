@@ -83,79 +83,7 @@ interface BuildingState {
     mapCommand: { type: 'flyTo'; center: [number, number]; zoom?: number } | null;
     greenRegulations: GreenRegulationData[]; // Global Green Regulations cache
 
-    actions: {
-        setMapLocation: (location: string | null) => void;
-        executeMapCommand: (command: { type: 'flyTo'; center: [number, number]; zoom?: number } | null) => void;
-        loadProjects: () => Promise<void>;
-        createProject: (name: string, totalPlotArea?: number, intendedUse?: BuildingIntendedUse, location?: string, regulationId?: string, greenCertification?: ('IGBC' | 'GRIHA' | 'LEED' | 'Green Building')[], vastuCompliant?: boolean) => Promise<Project | null>;
-        deleteProject: (projectId: string) => Promise<void>;
-        loadProject: (projectId: string) => Promise<void>;
-        saveCurrentProject: () => Promise<void>;
-        startDrawing: (objectType: DrawingObjectType, activePlotId?: string | null) => void;
-        addDrawingPoint: (point: [number, number]) => void;
-        finishDrawing: (geometry: Feature<Polygon | Point>) => boolean;
-        defineZone: (name: string, type: ZoneType, intendedUse?: BuildingIntendedUse, utilityType?: UtilityType) => void;
-        cancelDefineZone: () => void;
-        selectObject: (id: string | null, type: SelectableObjectType | null) => void;
-        updateBuilding: (buildingId: string, props: Partial<Omit<Building, 'id' | 'floors'>>) => void;
-        updateProject: (projectId: string, props: Partial<Project>) => void;
-        updateSimulationResults: (results: { wind?: { compliantArea: number; avgSpeed: number }; sun?: { compliantArea: number; avgHours: number } }) => void;
-        setScenario: (scenario: any) => void;
-        updatePlot: (plotId: string, props: Partial<Omit<Plot, 'id'>>) => void;
-        updateObject: (objectId: string, objectType: SelectableObjectType, props: Partial<any>) => void;
-        deletePlot: (id: string) => void;
-        deleteObject: (plotId: string, objectId: string, type: 'Building' | 'GreenArea' | 'ParkingArea' | 'BuildableArea' | 'UtilityArea' | 'Label' | 'EntryPoint') => void;
-        resetDrawing: () => void;
-        undoLastPoint: () => void;
-        clearAllPlots: () => void;
-        runAiLayoutGenerator: (plotId: string, prompt: string) => Promise<void>;
-        runAiMassingGenerator: (plotId: string) => Promise<void>;
-        generateArchitecturalRendering: (plotId: string, designParams: { landUse: string; unitMix: Record<string, number>; selectedUtilities: string[]; hasPodium: boolean; podiumFloors: number; parkingTypes: string[]; typology: string }) => Promise<void>;
-        clearAiRendering: () => void;
-        setRenderingDesignParams: (params: DesignParamsForRendering) => void;
-        refreshAiRenderingData: (regenerateImage?: boolean) => Promise<void>;
-        toggleAiRenderingMinimized: (minimized?: boolean) => void;
-        applyAiLayout: (plotId: string, scenario: AiScenario | AiMassingScenario) => void;
-        clearAiScenarios: () => void;
-        setHoveredObject: (id: string | null, type: SelectableObjectType | null) => void;
-        toggleObjectVisibility: (plotId: string, objectId: string, type: SelectableObjectType) => void;
-
-        setGenerationParams: (params: Partial<AlgoParams>) => void;
-        regenerateGreenAreas: (plotId: string, buildableAreaOverride?: Feature<Polygon>) => void;
-        generateScenarios: (plotId: string, params: AlgoParams) => void;
-        runAlgoMassingGenerator: (plotId: string) => void;
-        addParkingFloor: (buildingId: string, parkingType: ParkingType, level?: number) => void;
-        setPlotRegulation: (plotId: string, regulationType: string) => void;
-        setPlotRegulationByIndex: (plotId: string, index: number) => void;
-
-        saveDesignOption: (name: string, description?: string) => void;
-        loadDesignOption: (id: string) => void;
-        deleteDesignOption: (id: string) => void;
-
-
-        applyScenario: (scenarioIndex: number) => void;
-        clearTempScenarios: () => void;
-        toggleVastuCompass: (show: boolean) => void;
-        toggleFeasibilityPanel: () => void;
-        toggleGhostMode: () => void;
-        toggleComponentVisibility: (component: 'electrical' | 'hvac' | 'basements' | 'cores' | 'units' | 'solar' | 'ev') => void;
-        setFeasibilityPanelOpen: (isOpen: boolean) => void;
-
-        setLocationData: (data: any) => void;
-        toggleAmenityVisibility: (category: string) => void;
-
-        setActiveBhuvanLayer: (layerId: string | null) => void;
-        setBhuvanOpacity: (opacity: number) => void;
-        setBhuvanData: (data: any | null, isFetching?: boolean) => void;
-        setDistrictNameHint: (hint: string | undefined) => void;
-        moveObject: (plotId: string, objectId: string, objectType: SelectableObjectType, deltaLng: number, deltaLat: number) => void;
-        recalculateGreenAreas: (plotId: string) => void;
-        recalculateParkingAreas: (plotId: string) => void;
-
-
-        undo: () => void;
-        redo: () => void;
-    };
+    actions: any;
 }
 
 import { hslToRgb, BUILDING_MATERIALS } from '@/lib/color-utils';
@@ -508,13 +436,24 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
 // ── Helper: collect rendering project data from current store state ──
 export type DesignParamsForRendering = { landUse: string; unitMix: Record<string, number>; selectedUtilities: string[]; hasPodium: boolean; podiumFloors: number; parkingTypes: string[]; typology: string };
 
-function collectRenderingData(plots: Plot[], selectedPlot: Plot, designParams: DesignParamsForRendering): { buildingsInfo: RenderingBuildingInfo[]; plotInfo: RenderingPlotInfo; summary: RenderingProjectSummary } | null {
-    const allPlots = plots;
-    const allBuildings = allPlots.flatMap(p => p.buildings);
+function collectRenderingData(_plots: Plot[], selectedPlot: Plot, designParams: DesignParamsForRendering): { buildingsInfo: RenderingBuildingInfo[]; plotInfo: RenderingPlotInfo; summary: RenderingProjectSummary } | null {
+    // Only use buildings from the selected plot, not all plots
+    const allBuildings = selectedPlot.buildings;
+
+    // Compute plot centroid for spatial positioning
+    let plotCenterLng = 0, plotCenterLat = 0;
+    try {
+        if (selectedPlot.geometry) {
+            const plotCentroid = turf.centroid(selectedPlot.geometry);
+            plotCenterLng = plotCentroid.geometry.coordinates[0];
+            plotCenterLat = plotCentroid.geometry.coordinates[1];
+        }
+    } catch { /* ignore */ }
 
     const buildingsInfo: RenderingBuildingInfo[] = allBuildings.map(b => {
         let footprintWidth = Math.round(Math.sqrt(b.area));
         let footprintDepth = footprintWidth;
+        let bCenterLng = 0, bCenterLat = 0;
         try {
             if (b.geometry) {
                 const bbox = turf.bbox(b.geometry);
@@ -523,8 +462,24 @@ function collectRenderingData(plots: Plot[], selectedPlot: Plot, designParams: D
                 const se = turf.point([bbox[2], bbox[1]]);
                 footprintWidth = Math.round(turf.distance(sw, se, { units: 'meters' })) || footprintWidth;
                 footprintDepth = Math.round(turf.distance(se, ne, { units: 'meters' })) || footprintDepth;
+                const bCentroid = turf.centroid(b.geometry);
+                bCenterLng = bCentroid.geometry.coordinates[0];
+                bCenterLat = bCentroid.geometry.coordinates[1];
             }
         } catch { /* square fallback */ }
+
+        // Determine spatial position relative to plot center
+        let position: string | undefined;
+        if (allBuildings.length > 1 && plotCenterLng !== 0 && bCenterLng !== 0) {
+            const ns = bCenterLat > plotCenterLat ? 'front' : 'back';
+            const ew = bCenterLng > plotCenterLng ? 'right' : 'left';
+            const latDiff = Math.abs(bCenterLat - plotCenterLat);
+            const lngDiff = Math.abs(bCenterLng - plotCenterLng);
+            // If one axis dominates, use single direction; otherwise combine
+            if (latDiff > lngDiff * 3) position = `${ns} side of the plot`;
+            else if (lngDiff > latDiff * 3) position = `${ew} side of the plot`;
+            else position = `${ns}-${ew} of the plot`;
+        }
 
         const basementFloors = b.floors ? b.floors.filter(f => f.level !== undefined && f.level < 0).length : 0;
         const aboveGround = b.numFloors;
@@ -556,20 +511,20 @@ function collectRenderingData(plots: Plot[], selectedPlot: Plot, designParams: D
             footprintWidth, footprintDepth, intendedUse: b.intendedUse,
             typology: designParams.typology, gfa, programMix: b.programMix,
             cores: coreBreakdown, unitCount: b.units?.length || 0, unitBreakdown,
-            parkingFloors: parkingFlrs.length, parkingCapacity, evStations,
+            parkingFloors: parkingFlrs.length, parkingCapacity, evStations, position,
         };
     });
 
     if (buildingsInfo.length === 0) return null;
 
-    const totalPlotArea = allPlots.reduce((s, p) => s + p.area, 0);
-    const totalGreenAreas = allPlots.reduce((s, p) => s + p.greenAreas.length, 0);
-    const totalParkingAreas = allPlots.reduce((s, p) => s + p.parkingAreas.length, 0);
+    const totalPlotArea = selectedPlot.area;
+    const totalGreenAreas = selectedPlot.greenAreas.length;
+    const totalParkingAreas = selectedPlot.parkingAreas.length;
     const allRoadSides = new Set<string>();
-    allPlots.forEach(p => p.roadAccessSides?.forEach(s => allRoadSides.add(s)));
+    selectedPlot.roadAccessSides?.forEach(s => allRoadSides.add(s));
 
     const plotInfo: RenderingPlotInfo = {
-        plotArea: totalPlotArea, subPlotCount: allPlots.length, setback: selectedPlot.setback,
+        plotArea: totalPlotArea, subPlotCount: 1, setback: selectedPlot.setback,
         location: (selectedPlot.location as string) || 'unspecified',
         greenAreas: totalGreenAreas, parkingAreas: totalParkingAreas,
         far: selectedPlot.far ?? undefined, maxCoverage: selectedPlot.maxCoverage ?? undefined,
@@ -588,27 +543,23 @@ function collectRenderingData(plots: Plot[], selectedPlot: Plot, designParams: D
     const totalUnits = buildingsInfo.reduce((s, b) => s + b.unitCount, 0);
 
     const parkingMap: Record<string, number> = {};
-    allPlots.forEach(pl => {
-        pl.buildings.forEach(b => {
-            if (b.floors) b.floors.filter(f => f.type === 'Parking').forEach(f => {
-                const pType = f.parkingType || 'General';
-                parkingMap[pType] = (parkingMap[pType] || 0) + (f.parkingCapacity || 0);
-            });
+    selectedPlot.buildings.forEach(b => {
+        if (b.floors) b.floors.filter(f => f.type === 'Parking').forEach(f => {
+            const pType = f.parkingType || 'General';
+            parkingMap[pType] = (parkingMap[pType] || 0) + (f.parkingCapacity || 0);
         });
-        pl.parkingAreas.forEach(pa => {
-            const pType = pa.type || 'Surface';
-            parkingMap[pType] = (parkingMap[pType] || 0) + (pa.capacity || 0);
-        });
+    });
+    selectedPlot.parkingAreas.forEach(pa => {
+        const pType = pa.type || 'Surface';
+        parkingMap[pType] = (parkingMap[pType] || 0) + (pa.capacity || 0);
     });
     const parkingSummary = Object.entries(parkingMap).map(([type, count]) => ({ type, count }));
 
     const utilSet = new Set<string>();
-    allPlots.forEach(pl => {
-        if (pl.utilityAreas) pl.utilityAreas.forEach(u => utilSet.add(u.type));
-        pl.buildings.forEach(b => {
-            if (b.utilities) b.utilities.forEach(u => utilSet.add(u));
-            if (b.internalUtilities) b.internalUtilities.forEach(u => utilSet.add(u.type));
-        });
+    if (selectedPlot.utilityAreas) selectedPlot.utilityAreas.forEach(u => utilSet.add(u.type));
+    selectedPlot.buildings.forEach(b => {
+        if (b.utilities) b.utilities.forEach(u => utilSet.add(u));
+        if (b.internalUtilities) b.internalUtilities.forEach(u => utilSet.add(u.type));
     });
     designParams.selectedUtilities.forEach(u => utilSet.add(u));
 
@@ -622,7 +573,7 @@ function collectRenderingData(plots: Plot[], selectedPlot: Plot, designParams: D
     })();
 
     const greenScore = (() => {
-        const totalGreen = allPlots.reduce((s, p) => s + p.greenAreas.length, 0);
+        const totalGreen = selectedPlot.greenAreas.length;
         const checks = [
             totalGreen > 0,
             totalPlotArea > 0 && openSpace / totalPlotArea >= 0.25,
@@ -635,15 +586,15 @@ function collectRenderingData(plots: Plot[], selectedPlot: Plot, designParams: D
         return Math.round((passed / checks.length) * 100);
     })();
 
-    const plotsWithBuildings = allPlots.filter(p => p.buildings.length > 0).length;
+    const plotsWithBuildings = selectedPlot.buildings.length > 0 ? 1 : 0;
     const vastuScore = plotsWithBuildings > 0
-        ? Math.round(allPlots.reduce((s, p) => s + (p.developmentStats?.vastuScore?.overall ?? 0), 0) / plotsWithBuildings)
+        ? Math.round(selectedPlot.developmentStats?.vastuScore?.overall ?? 0)
         : 0;
 
-    const zonesBuildable = allPlots.flatMap(p => (p.buildableAreas || []).map(ba => ({ name: ba.name, area: Math.round(ba.area), intendedUse: ba.intendedUse })));
-    const zonesGreen = allPlots.flatMap(p => (p.greenAreas || []).map(ga => ({ name: ga.name, area: Math.round(ga.area) })));
-    const zonesParking = allPlots.flatMap(p => (p.parkingAreas || []).map(pa => ({ name: pa.name, area: Math.round(pa.area), type: pa.type, capacity: pa.capacity })));
-    const zonesUtility = allPlots.flatMap(p => (p.utilityAreas || []).map(ua => ({ name: ua.name, area: Math.round(ua.area), type: ua.type })));
+    const zonesBuildable = (selectedPlot.buildableAreas || []).map(ba => ({ name: ba.name, area: Math.round(ba.area), intendedUse: ba.intendedUse }));
+    const zonesGreen = (selectedPlot.greenAreas || []).map(ga => ({ name: ga.name, area: Math.round(ga.area) }));
+    const zonesParking = (selectedPlot.parkingAreas || []).map(pa => ({ name: pa.name, area: Math.round(pa.area), type: pa.type, capacity: pa.capacity }));
+    const zonesUtility = (selectedPlot.utilityAreas || []).map(ua => ({ name: ua.name, area: Math.round(ua.area), type: ua.type }));
 
     const summary: RenderingProjectSummary = {
         totalBuiltUpArea: totalGFA, achievedFAR: Math.round(achievedFAR * 100) / 100,
@@ -719,10 +670,62 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
     mapLocation: null,
     actions: {
+                /**
+                 * Rotates a building by a given angle (degrees) and updates its geometry and centroid.
+                 * @param plotId - The plot containing the building
+                 * @param buildingId - The building to rotate
+                 * @param angle - The angle in degrees (clockwise)
+                 */
+                rotateBuilding: (plotId: string, buildingId: string, angle: number) => {
+                    set(produce((draft: BuildingState) => {
+                        const plot = draft.plots.find(p => p.id === plotId);
+                        if (!plot) return;
+                        const building = plot.buildings.find(b => b.id === buildingId);
+                        if (!building || !building.geometry) return;
+
+                        // Calculate centroid for rotation origin
+                        const centroid = turf.centroid(building.geometry);
+                        const origin = centroid.geometry.coordinates;
+
+                        // Rotate main geometry
+                        building.geometry = turf.transformRotate(building.geometry as any, angle, { pivot: origin });
+                        building.centroid = turf.centroid(building.geometry as any);
+
+                        // Rotate cores
+                        if (building.cores) {
+                            building.cores.forEach(core => {
+                                core.geometry = turf.transformRotate(core.geometry, angle, { pivot: origin });
+                            });
+                        }
+
+                        // Rotate units
+                        if (building.units) {
+                            building.units.forEach(unit => {
+                                unit.geometry = turf.transformRotate(unit.geometry, angle, { pivot: origin });
+                            });
+                        }
+
+                        // Rotate internal utilities
+                        if (building.internalUtilities) {
+                            building.internalUtilities.forEach(util => {
+                                util.geometry = turf.transformRotate(util.geometry, angle, { pivot: origin });
+                                util.centroid = turf.centroid(util.geometry);
+                            });
+                        }
+                    }));
+                },
         // setMapLocation: Moved to bottom
         // loadProjects: Moved to bottom
 
-        createProject: async (name, totalPlotArea, intendedUse = BuildingIntendedUse.Residential, location, regulationId, greenCertification, vastuCompliant) => {
+        createProject: async (
+            name: string,
+            totalPlotArea: number,
+            intendedUse: BuildingIntendedUse,
+            location: string,
+            regulationId: string,
+            greenCertification: ("IGBC" | "GRIHA" | "LEED" | "Green Building")[],
+            vastuCompliant: boolean
+        ) => {
             console.log('[createProject] Received parameters:');
             console.log('  name:', name);
             console.log('  totalPlotArea:', totalPlotArea);
@@ -771,6 +774,23 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     lastModified: new Date().toISOString(),
                 };
 
+                // When creating a building, store original geometry/centroid
+                // (If you have a building creation function, add this logic there)
+                // For loaded projects, ensure originals are set
+                set(state => {
+                    for (const plot of state.plots) {
+                        for (const building of plot.buildings) {
+                            if (!building.originalGeometry && building.geometry) {
+                                building.originalGeometry = JSON.parse(JSON.stringify(building.geometry));
+                            }
+                            if (!building.originalCentroid && building.centroid) {
+                                building.originalCentroid = JSON.parse(JSON.stringify(building.centroid));
+                            }
+                        }
+                    }
+                    return state;
+                });
+
                 // Save to Firestore (User Scoped)
                 // Sanitize undefined values (Firestore doesn't allow undefined)
                 const projectDataToSave = JSON.parse(JSON.stringify({
@@ -798,7 +818,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
         // deleteProject: Moved to bottom
         // loadProject: Moved to bottom
         // saveCurrentProject: Shadowed implementation removed
-        saveDesignOption: (name, description) => {
+        saveDesignOption: (name: string, description: string) => {
             const { plots, generationParams, designOptions } = get();
             const newOption: DesignOption = {
                 id: crypto.randomUUID(),
@@ -815,7 +835,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             get().actions.saveCurrentProject();
             toast({ title: "Scenario Saved", description: `${name} has been saved.` });
         },
-        loadDesignOption: (id) => {
+        loadDesignOption: (id: string) => {
             const { designOptions } = get();
             const option = designOptions.find(o => o.id === id);
             if (!option) return;
@@ -841,7 +861,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
         setFeasibilityPanelOpen: (isOpen: boolean) => set(produce((state: BuildingState) => {
             state.uiState.isFeasibilityPanelOpen = isOpen;
         })),
-        updateSimulationResults: (results) => {
+        updateSimulationResults: (results: Record<string, any>) => {
             set(produce((draft: BuildingState) => {
                 const activeProject = draft.projects.find(p => p.id === draft.activeProjectId);
                 if (activeProject) {
@@ -3753,8 +3773,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
         setMapLocation: (location: string | null) => set({ mapLocation: location }),
         undo: () => console.warn('Undo not implemented'),
         redo: () => console.warn('Redo not implemented'),
-        executeMapCommand: (command) => console.warn('executeMapCommand not implemented', command),
-        setScenario: (scenario) => console.warn('setScenario not implemented', scenario),
+        executeMapCommand: (command: any) => console.warn('executeMapCommand not implemented', command),
+        setScenario: (scenario: any) => console.warn('setScenario not implemented', scenario),
         toggleFeasibilityPanel: () => set(produce((draft: BuildingState) => {
             draft.uiState.isFeasibilityPanelOpen = !draft.uiState.isFeasibilityPanelOpen;
         })),
@@ -4302,6 +4322,14 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                         console.log(`[DEBUG updateBuilding ENTRY] id=${building.id}, props.numFloors=${props.numFloors}, building.numFloors=${building.numFloors}, floors.length=${building.floors.length}, parkingCount=${parkingCount}, oldNumFloors=${oldNumFloors}`);
 
+                        // Restore geometry and centroid if provided in props
+                        if (props.geometry) {
+                            building.geometry = props.geometry;
+                        }
+                        if (props.centroid) {
+                            building.centroid = props.centroid;
+                        }
+
                         Object.assign(building, props);
 
                         // numFloors represents OCCUPIABLE floors only (excludes parking/utility)
@@ -4673,7 +4701,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             get().actions.resetDrawing();
         },
 
-        runAlgoMassingGenerator: (plotId) => {
+        runAlgoMassingGenerator: (plotId: string) => {
             const { plots, generationParams } = get();
             const plot = plots.find(p => p.id === plotId);
             if (!plot || !plot.geometry) return;
@@ -5282,11 +5310,23 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             set({ renderingDesignParams: params });
         },
         refreshAiRenderingData: async (regenerateImage?: boolean) => {
-            const { aiRenderingResult, plots } = get();
+            const { aiRenderingResult, plots, selectedObjectId } = get();
             if (!aiRenderingResult || !plots.length) return;
             const ds = aiRenderingResult.summary?.designStrategy;
             if (!ds) return;
-            const plot = plots[0];
+
+            // Use the selected plot, falling back to the first plot
+            let plot: Plot | undefined;
+            if (selectedObjectId) {
+                plot = plots.find(p => p.id === selectedObjectId.id)
+                    || plots.find(p => p.buildings.some(b => b.id === selectedObjectId.id))
+                    || plots.find(p => p.greenAreas.some(g => g.id === selectedObjectId.id))
+                    || plots.find(p => p.parkingAreas.some(pa => pa.id === selectedObjectId.id))
+                    || plots.find(p => p.buildableAreas?.some(ba => ba.id === selectedObjectId.id))
+                    || plots.find(p => p.utilityAreas?.some(ua => ua.id === selectedObjectId.id));
+            }
+            if (!plot) plot = plots[0];
+
             const designParams = {
                 landUse: ds.landUse, typology: ds.typology, unitMix: ds.unitMix,
                 hasPodium: ds.hasPodium, podiumFloors: ds.podiumFloors,
@@ -5323,7 +5363,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             set({ aiRenderingMinimized: minimized ?? !get().aiRenderingMinimized });
         },
 
-        applyAiLayout: (plotId, scenario) => {
+        applyAiLayout: (plotId: string, scenario: any) => {
             const { projects, activeProjectId } = get();
             const project = projects.find(p => p.id === activeProjectId);
             if (!project) return;
@@ -5344,7 +5384,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 plot.parkingAreas = plot.parkingAreas.filter(p => !p.id.startsWith('ai-gen-'));
                 plot.utilityAreas = plot.utilityAreas.filter(u => !u.id.startsWith('ai-gen-') && !u.id.startsWith('ai-zone-'));
 
-                scenario.objects.forEach((aiObj, aiIndex) => {
+                scenario.objects.forEach((aiObj: AiMassingGeneratedObject, aiIndex: number) => {
                     const aiMassingObject = aiObj as AiMassingGeneratedObject;
 
                     let containerGeometry: Feature<Polygon> | null = null;
@@ -5364,7 +5404,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         return;
                     }
 
-                    const buildingsInZone = scenario.objects.filter(o =>
+                    const buildingsInZone = scenario.objects.filter((o: AiMassingGeneratedObject) =>
                         (o as AiMassingGeneratedObject).placement === aiMassingObject.placement && o.type === 'Building'
                     );
                     const isMultiBuildingZone = buildingsInZone.length > 1;
@@ -5372,7 +5412,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     let finalGeometry: Feature<Polygon>;
                     if (aiObj.type === 'Building' && isMultiBuildingZone) {
                         const geometries = splitPolygon(containerGeometry, buildingsInZone.length);
-                        const buildingIndexInZone = buildingsInZone.findIndex(b => (b as AiMassingGeneratedObject).name === aiMassingObject.name);
+                        const buildingIndexInZone = buildingsInZone.findIndex((b: AiMassingGeneratedObject) => b.name === aiMassingObject.name);
                         finalGeometry = geometries[buildingIndexInZone] || containerGeometry;
                     } else {
                         finalGeometry = containerGeometry;
@@ -5566,14 +5606,14 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
         clearAiScenarios: () => {
             set({ aiScenarios: null });
         },
-        setHoveredObject: (id, type) => {
+        setHoveredObject: (id: string, type: SelectableObjectType) => {
             if (!id || !type) {
                 set({ hoveredObjectId: null });
             } else {
                 set({ hoveredObjectId: { id, type } });
             }
         },
-        toggleObjectVisibility: (plotId, objectId, type) => {
+        toggleObjectVisibility: (plotId: string, objectId: string, type: SelectableObjectType) => {
             set(produce((draft: BuildingState) => {
                 const plot = draft.plots.find(p => p.id === plotId);
                 if (!plot) return;
@@ -5790,6 +5830,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 // Instead, call `recalculateGreenAreas(plotId)` once when the drag ends (mouseup).
             }));
         },
+
+        // rotateBuilding implementation removed
 
         recalculateGreenAreas: (plotId: string) => {
             // Read current state (plain, not proxied by Immer)

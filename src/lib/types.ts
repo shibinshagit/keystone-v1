@@ -57,6 +57,8 @@ export interface Building {
   isPolygonClosed: boolean;
   geometry: Feature<Polygon>;
   centroid: Feature<Point>;
+  originalGeometry?: Feature<Polygon>;
+  originalCentroid?: Feature<Point>;
   height: number;
   opacity: number;
   extrusion: boolean;
@@ -481,6 +483,7 @@ export interface RenderingBuildingInfo {
   parkingFloors: number;
   parkingCapacity: number;
   evStations: number;
+  position?: string;       // spatial placement on plot (e.g. "front-left", "back-right")
 }
 
 export interface RenderingPlotInfo {

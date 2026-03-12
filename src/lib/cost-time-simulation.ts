@@ -711,18 +711,26 @@ export function runFullSimulation(input: RunSimulationInput): SimulationResults 
         ? generateDeliveryPhases(input.perBuildingBreakdown, input.numDeliveryPhases ?? 3)
         : [];
 
-    // 8. Critical Path Probability — which activity is most often the longest?
+    // 8. Critical Path Probability — which activity contributes the most schedule uncertainty?
     const activityLabels = ['Excavation', 'Foundation', 'Structure', 'Finishing'];
     const criticalCounts = [0, 0, 0, 0];
     const numIter = timeSim.phaseData.excavation.length;
+    // Calculate means for each phase
+    const phaseMeans = [
+        timeSim.phaseData.excavation.reduce((a, b) => a + b, 0) / numIter,
+        timeSim.phaseData.foundation.reduce((a, b) => a + b, 0) / numIter,
+        timeSim.phaseData.structure.reduce((a, b) => a + b, 0) / numIter,
+        timeSim.phaseData.finishing.reduce((a, b) => a + b, 0) / numIter,
+    ];
     for (let i = 0; i < numIter; i++) {
-        const durations = [
-            timeSim.phaseData.excavation[i],
-            timeSim.phaseData.foundation[i],
-            timeSim.phaseData.structure[i],
-            timeSim.phaseData.finishing[i],
+        // Compare deviation from mean — the activity with the biggest variance drives the critical path
+        const deviations = [
+            Math.abs(timeSim.phaseData.excavation[i] - phaseMeans[0]),
+            Math.abs(timeSim.phaseData.foundation[i] - phaseMeans[1]),
+            Math.abs(timeSim.phaseData.structure[i] - phaseMeans[2]),
+            Math.abs(timeSim.phaseData.finishing[i] - phaseMeans[3]),
         ];
-        const maxIdx = durations.indexOf(Math.max(...durations));
+        const maxIdx = deviations.indexOf(Math.max(...deviations));
         criticalCounts[maxIdx]++;
     }
     const criticalPathProbability = activityLabels.map((label, i) => ({

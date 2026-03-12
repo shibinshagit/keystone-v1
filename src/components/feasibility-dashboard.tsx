@@ -1237,13 +1237,12 @@ function TimeSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
                             const maxBuildingMonths = estimates.breakdown?.reduce((m: number, b: any) => Math.max(m, (b.timeline.startOffset || 0) + b.timeline.total), 0) || totalMonths;
                             return estimates.breakdown.map((b: any, i: number) => {
                                 const offsetPct = ((b.timeline.startOffset || 0) / maxBuildingMonths) * 100;
-                                const subPct = (b.timeline.substructure / maxBuildingMonths) * 100;
+                                const excPct = Math.max(((b.timeline.excavation || 0) > 0 ? 1.5 : 0), ((b.timeline.excavation || 0) / maxBuildingMonths) * 100);
+                                const fndPct = Math.max(((b.timeline.foundation || 0) > 0 ? 1.5 : 0), ((b.timeline.foundation || 0) / maxBuildingMonths) * 100);
+                                const bsmtPct = Math.max(((b.timeline.basement || 0) > 0 ? 1.5 : 0), ((b.timeline.basement || 0) / maxBuildingMonths) * 100);
                                 const structPct = (b.timeline.structure / maxBuildingMonths) * 100;
                                 const finPct = (b.timeline.finishing / maxBuildingMonths) * 100;
-                                // Add a tiny bit for contingency if you want the total bar to match 'b.timeline.total',
-                                // but the user chart says #f59e0b Sub/Foundation, #3b82f6 Structure, #8b5cf6 Finishing.
-                                // We will map Substructure and Contingency together or just Substructure and assume the remaining is contingency.
-                                const remainingPct = ((b.timeline.total - (b.timeline.substructure + b.timeline.structure + b.timeline.finishing)) / maxBuildingMonths) * 100;
+                                const contPct = Math.max(((b.timeline.contingency || 0) > 0 ? 1.5 : 0), ((b.timeline.contingency || 0) / maxBuildingMonths) * 100);
 
                                 return (
                                     <div key={i} className="text-[10px]">
@@ -1251,27 +1250,24 @@ function TimeSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
                                             <span className="text-muted-foreground truncate mr-2">{b.buildingName}</span>
                                             <span className="font-semibold shrink-0">{((b.timeline.startOffset || 0) + b.timeline.total).toFixed(1)} mo</span>
                                         </div>
-                                        <div className="h-2 rounded-full bg-secondary/40 overflow-hidden flex">
-                                            {/* Offset space for delayed buildings (Towers) */}
+                                        <div className="h-3 rounded-full bg-secondary/40 overflow-hidden flex">
                                             {offsetPct > 0 && <div style={{ width: `${offsetPct}%` }} />}
-                                            {/* Substructure */}
-                                            <div className="h-full bg-amber-400/70 transition-all duration-700" style={{ width: `${subPct}%` }} />
-                                            {/* Structure */}
-                                            <div className="h-full bg-blue-400/70 transition-all duration-700" style={{ width: `${structPct}%` }} />
-                                            {/* Finishing */}
-                                            <div className="h-full bg-purple-400/70 transition-all duration-700" style={{ width: `${finPct}%` }} />
-                                            {/* Contingency (Buffer at the end) */}
-                                            {remainingPct > 0 && <div className="h-full bg-gray-400/50 transition-all duration-700" style={{ width: `${remainingPct}%` }} />}
+                                            {excPct > 0 && <div className="h-full transition-all duration-700 cursor-pointer" style={{ width: `${excPct}%`, backgroundColor: '#adfd00', opacity: 0.7 }} title={`Earthwork & Excavation: ${(b.timeline.excavation || 0).toFixed(1)} months`} />}
+                                            {fndPct > 0 && <div className="h-full transition-all duration-700 cursor-pointer" style={{ width: `${fndPct}%`, backgroundColor: '#3b82f6', opacity: 0.7 }} title={`Foundation: ${(b.timeline.foundation || 0).toFixed(1)} months`} />}
+                                            {bsmtPct > 0 && <div className="h-full transition-all duration-700 cursor-pointer" style={{ width: `${bsmtPct}%`, backgroundColor: '#f97316', opacity: 0.7 }} title={`Basement Levels: ${(b.timeline.basement || 0).toFixed(1)} months`} />}
+                                            <div className="h-full transition-all duration-700 cursor-pointer" style={{ width: `${structPct}%`, backgroundColor: '#10b981', opacity: 0.7 }} title={`Superstructure: ${b.timeline.structure.toFixed(1)} months`} />
+                                            <div className="h-full transition-all duration-700 cursor-pointer" style={{ width: `${finPct}%`, backgroundColor: '#f59e0b', opacity: 0.7 }} title={`Finishes & MEP: ${b.timeline.finishing.toFixed(1)} months`} />
+                                            {contPct > 0 && <div className="h-full transition-all duration-700 cursor-pointer" style={{ width: `${contPct}%`, backgroundColor: '#ef4444', opacity: 0.7 }} title={`Risk & Weather Buffer: ${(b.timeline.contingency || 0).toFixed(1)} months`} />}
                                         </div>
                                     </div>
                                 );
                             });
                         })()}
                     </div>
-                    <div className="flex gap-3 mt-2">
-                        {[['#f59e0b', 'Sub/Foundation'], ['#3b82f6', 'Structure'], ['#8b5cf6', 'Finishing'], ['#9ca3af', 'Contingency']].map(([c, l]) => (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                        {[['#adfd00', 'Earthwork & Excavation'], ['#3b82f6', 'Foundation'], ['#f97316', 'Basement Levels'], ['#10b981', 'Superstructure'], ['#f59e0b', 'Finishes & MEP'], ['#ef4444', 'Risk & Weather Buffer']].map(([c, l]) => (
                             <div key={l as string} className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                                <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: c as string, opacity: 0.7 }} />
+                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: c as string }} />
                                 <span>{l}</span>
                             </div>
                         ))}
