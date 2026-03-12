@@ -26,6 +26,7 @@ import {
 import { generateDeliveryPhases } from '@/lib/cost-time-simulation';
 import { ProjectEstimates } from '@/lib/types';
 import { FeasibilityReport } from './feasibility-report';
+import { UnderwritingReport } from './underwriting-report';
 
 function MetricsTab() {
     const activeProject = useProjectData();
@@ -1765,6 +1766,7 @@ function FeasibilityTab() {
 export function FeasibilityDashboard() {
     const { uiState, projects, activeProjectId } = useBuildingStore();
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [reportType, setReportType] = useState<'feasibility' | 'underwriting'>('feasibility');
     const isOpen = uiState.isFeasibilityPanelOpen ?? true;
     const plots = useBuildingStore(state => state.plots);
     const selectedPlot = useSelectedPlot();
@@ -1868,9 +1870,22 @@ export function FeasibilityDashboard() {
                             Download Data
                         </Button> */}
                         {isOpen && (
-                            <Button variant="default" size="sm" className="h-8 px-2 text-xs print:hidden" onClick={() => window.print()}>
-                                Export Report (PDF)
+                            <>
+                            <Button
+                                variant={reportType === 'feasibility' ? 'default' : 'outline'}
+                                size="sm" className="h-8 px-2 text-xs print:hidden"
+                                onClick={() => { setReportType('feasibility'); setTimeout(() => window.print(), 100); }}
+                            >
+                                Feasibility Report
                             </Button>
+                            <Button
+                                variant={reportType === 'underwriting' ? 'default' : 'outline'}
+                                size="sm" className="h-8 px-2 text-xs print:hidden"
+                                onClick={() => { setReportType('underwriting'); setTimeout(() => window.print(), 100); }}
+                            >
+                                Underwriting Report
+                            </Button>
+                            </>
                         )}
                         {isOpen && (
                             <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-muted" onClick={() => setIsFullscreen(!isFullscreen)}>
@@ -1933,8 +1948,11 @@ export function FeasibilityDashboard() {
             
             {/* Print-only Report Wrapper */}
             <div className="hidden print:block absolute inset-0 z-[9999] bg-white print:overflow-visible print:h-auto print:static">
-                {activeProject && selectedPlot && (
+                {activeProject && selectedPlot && reportType === 'feasibility' && (
                     <FeasibilityReport project={activeProject} plot={selectedPlot} metrics={metricsForSim} estimates={simEstimates} generationParams={generationParams} />
+                )}
+                {activeProject && selectedPlot && reportType === 'underwriting' && (
+                    <UnderwritingReport project={activeProject} plot={selectedPlot} metrics={metricsForSim} estimates={simEstimates} generationParams={generationParams} />
                 )}
             </div>
         </div>
