@@ -176,12 +176,53 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
 
                 <SH2>SWOT Analysis</SH2>
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
-                    {[
-                        { t: 'Strengths', bg: 'bg-green-50 border-green-200', tc: 'text-green-800', items: [`Plot area (${fmt(plotArea)} sq.m) adequate for ${project.intendedUse || 'residential'}`, `High FAR achievable (${far})`, 'No height restrictions (subject to clearances)'] },
-                        { t: 'Weaknesses', bg: 'bg-red-50 border-red-200', tc: 'text-red-800', items: ['Setback constraints reduce available footprint', 'Single road access (traffic management)'] },
-                        { t: 'Opportunities', bg: 'bg-blue-50 border-blue-200', tc: 'text-blue-800', items: ['High demand for residential apartments', 'Scope for green building certification (IGBC/GRIHA)', 'Sustainable design incentives (additional FAR)'] },
-                        { t: 'Threats', bg: 'bg-orange-50 border-orange-200', tc: 'text-orange-800', items: [`Strict parking requirements (${parkReq} ECS)`, `Ground coverage limitation (${maxCov}%)`, 'Market slowdown risk'] },
-                    ].map((s, i) => (
+                    {(() => {
+                        const strengths = [];
+                        const weaknesses = [];
+                        const opportunities = [];
+                        const threats = [];
+
+                        // Strengths
+                        if (plotArea > 5000) strengths.push(`Large plot area (${fmt(plotArea)} sq.m) offers strong development scale.`);
+                        else strengths.push(`Compact plot area (${fmt(plotArea)} sq.m) suitable for boutique ${project.intendedUse?.toLowerCase() || 'residential'} development.`);
+                        
+                        if ((achievedFAR || 0) >= far * 0.9) strengths.push(`Optimal FAR utilization (${fmt(achievedFAR, 2)} of ${far}).`);
+                        else strengths.push(`High permissible FAR (${far}) available for development.`);
+
+                        const entriesCount = plot.entries?.length || 0;
+                        if (entriesCount > 1) strengths.push(`Multiple accesses (${entriesCount} gates) ease traffic flow.`);
+                        
+                        // Weaknesses
+                        if (entriesCount <= 1) weaknesses.push('Single point of access may cause traffic bottlenecks.');
+                        
+                        const avgSetback = generationParams?.setback ?? plot?.setback ?? 0;
+                        if (avgSetback >= 6) weaknesses.push(`Stringent setback requirements (≥${avgSetback}m) reduce available footprint.`);
+                        else weaknesses.push('Required setbacks constrain the ground coverage area.');
+
+                        if (plotArea < 3000) weaknesses.push('Small plot size constrains large-scale amenity provisioning.');
+
+                        // Opportunities
+                        opportunities.push(`Demand for premium ${project.intendedUse?.toLowerCase() || 'residential'} spaces in the micro-market.`);
+                        opportunities.push('Scope for green building certification (IGBC/GRIHA) to unlock premium pricing.');
+                        if (far - (achievedFAR || 0) > 0.5) opportunities.push(`Significant unutilized FAR (${fmt(far - (achievedFAR || 0), 2)}) presents future expansion potential.`);
+
+                        // Threats
+                        if (parkProv < parkReq) threats.push(`Parking shortfall (Provided: ${parkProv}, Required: ${parkReq} ECS) may pose regulatory hurdles.`);
+                        else threats.push(`Strict parking requirements (${parkReq} ECS) mandate extensive basement construction.`);
+                        
+                        threats.push(`Ground coverage limitation (Max ${maxCov}%) restricts low-rise sprawl.`);
+                        
+                        const heightLimit = plot.regulation?.geometry?.max_height?.value;
+                        if (heightLimit) threats.push(`Strict height limitation (${heightLimit}m) caps vertical revenue potential.`);
+                        else threats.push('Market slowdown or fluctuations in material costs.');
+
+                        return [
+                            { t: 'Strengths', bg: 'bg-green-50 border-green-200', tc: 'text-green-800', items: strengths },
+                            { t: 'Weaknesses', bg: 'bg-red-50 border-red-200', tc: 'text-red-800', items: weaknesses },
+                            { t: 'Opportunities', bg: 'bg-blue-50 border-blue-200', tc: 'text-blue-800', items: opportunities },
+                            { t: 'Threats', bg: 'bg-orange-50 border-orange-200', tc: 'text-orange-800', items: threats },
+                        ];
+                    })().map((s, i) => (
                         <div key={i} className={`border p-2 rounded ${s.bg}`}>
                             <strong className={`${s.tc} text-[10px] uppercase`}>{s.t}</strong>
                             <ul className="list-disc pl-3 mt-1 space-y-0.5">{s.items.map((it, j) => <li key={j}>{it}</li>)}</ul>
