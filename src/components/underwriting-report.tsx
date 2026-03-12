@@ -161,7 +161,17 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                             ['Loan Tenure', `${totalMonths} months (Construction period)`],
                             ['Expected Revenue', totalRev ? crore(totalRev) : 'Pending'],
                             ['Pre-Launch Margin', `${grossMargin.toFixed(2)}%`],
-                            ['DSCR', 'See §5.5'],
+                            ['DSCR', (() => {
+                                const annualInterest = loanAmount * 0.10;
+                                const salesByYear = [totalRev * 0.31, totalRev * 0.38];
+                                const costsByYear = [totalCost * 0.40, totalCost * 0.40];
+                                const dscrValues = [0, 1].map(i => {
+                                    const opIncome = salesByYear[i] - costsByYear[i];
+                                    return annualInterest > 0 ? opIncome / annualInterest : 0;
+                                });
+                                const avg = dscrValues.reduce((s, v) => s + v, 0) / dscrValues.length;
+                                return `${avg.toFixed(2)}× avg (operational years) — Details: §5.5`;
+                            })()],
                         ] as [string, string | null][]).map(([k, v], i) => (
                             <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
                                 <TD className="font-semibold w-1/3">{k}</TD>
@@ -898,7 +908,77 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                     </tbody>
                 </table>
 
+                <SH2>5.5 Debt Service Coverage Ratio (DSCR)</SH2>
+                <p className="text-[10px] font-bold mb-1">DSCR Calculation Framework:</p>
+                <p className="text-[9px] mb-2 text-slate-600">DSCR = Net Operating Income ÷ Total Debt Service &nbsp;|&nbsp; Minimum bank requirement: <strong>1.25×</strong></p>
+                {(() => {
+                    // Interest per year: loan * 10% avg, spread over 3 construction years
+                    const interestRate = 0.10;
+                    const constructionYears = 3;
+                    // Operating income = Net Cash Inflow from sales - construction outflow (before debt service)
+                    // Using the same inflow/outflow ratios as cash flow table above
+                    const salesByYear = [
+                        totalRev * 0.31,    // Y1
+                        totalRev * 0.38,    // Y2
+                        totalRev * 0.23,    // Y3
+                    ];
+                    const costsByYear = [
+                        totalCost * 0.40,   // Y1
+                        totalCost * 0.40,   // Y2
+                        totalCost * 0.15,   // Y3
+                    ];
+                    const annualInterest = loanAmount * interestRate;
+                    // Debt service: interest each year + full principal in final year
+                    const debtService = [
+                        annualInterest,                        // Y1: interest only
+                        annualInterest,                        // Y2: interest only
+                        annualInterest + loanAmount,           // Y3: interest + repayment
+                    ];
+                    const rows = [1, 2, 3].map(y => {
+                        const opIncome = salesByYear[y - 1] - costsByYear[y - 1];
+                        const ds = debtService[y - 1];
+                        const dscr = ds > 0 ? opIncome / ds : 0;
+                        const isStress = y === constructionYears; // final year repayment is stress
+                        const status = dscr >= 2 ? 'Excellent' : dscr >= 1.25 ? 'Healthy' : dscr >= 1 ? 'Marginal' : 'Stress';
+                        const col = dscr >= 2 ? 'text-green-700' : dscr >= 1.25 ? 'text-blue-700' : dscr >= 1 ? 'text-yellow-700' : 'text-red-600';
+                        return { y, opIncome, ds, dscr, status, col, isStress };
+                    });
+                    const avgDscr = rows.slice(0, 2).reduce((s, r) => s + r.dscr, 0) / 2; // avg of operational years (excl final repayment year)
+                    return (
+                        <>
+                            <table className="w-full border-collapse mb-2">
+                                <thead><tr><TH>Year</TH><TH>Operating Income</TH><TH>Debt Service</TH><TH>DSCR</TH><TH>Status</TH></tr></thead>
+                                <tbody>
+                                    {rows.map(({ y, opIncome, ds, dscr, status, col, isStress }) => (
+                                        <tr key={y} className={y % 2 === 0 ? 'bg-slate-50' : ''}>
+                                            <TD className="font-semibold">Year {y}{isStress ? ' (Final)' : ''}</TD>
+                                            <TD className="text-green-700">{crore(opIncome)}</TD>
+                                            <TD className="text-red-700">{crore(ds)}</TD>
+                                            <TD className={`font-bold ${col}`}>{dscr.toFixed(2)}×</TD>
+                                            <TD className={`font-semibold ${col}`}>{status}</TD>
+                                        </tr>
+                                    ))}
+                                    <tr className="bg-slate-100 font-bold">
+                                        <TD colSpan={3}>Average DSCR (Operational Years)</TD>
+                                        <TD className={`font-bold ${avgDscr >= 1.25 ? 'text-green-700' : 'text-red-600'}`}>{avgDscr.toFixed(2)}×</TD>
+                                        <TD className={`font-semibold ${avgDscr >= 1.25 ? 'text-green-700' : 'text-red-600'}`}>{avgDscr >= 2 ? 'Excellent' : avgDscr >= 1.25 ? 'Healthy' : 'Stress'}</TD>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div className="bg-slate-50 border border-slate-200 p-2 rounded mb-3 text-[9px]">
+                                <strong>Bank Requirement:</strong> Minimum DSCR of <strong>1.25×</strong>.{' '}
+                                {avgDscr >= 1.25
+                                    ? <span className="text-green-700">Subject project exceeds this comfortably during operational years (avg {avgDscr.toFixed(2)}×).</span>
+                                    : <span className="text-red-600">Warning: Project average DSCR of {avgDscr.toFixed(2)}× falls below minimum threshold. Review funding structure.</span>
+                                }
+                                <br />Note: Year 3 DSCR appears stressed due to full loan principal repayment — this is expected and standard for construction-phase loans.
+                            </div>
+                        </>
+                    );
+                })()}
+
                 <SH2>5.6 Sensitivity Analysis - Key Variables</SH2>
+
                 <p className="text-[10px] font-bold mb-1">Impact on Project IRR</p>
                 <table className="w-full border-collapse mb-1"><thead><tr><TH>Variable</TH><TH>Change</TH><TH>Impact on IRR</TH><TH>Risk Level</TH></tr></thead>
                     <tbody>
