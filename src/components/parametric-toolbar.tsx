@@ -355,7 +355,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
             typologies: selectedTypologies,
             targetGFA: targetGFA,
             targetFAR,
-            minFloors: useFloorLimit ? floorRange[0] : 1,
+            minFloors: floorRange[0],
             maxFloors: floorRange[1],
             autoMaxGFA: !useFloorLimit,
             infillSetback: !useFloorLimit ? infillSetback : undefined,
@@ -1209,10 +1209,10 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                     <div className="space-y-2">
                                         <div className="flex justify-between items-center">
                                             <Label className="text-[10px] font-medium text-foreground/80">
-                                                {useFloorLimit ? "Floors Range" : "Max Allowed Floors"}
+                                                Floors Range
                                             </Label>
                                             <span className={cn("text-[10px] text-muted-foreground", floorRange[1] > regulationMaxFloors && "text-red-500 font-bold")}>
-                                                {useFloorLimit ? `${floorRange[0]} - ${floorRange[1]}` : `Up to ${floorRange[1]}`} floors (Reg: {regulationMaxFloors})
+                                                {floorRange[0]} - {floorRange[1]} floors (Reg: {regulationMaxFloors})
                                             </span>
                                         </div>
                                         <Slider
@@ -1227,7 +1227,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                         {!useFloorLimit && (
                                             <>
                                                 <p className="text-[10px] text-muted-foreground italic mt-1 leading-tight">
-                                                    Floors will be assigned sequentially to hit target GFA, capping at {floorRange[1]} floors per building. Infill footprints added only if needed.
+                                                    Floors will be assigned randomly within your selected range to hit target GFA. Infill footprints added only if needed.
                                                 </p>
                                                 {/* <div className="flex items-center gap-2 mt-2">
                                                     <Label className="text-[10px] font-medium text-foreground/80 whitespace-nowrap">Infill Setback</Label>

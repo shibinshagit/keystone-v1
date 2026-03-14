@@ -97,6 +97,11 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
     const tl = estimates?.timeline;
     const sim = estimates?.simulation;
 
+    const uw = project.underwriting;
+    const landCost = uw?.actualLandPurchaseCost || 40000000;
+    const stampDuty = uw?.stampDutyAndLegalFees || 0;
+    const actualLandCost = landCost + stampDuty;
+
     // Cost range from simulation
     const costRange = sim ? `${crore(sim.cost_p10)} – ${crore(sim.cost_p90)}` : (totalCost ? crore(totalCost) : 'Pending');
     // Time range from simulation
@@ -1512,9 +1517,9 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                                 <tbody>
                                     <tr><TD>Construction Cost (Dynamic)</TD><TD className="text-right">{sim ? `${crore(sim.cost_p10).replace(/₹ | Cr/g, '')} – ${crore(sim.cost_p90).replace(/₹ | Cr/g, '')}` : crore(totalCost).replace(/₹ | Cr/g, '')}</TD></tr>
                                     <tr><TD>Soft Costs (~15%)</TD><TD className="text-right">{crore(totalCost * 0.15 * simRatio10).replace(/₹ | Cr/g, '')} – {crore(totalCost * 0.15 * simRatio90).replace(/₹ | Cr/g, '')}</TD></tr>
-                                    <tr><TD>Land Cost (Fixed Assumed)</TD><TD className="text-right">{crore(40000000).replace(/₹ | Cr/g, '')}</TD></tr>
+                                    <tr><TD>Land Cost {uw?.actualLandPurchaseCost ? '(Actual)' : '(Estimated)'}</TD><TD className="text-right">{crore(actualLandCost).replace(/₹ | Cr/g, '')}</TD></tr>
                                     <tr><TD>Contingency (2%)</TD><TD className="text-right">{crore(totalCost * 0.02 * simRatio10).replace(/₹ | Cr/g, '')} – {crore(totalCost * 0.02 * simRatio90).replace(/₹ | Cr/g, '')}</TD></tr>
-                                    <tr className="bg-slate-800 text-white font-bold"><TD className="text-white font-bold">TOTAL PROJECT COST</TD><TD className="text-right text-white font-bold">{sim ? `${crore(sim.cost_p10 + (totalCost * 0.15 * simRatio10) + 40000000 + (totalCost * 0.02 * simRatio10)).replace(/₹ | Cr/g, '')} – ${crore(sim.cost_p90 + (totalCost * 0.15 * simRatio90) + 40000000 + (totalCost * 0.02 * simRatio90)).replace(/₹ | Cr/g, '')}` : crore(totalCost * 1.17 + 40000000).replace(/₹ | Cr/g, '')}</TD></tr>
+                                    <tr className="bg-slate-800 text-white font-bold"><TD className="text-white font-bold">TOTAL PROJECT COST</TD><TD className="text-right text-white font-bold">{sim ? `${crore(sim.cost_p10 + (totalCost * 0.15 * simRatio10) + actualLandCost + (totalCost * 0.02 * simRatio10)).replace(/₹ | Cr/g, '')} – ${crore(sim.cost_p90 + (totalCost * 0.15 * simRatio90) + actualLandCost + (totalCost * 0.02 * simRatio90)).replace(/₹ | Cr/g, '')}` : crore(totalCost * 1.17 + actualLandCost).replace(/₹ | Cr/g, '')}</TD></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -1530,9 +1535,9 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                             <table className="w-full border-collapse mt-2">
                                 <tbody>
                                     <tr><TD className="font-semibold bg-slate-50">Gross Revenue (at Target)</TD><TD className="text-right">{crore(totalRev || (totalCarpet * 11000 * 10.764)).replace(/₹ | Cr/g, '')}</TD></tr>
-                                    <tr><TD className="font-semibold bg-slate-50">Less: Total Project Cost Range</TD><TD className="text-right">{sim ? `${crore(sim.cost_p10 + (totalCost * 0.15 * simRatio10) + 40000000 + (totalCost * 0.02 * simRatio10)).replace(/₹ | Cr/g, '')} – ${crore(sim.cost_p90 + (totalCost * 0.15 * simRatio90) + 40000000 + (totalCost * 0.02 * simRatio90)).replace(/₹ | Cr/g, '')}` : crore(totalCost * 1.17 + 40000000).replace(/₹ | Cr/g, '')}</TD></tr>
-                                    <tr className="font-bold bg-green-50"><TD className="font-bold">Gross Profit Range</TD><TD className="font-bold text-green-700 text-right">{sim ? `${crore((totalRev || (totalCarpet * 11000 * 10.764)) - (sim.cost_p90 + (totalCost * 0.15 * simRatio90) + 40000000 + (totalCost * 0.02 * simRatio90))).replace(/₹ | Cr/g, '')} – ${crore((totalRev || (totalCarpet * 11000 * 10.764)) - (sim.cost_p10 + (totalCost * 0.15 * simRatio10) + 40000000 + (totalCost * 0.02 * simRatio10))).replace(/₹ | Cr/g, '')}` : crore((totalRev || (totalCarpet * 11000 * 10.764)) - (totalCost * 1.17 + 40000000)).replace(/₹ | Cr/g, '')}</TD></tr>
-                                    <tr className="font-bold bg-blue-50"><TD className="font-bold text-blue-800">Return on Investment (ROI)</TD><TD className="font-bold text-blue-800 text-right">{sim ? `${(((((totalRev || (totalCarpet * 11000 * 10.764)) - (sim.cost_p90 + (totalCost * 0.15 * simRatio90) + 40000000 + (totalCost * 0.02 * simRatio90))) * 0.8) / ((sim.cost_p90 + (totalCost * 0.15 * simRatio90) + 40000000 + (totalCost * 0.02 * simRatio90)) * 0.4)) * 100).toFixed(1)}% – ${(((((totalRev || (totalCarpet * 11000 * 10.764)) - (sim.cost_p10 + (totalCost * 0.15 * simRatio10) + 40000000 + (totalCost * 0.02 * simRatio10))) * 0.8) / ((sim.cost_p10 + (totalCost * 0.15 * simRatio10) + 40000000 + (totalCost * 0.02 * simRatio10)) * 0.4)) * 100).toFixed(1)}%` : `${(((((((totalRev || (totalCarpet * 11000 * 10.764)) - (totalCost * 1.17 + 40000000)) * 0.8) / ((totalCost * 1.17 + 40000000) * 0.4))) * 100).toFixed(1))}%`}</TD></tr>
+                                    <tr><TD className="font-semibold bg-slate-50">Less: Total Project Cost Range</TD><TD className="text-right">{sim ? `${crore(sim.cost_p10 + (totalCost * 0.15 * simRatio10) + actualLandCost + (totalCost * 0.02 * simRatio10)).replace(/₹ | Cr/g, '')} – ${crore(sim.cost_p90 + (totalCost * 0.15 * simRatio90) + actualLandCost + (totalCost * 0.02 * simRatio90)).replace(/₹ | Cr/g, '')}` : crore(totalCost * 1.17 + actualLandCost).replace(/₹ | Cr/g, '')}</TD></tr>
+                                    <tr className="font-bold bg-green-50"><TD className="font-bold">Gross Profit Range</TD><TD className="font-bold text-green-700 text-right">{sim ? `${crore((totalRev || (totalCarpet * 11000 * 10.764)) - (sim.cost_p90 + (totalCost * 0.15 * simRatio90) + actualLandCost + (totalCost * 0.02 * simRatio90))).replace(/₹ | Cr/g, '')} – ${crore((totalRev || (totalCarpet * 11000 * 10.764)) - (sim.cost_p10 + (totalCost * 0.15 * simRatio10) + actualLandCost + (totalCost * 0.02 * simRatio10))).replace(/₹ | Cr/g, '')}` : crore((totalRev || (totalCarpet * 11000 * 10.764)) - (totalCost * 1.17 + actualLandCost)).replace(/₹ | Cr/g, '')}</TD></tr>
+                                    <tr className="font-bold bg-blue-50"><TD className="font-bold text-blue-800">Return on Investment (ROI)</TD><TD className="font-bold text-blue-800 text-right">{sim ? `${(((((totalRev || (totalCarpet * 11000 * 10.764)) - (sim.cost_p90 + (totalCost * 0.15 * simRatio90) + actualLandCost + (totalCost * 0.02 * simRatio90))) * 0.8) / ((sim.cost_p90 + (totalCost * 0.15 * simRatio90) + actualLandCost + (totalCost * 0.02 * simRatio90)) * 0.4)) * 100).toFixed(1)}% – ${(((((totalRev || (totalCarpet * 11000 * 10.764)) - (sim.cost_p10 + (totalCost * 0.15 * simRatio10) + actualLandCost + (totalCost * 0.02 * simRatio10))) * 0.8) / ((sim.cost_p10 + (totalCost * 0.15 * simRatio10) + actualLandCost + (totalCost * 0.02 * simRatio10)) * 0.4)) * 100).toFixed(1)}%` : `${(((((((totalRev || (totalCarpet * 11000 * 10.764)) - (totalCost * 1.17 + actualLandCost)) * 0.8) / ((totalCost * 1.17 + actualLandCost) * 0.4))) * 100).toFixed(1))}%`}</TD></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -1544,7 +1549,7 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                                     {[-10, 0, 10].map((pct, i) => {
                                         const baseRev = totalRev || (totalCarpet * 11000 * 10.764);
                                         const adjRev = baseRev * (1 + pct / 100);
-                                        const fullCost = totalCost * 1.17 + 40000000;
+                                        const fullCost = totalCost * 1.17 + actualLandCost;
                                         const adjProfit = (adjRev - fullCost) * 0.8;
                                         return (
                                             <tr key={i} className={pct === 0 ? 'bg-blue-50 font-bold' : 'text-slate-600'}>
@@ -1558,8 +1563,8 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                                 </tbody>
                             </table>
                             <div className="mt-2 text-[8px] italic text-slate-500 text-right">
-                                Break-even Price: ₹9,800/sq.ft carpet<br/>
-                                Break-even Cost: +19% overrun
+                                Break-even Price: ₹{fmt((totalCost * 1.17 + actualLandCost) / (totalCarpet * 10.764))}/sq.ft carpet<br/>
+                                Break-even Cost: +{(((totalRev || (totalCarpet * 11000 * 10.764)) / (totalCost * 1.17 + actualLandCost) - 1) * 100).toFixed(0)}% overrun
                             </div>
                         </div>
                     </div>
@@ -1744,11 +1749,11 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                         { title: `Phase 5: Ext. Masonry (${range(15, 22)})`, items: ["External walls (230mm AAC)", "Internal partitions (115mm AAC)", "Plastering (external & internal)", "Window/door frames"] },
                         { title: `Phase 6: Roof/Terrace (${range(20, 21)})`, items: ["Terrace slab concreting", "Mumty/lift room construction", "Water tanks (2 × 22k L)", "Solar panel mounting", "Terrace waterproofing (APP)", "Parapet construction"] },
                         { title: `Phase 7: MEP Rough (${range(18, 23)})`, items: ["Electrical conduit laying", "Plumbing pipes (concealed)", "HVAC duct installation", "Fire-fighting pipes", "Service shaft completion"] },
-                        { title: `Phase 8: Ext. Finish (${range(22, 24)})`, items: ["External plastering", "Facade paint/texture", "Windows & grills installation", "External lighting", "Signage"] },
-                        { title: `Phase 9: Int. Finish (${range(23, 26)})`, items: ["Internal plastering/POP", "Flooring (tiles/vitrified)", "Wall tiling (baths/kitchen)", "Painting (2-3 coats)", "False ceiling (if req)", "Kitchen cabinets & Wardrobes", "Door installation & hardware", "Electrical/Plumbing fittings"] },
-                        { title: `Phase 10: MEP Fit-out (${range(24, 27)})`, items: ["Lift install & commissioning", "DG set & Transformer", "Panels & Fire alarm", "CCTV & access control", "STP & Solar commissioning", "Water pumps & testing"] },
-                        { title: `Phase 11: Ext. Works (${range(25, 28)})`, items: ["Landscaping (soft & hard)", "Swimming pool construction", "Pavements & driveways", "Boundary wall & gate", "External lighting & branding"] },
-                        { title: `Phase 12: Handover (${range(28, 30)})`, items: ["Snag list clearance", "Deep cleaning", "Amenity equipment", "Furniture (common areas)", "Trial runs (all systems)", "Occupation Certificate", "Unit handover (phased)"] }
+                        { title: `Phase 8: Ext. Finish (${range(21, 24)})`, items: ["External plastering", "Facade paint/texture", "Windows & grills installation", "External lighting", "Signage"] },
+                        { title: `Phase 9: Int. Finish (${range(22, 26)})`, items: ["Internal plastering/POP", "Flooring (tiles/vitrified)", "Wall tiling (baths/kitchen)", "Painting (2-3 coats)", "False ceiling (if req)", "Kitchen cabinets & Wardrobes", "Door installation & hardware", "Electrical/Plumbing fittings"] },
+                        { title: `Phase 10: MEP Fit-out (${range(23, 27)})`, items: ["Lift install & commissioning", "DG set & Transformer", "Panels & Fire alarm", "CCTV & access control", "STP & Solar commissioning", "Water pumps & testing"] },
+                        { title: `Phase 11: Ext. Works (${range(24, 28)})`, items: ["Landscaping (soft & hard)", "Swimming pool construction", "Pavements & driveways", "Boundary wall & gate", "External lighting & branding"] },
+                        { title: `Phase 12: Handover (${range(27, 30)})`, items: ["Snag list clearance", "Deep cleaning", "Amenity equipment", "Furniture (common areas)", "Trial runs (all systems)", "Occupation Certificate", "Unit handover (phased)"] }
                     ];
 
                     return (
@@ -1952,15 +1957,15 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                 <div className="grid grid-cols-2 gap-4 text-[9px] mb-4">
                     <div>
                         {(() => {
-                            const landCost = totalCost * 0.20; 
+                            const landCost = actualLandCost; 
                             const constructionCost = totalCost;
                             const softCosts = constructionCost * 0.15;
                             const contingency = constructionCost * 0.02;
                             const totalCapReq = landCost + constructionCost + softCosts + contingency;
                             
-                            const eqCost = totalCapReq * 0.40;
-                            const debtCost = totalCapReq * 0.46;
-                            const advCost = totalCapReq * 0.14;
+                            const eqCost = uw?.promoterEquity || (totalCapReq * 0.40);
+                            const debtCost = uw?.requestedLoanAmount || (totalCapReq * 0.46);
+                            const advCost = Math.max(0, totalCapReq - eqCost - debtCost);
 
                             return (
                                 <>
@@ -1993,11 +1998,12 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                     </div>
                     <div>
                         {(() => {
-                            const landCost = totalCost * 0.20; 
+                            const landCost = actualLandCost; 
                             const totalCapReq = landCost + totalCost + (totalCost * 0.15) + (totalCost * 0.02);
-                            const eqCost = totalCapReq * 0.40;
-                            const debtCost = totalCapReq * 0.46;
-                            const advCost = totalCapReq * 0.14;
+                            const eqCost = uw?.promoterEquity || (totalCapReq * 0.40);
+                            const debtCost = uw?.requestedLoanAmount || (totalCapReq * 0.46);
+                            const advCost = Math.max(0, totalCapReq - eqCost - debtCost);
+                            const interestRateText = uw?.targetInterestRate ? `${uw.targetInterestRate}% p.a.` : '12% p.a.';
 
                             return (
                                 <>
@@ -2006,7 +2012,7 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                                         <thead><tr><TH>Source</TH><TH className="text-right">₹ Cr</TH><TH>Rate</TH><TH>Remarks</TH></tr></thead>
                                         <tbody>
                                             <tr><TD className="font-semibold bg-slate-50">Equity (40%)</TD><TD className="text-right">{crore(eqCost).replace(/₹ | Cr/g,'')}</TD><TD>—</TD><TD>Promoter + investors</TD></tr>
-                                            <tr><TD className="font-semibold bg-slate-50">Debt (46%)</TD><TD className="text-right">{crore(debtCost).replace(/₹ | Cr/g,'')}</TD><TD>12% p.a.</TD><TD>Bank/NBFC loan</TD></tr>
+                                            <tr><TD className="font-semibold bg-slate-50">Debt ({((debtCost/totalCapReq)*100).toFixed(0)}%)</TD><TD className="text-right">{crore(debtCost).replace(/₹ | Cr/g,'')}</TD><TD>{interestRateText}</TD><TD>Bank/NBFC loan</TD></tr>
                                             <tr><TD className="font-semibold bg-slate-50">Advances (14%)</TD><TD className="text-right">{crore(advCost).replace(/₹ | Cr/g,'')}</TD><TD>—</TD><TD>Pre-launch bookings</TD></tr>
                                             <tr className="bg-slate-800 text-white font-bold"><TD className="font-bold text-white">Total</TD><TD className="font-bold text-white text-right">{crore(totalCapReq).replace(/₹ | Cr/g,'')}</TD><TD colSpan={2}>&nbsp;</TD></tr>
                                         </tbody>
@@ -2017,7 +2023,7 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                         <div className="mt-2 text-[8px] text-slate-600 space-y-0.5">
                             <p><strong>Debt Terms:</strong></p>
                             <p>• Loan-to-Value (LTV): 60% of project cost</p>
-                            <p>• Tenure: 36 months (incl. 6-month moratorium)</p>
+                            <p>• Tenure: {uw?.loanTenureMonths || 36} months (incl. 6-month moratorium)</p>
                             <p>• Repayment: Monthly interest, principal at end</p>
                             <p>• Security: Mortgage of land + hypothecation of receivables</p>
                         </div>
@@ -2026,12 +2032,12 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
 
                 <SH2>15.2 Cash Flow Projection — Sales Realization</SH2>
                 {(() => {
-                    const landCost = totalCost * 0.20;
+                    const landCost = actualLandCost;
                     const constructionCost = totalCost;
                     const softCosts = totalCost * 0.15;
                     const contingency = totalCost * 0.02;
                     const totalCapReq = landCost + constructionCost + softCosts + contingency;
-                    const debtCost = totalCapReq * 0.46;
+                    const debtCost = uw?.requestedLoanAmount || (totalCapReq * 0.46);
                     
                     const revCr = totalRev ? totalRev / 10000000 : 83.2; // Fallback to 83.2 Cr if missing
                     const units = totalUnits || 64;
@@ -2044,7 +2050,8 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                     const u23 = Math.round(units * 0.23);
                     const u19 = Math.round(units * 0.19);
                     
-                    const interestExp = debtCost * 0.12; // 12% on total debt (assuming avg utilization balance)
+                    const interestRate = (uw?.targetInterestRate || 12) / 100;
+                    const interestExp = debtCost * interestRate; // Interest on total debt (assuming avg utilization balance)
 
                     return (
                         <>
@@ -2112,8 +2119,8 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                                                     <tr><TD>Less: Interest on Debt</TD><TD className="text-right">{(interestExp/10000000).toFixed(2)}</TD></tr>
                                                     <tr className="font-semibold"><TD>PBT</TD><TD className="text-right">{pbt.toFixed(2)}</TD></tr>
                                                     <tr><TD>Less: Income Tax (25%)</TD><TD className="text-right">{tax.toFixed(2)}</TD></tr>
-                                                    <tr className="font-bold text-green-800 bg-green-50"><TD>PAT (Profit After Tax)</TD><TD className="text-right">{pat.toFixed(2)}</TD></tr>
-                                                    <tr><TD>PAT Margin</TD><TD className="text-right text-green-800 font-semibold">{(pat / revCr * 100).toFixed(1)}%</TD></tr>
+                                                    <tr className="font-bold text-green-700 bg-green-50"><TD>PAT</TD><TD className="text-right">{pat.toFixed(2)}</TD></tr>
+                                                    <tr><TD>PAT Margin</TD><TD className="text-right font-semibold">{((pat / revCr) * 100).toFixed(1)}%</TD></tr>
                                                 </>
                                             );
                                         })()}
@@ -2126,36 +2133,43 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
             </div>
             <PageBreak />
 
-            {/* ═══ PAGE 16 — SENSITIVITY ANALYSIS ═══ */}
+            {/* ═══ PAGE 16 — SENSITIVITY & APPROVALS ═══ */}
             <div className="report-page">
-                <SH>16. Sensitivity Analysis</SH>
+                <SH>16. Sensitivity Analysis & Approvals</SH>
 
                 <SH2>16.1 Impact of Price Variation</SH2>
                 <table className="w-full border-collapse mb-4 text-[9px]">
                     <thead><tr><TH>Price Change</TH><TH>Revenue (₹ Cr)</TH><TH>PAT (₹ Cr)</TH><TH>PAT Margin</TH><TH>ROE</TH></tr></thead>
                     <tbody>
-                        {[
-                            [-10, -10, 75.31, 4.57, '6.1%', '17.6%'],
-                            [-5,  -5,  79.50, 6.16, '7.7%', '23.7%'],
-                            [0,    0,  83.68, 7.75, '9.3%', '29.8%'],
-                            [1,   +5,  87.86, 9.34, '10.6%','35.9%'],
-                            [2,  +10,  92.05, 10.93,'11.9%','42.0%'],
-                        ].map(([isBase, pct, rev, pat, patM, roe], i) => {
-                            const patNum = pat as number;
-                            const pctNum = pct as number;
-                            return (
-                            <tr key={i} className={(isBase as number) === 0 ? 'bg-blue-50 font-bold' : i % 2 === 0 ? 'bg-slate-50' : ''}>
-                                <TD className="font-semibold">{pctNum === 0 ? 'Base (0%)' : `${pctNum > 0 ? '+' : ''}${pctNum}%`}</TD>
-                                <TD className="text-right">{rev}</TD>
-                                <TD className={`text-right ${patNum < 7 ? 'text-red-600' : 'text-green-700'} font-semibold`}>{pat}</TD>
-                                <TD className="text-right">{patM}</TD>
-                                <TD className="text-right">{roe}</TD>
-                            </tr>
-                            );
-                        })}
+                        {(() => {
+                            const baseRevCr = (totalRev || (totalCarpet * 11000 * 10.764)) / 10000000;
+                            const totalCostFullCr = (totalCost * 1.17 + actualLandCost) / 10000000;
+                            const debtCostTraced = uw?.requestedLoanAmount || (totalCostFullCr * 10000000 * 0.46);
+                            const interestExpCr = (debtCostTraced * ((uw?.targetInterestRate || 12)/100)) / 10000000;
+                            const equityCr = (uw?.promoterEquity || (totalCostFullCr * 10000000 * 0.40)) / 10000000;
+
+                            return [-10, -5, 0, 5, 10].map((pct, i) => {
+                                const rev = baseRevCr * (1 + pct / 100);
+                                const ebitda = rev - totalCostFullCr - (rev * 0.05);
+                                const pbt = ebitda - interestExpCr;
+                                const tax = pbt > 0 ? pbt * 0.25 : 0;
+                                const pat = pbt - tax;
+                                const patM = (pat / rev) * 100;
+                                const roe = (pat / equityCr) * 100;
+                                return (
+                                    <tr key={i} className={pct === 0 ? 'bg-blue-50 font-bold' : i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                        <TD className="font-semibold">{pct === 0 ? 'Base (0%)' : `${pct > 0 ? '+' : ''}${pct}%`}</TD>
+                                        <TD className="text-right">{rev.toFixed(2)}</TD>
+                                        <TD className={`text-right ${pat < 0 ? 'text-red-600' : 'text-green-700'} font-semibold`}>{pat.toFixed(2)}</TD>
+                                        <TD className="text-right">{patM.toFixed(1)}%</TD>
+                                        <TD className="text-right">{roe.toFixed(1)}%</TD>
+                                    </tr>
+                                );
+                            });
+                        })()}
                     </tbody>
                 </table>
-                <p className="text-[8px] text-slate-500 italic mb-4">Break-even Price: ₹9,800/sq.ft carpet (11% below base price)</p>
+                <p className="text-[8px] text-slate-500 italic mb-4">Break-even Price: ₹{fmt((totalCost * 1.17 + actualLandCost) / (totalCarpet * 10.764))}/sq.ft carpet</p>
 
                 <SH2>16.2 Impact of Cost Variation</SH2>
                 <table className="w-full border-collapse mb-4 text-[9px]">

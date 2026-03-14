@@ -204,6 +204,51 @@ export interface Message {
   content: string;
 }
 
+export interface UnderwritingData {
+  // 1. Borrower / Corporate Data
+  promoterName?: string;
+  companyName?: string;
+  legalEntity?: string;
+  yearsInRealEstate?: number;
+  creditRating?: string;
+  completedProjectsCount?: number;
+  totalAreaDelivered?: number;
+  netWorthData?: {
+    fy23?: { assets: number; liabilities: number; netWorth: number };
+    fy24?: { assets: number; liabilities: number; netWorth: number };
+    fy25?: { assets: number; liabilities: number; netWorth: number };
+  };
+  otherProjects?: Array<{ name: string; status: string; size: string; bankExposure: string }>;
+  managementCapability?: string;
+
+  // 2. Loan Request Specifics
+  requestedLoanAmount?: number;
+  promoterEquity?: number;
+  targetInterestRate?: number; // e.g., 10 for 10%
+  loanTenureMonths?: number;
+  moratoriumMonths?: number;
+
+  // 3. Legal & Regulatory Status
+  approvals?: {
+    buildingPlan?: 'Pending' | 'Approved' | 'Not Applicable';
+    environmentClearance?: 'Pending' | 'Approved' | 'Not Applicable';
+    fireNoc?: 'Pending' | 'Approved' | 'Not Applicable';
+    utilityConnections?: 'Pending' | 'Approved' | 'Not Applicable';
+    reraRegistration?: string; // "Pending" or the actual RERA number
+  };
+
+  // 4. Micro-Market & Competitors
+  competitors?: Array<{
+    name: string;
+    sellingPricePerSqm: number;
+    absorptionRate: string;
+  }>;
+
+  // 5. Land Cost & Additional Financials
+  actualLandPurchaseCost?: number;
+  stampDutyAndLegalFees?: number;
+}
+
 export interface Project {
   id: string;
   userId: string;
@@ -227,6 +272,7 @@ export interface Project {
     score?: number;
   };
   generationParams?: any; // App settings, like setbacks
+  underwriting?: UnderwritingData;
 }
 
 export interface UnitTypology {

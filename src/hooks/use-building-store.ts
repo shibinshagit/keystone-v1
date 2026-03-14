@@ -2235,55 +2235,69 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     }
                 });
 
-                // Convert to Buildings
-                // Variables for sequential floor assignment in autoMaxGFA mode
-                let remainingGFAForAuto = effectiveMaxGFA;
-                const userMaxFloorsForAuto = effectiveMaxFloors; // Must match infill GFA check
+                // --- PRE-CALCULATE FLOOR COUNTS TO HIT TARGET GFA EXACTLY ---
+                const userMinF = params.minFloors ?? 1;
+                const userMaxF = params.maxFloors ?? 12;
+                let targetFloorCounts = new Array(explodedFeatures.length).fill(userMinF);
 
+                if (params.autoMaxGFA || effectiveMaxGFA > 0) {
+                    let activeIndices = Array.from({length: explodedFeatures.length}, (_, idx) => idx);
+                    
+                    // 1. Prune footprints if minimum floors exceed GFA
+                    // Sort by area so we prune the smallest buildings first 
+                    activeIndices.sort((a, b) => turf.area(explodedFeatures[a]) - turf.area(explodedFeatures[b]));
+                    
+                    let currentMinGFA = activeIndices.reduce((sum, idx) => sum + turf.area(explodedFeatures[idx]) * userMinF, 0);
+                    
+                    while (currentMinGFA > effectiveMaxGFA && activeIndices.length > 0) {
+                        const droppedIdx = activeIndices.shift(); // Drop smallest
+                        if (droppedIdx !== undefined) {
+                            targetFloorCounts[droppedIdx] = 0;
+                            currentMinGFA -= turf.area(explodedFeatures[droppedIdx]) * userMinF;
+                        }
+                    }
+
+                    // 2. Distribute remaining GFA randomly among surviving footprints
+                    let currentGFA = currentMinGFA;
+                    // Filter available indices to only those that can actually grow
+                    let availableIndices = activeIndices.filter(() => userMaxF > userMinF);
+                    
+                    let iterations = 0;
+                    while (currentGFA < effectiveMaxGFA && availableIndices.length > 0 && iterations < 10000) {
+                        iterations++;
+                        const randIdx = Math.floor(Math.random() * availableIndices.length);
+                        const bIdx = availableIndices[randIdx];
+                        const area = turf.area(explodedFeatures[bIdx]);
+                        
+                        // If adding 1 floor keeps us within limit (allow up to 2% overshoot for perfect filling)
+                        if (currentGFA + area <= effectiveMaxGFA * 1.02) {
+                            targetFloorCounts[bIdx]++;
+                            currentGFA += area;
+                            if (targetFloorCounts[bIdx] >= userMaxF) {
+                                availableIndices.splice(randIdx, 1);
+                            }
+                        } else {
+                            availableIndices.splice(randIdx, 1);
+                        }
+                    }
+                    console.log(`[Floor Pre-calc] Distributed floors to hit GFA. Final GFA: ${currentGFA.toFixed(0)} / ${effectiveMaxGFA.toFixed(0)}`);
+                } else {
+                    // Fallback just randomize between min and max (safeguard)
+                    for (let i = 0; i < explodedFeatures.length; i++) {
+                        targetFloorCounts[i] = Math.floor(Math.random() * (userMaxF - userMinF + 1)) + userMinF;
+                    }
+                }
+
+                // Convert to Buildings
                 let newBuildings: Building[] = explodedFeatures.flatMap((f, i) => {
+                    const assignedFloors = targetFloorCounts[i];
+                    if (assignedFloors === 0) return []; // Pruned because minFloors exceeded GFA
+
                     // Calculate height based on floor count range AND regulation limits
                     const floorHeight = params.floorHeight || 3.5;
 
-                    // User-specified constraints (defaults)
-                    let minF = params.minFloors ?? 5;
-                    let maxF = params.maxFloors ?? 12;
-
-                    // AUTO-MAX GFA: Calculate floors sequentially to hit target GFA
-                    if (params.autoMaxGFA) {
-                        const area = turf.area(f);
-                        
-                        // Calculate total footprint of ALL remaining buildings from index i onwards
-                        let remainingFootprint = 0;
-                        for (let j = i; j < explodedFeatures.length; j++) {
-                            remainingFootprint += turf.area(explodedFeatures[j]);
-                        }
-
-                        if (remainingGFAForAuto <= 0 || remainingFootprint <= 0) {
-                            // Target reached, don't build useless tall floors on remaining buildings
-                            minF = 1;
-                            maxF = 1;
-                        } else {
-                            // Desired average floors for the REST of the buildings to hit the exact target
-                            const averageNeededFloors = remainingGFAForAuto / remainingFootprint;
-                            
-                            // Target for THIS building (with ±15% variation for skyline)
-                            const variation = 0.85 + (Math.random() * 0.30); // 0.85 to 1.15
-                            let targetFloors = Math.round(averageNeededFloors * variation);
-                            
-                            // Cap at user's max floors limitation
-                            targetFloors = Math.min(targetFloors, userMaxFloorsForAuto);
-                            
-                            // Ensure at least 1 floor
-                            targetFloors = Math.max(1, targetFloors);
-
-                            minF = targetFloors;
-                            maxF = targetFloors;
-                            
-                            // Deduct from remaining GFA
-                            remainingGFAForAuto -= (targetFloors * area);
-                            console.log(`[AutoMaxGFA] Building ${i}: area=${area.toFixed(0)}, avgNeeded=${averageNeededFloors.toFixed(1)}, assigned=${targetFloors}, remainingGFA=${remainingGFAForAuto.toFixed(0)}`);
-                        }
-                    }
+                    let minF = assignedFloors;
+                    let maxF = assignedFloors;
 
                     // Use constraints passed in 'p' if available (from specific regulation), otherwise fallback to plotStub
                     const constraintHeight = p.maxBuildingHeight !== undefined ? p.maxBuildingHeight : plotStub.maxBuildingHeight;
@@ -2340,7 +2354,16 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     }
 
                     const baseFloors = Math.floor(Math.random() * (maxF - minF + 1)) + minF;
+                    
+                    // The user's explicitly set minFloors and maxFloors via the slider MUST be respected.
+                    // Vastu can scale the height, but we must clamp it back to the user's allowed bounds
+                    // otherwise the visualization will show floors outside the requested range.
                     let floors = Math.max(minF, Math.round(baseFloors * vastuHeightMultiplier));
+                    const absoluteMinFloors = params.minFloors ?? 1;
+                    const absoluteMaxFloors = params.maxFloors ?? 999;
+                    floors = Math.max(absoluteMinFloors, Math.min(absoluteMaxFloors, floors));
+                    
+                    console.log(`[Floors] Building ${i}: min=${minF}, max=${maxF}, base=${baseFloors}, vastuMult=${vastuHeightMultiplier.toFixed(2)}, final=${floors} (bounds: ${absoluteMinFloors}-${absoluteMaxFloors})`);
 
                     // FAR compliance: For large-footprint buildings, cap floors so total GFA stays within FAR limit
                     const buildingFootprint = turf.area(f);
@@ -2353,7 +2376,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         const farMaxFloors = Math.max(1, Math.floor(effectiveMaxGFA / totalFootprint));
                         if (floors > farMaxFloors) {
                             console.log(`[FAR Cap] Large footprint building ${i}: capping floors from ${floors} to ${farMaxFloors} (footprint=${buildingFootprint.toFixed(0)}m², totalFootprint=${totalFootprint.toFixed(0)}m², maxGFA=${effectiveMaxGFA.toFixed(0)}m²)`);
-                            floors = farMaxFloors;
+                            // Respect the minimum floor constraint from the user
+                            floors = Math.max(params.minFloors || 1, farMaxFloors);
                         }
                     }
 
@@ -2702,74 +2726,86 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     console.log(`FAR Check: Actual=${actualFAR.toFixed(2)}, Limit=${effectiveFARConstraint}`);
 
                     if (actualFAR > effectiveFARConstraint * 1.05) { // Allow 5% tolerance
+                        console.warn(`FAR exceeded! Actual: ${actualFAR.toFixed(2)}, Limit: ${effectiveFARConstraint}`);
+
+                        const userMinFloors = params.minFloors ?? 1;
+                        let currentFAR = actualFAR;
                         const scaleFactor = effectiveFARConstraint / actualFAR;
-                        console.warn(`FAR exceeded! Scaling building heights by ${(scaleFactor * 100).toFixed(1)}%`);
 
-                        // Scale down floor counts proportionally
+                        // First try scaling down floors, but NEVER below user's minFloors
+                        let anyFloorsScaled = false;
                         newBuildings.forEach(b => {
-                            const newFloors = Math.max(1, Math.floor(b.numFloors * scaleFactor));
-                            b.numFloors = newFloors;
-                            b.height = newFloors * b.typicalFloorHeight;
+                            const candidateFloors = Math.floor(b.numFloors * scaleFactor);
+                            const newFloors = Math.max(userMinFloors, candidateFloors);
                             
-                            // If this is a tower, we must preserve its base height but adjust its top
-                            // The baseHeight should NOT be reset unless we are also scaling the podium.
-                            // Currently, both scale proportionally, so tower's baseHeight should scale 
-                            // proportionally to its podium's new height if we want to be perfect, 
-                            // but simply keeping baseHeight = original podium height might cause gaps 
-                            // if podium shrunk. 
-                            // Since podium and tower scale by the SAME factor, we can scale baseHeight too.
-                            if (b.id.includes('-tower')) {
-                                b.baseHeight = Math.floor((b.baseHeight || 0) / b.typicalFloorHeight * scaleFactor) * b.typicalFloorHeight;
-                            }
-                            
-                            // Only modify the NON-PARKING floors
-                            // Because if we blindly recreate all floors, we lose the basement/stilt parking definitions
-                            // So let's slice the existing non-parking floors array instead, or recreate it properly
-                            const occupiableFloorsCount = newFloors;
-                            const parkingFloors = b.floors.filter(f => f.type === 'Parking');
-                            const occupiableFloors = b.floors.filter(f => f.type !== 'Parking');
-                            
-                            // Adjust the number of occupiable floors to match newFloors
-                            let newOccupiableFloors = occupiableFloors.slice(0, occupiableFloorsCount);
-                            if (newOccupiableFloors.length < occupiableFloorsCount) {
-                                // Shouldn't happen if we're only scaling DOWN, but just in case
-                                const diff = occupiableFloorsCount - newOccupiableFloors.length;
-                                const colors = generateFloorColors(diff, b.intendedUse as BuildingIntendedUse);
-                                const extra = Array.from({ length: diff }, (_, j) => ({
-                                    id: `floor-${b.id}-extra-${j}`,
-                                    height: b.typicalFloorHeight,
-                                    color: colors[j] || '#cccccc',
-                                    level: b.id.includes('-tower') ? (newOccupiableFloors.length + j) : (newOccupiableFloors.length + j) // Standard indexing
-                                    // Note: FAR scaling logic below will need further refinement for Podium-Tower siblings but we fix the local tower gap here.
-                                    // Actually, if we use sequential indexing, level is just index.
-                                    // For towers in FAR scaling, we'd need to find the specific sibling.
+                            // Only update if it actually reduces
+                            if (newFloors < b.numFloors) {
+                                anyFloorsScaled = true;
+                                const originalFARContribution = (b.area * b.numFloors) / plotArea;
+                                const newFARContribution = (b.area * newFloors) / plotArea;
+                                currentFAR -= (originalFARContribution - newFARContribution);
 
-                                }));
-                                newOccupiableFloors = [...newOccupiableFloors, ...extra as Floor[]];
-                            }
-                            
-                            b.floors = [...parkingFloors, ...newOccupiableFloors];
+                                b.numFloors = newFloors;
+                                b.height = newFloors * b.typicalFloorHeight;
+                                if (b.id.includes('-tower')) {
+                                    b.baseHeight = Math.floor((b.baseHeight || 0) / b.typicalFloorHeight * scaleFactor) * b.typicalFloorHeight;
+                                }
 
-                            // Re-sync units: after floor truncation, some units may reference
-                            // floor IDs that no longer exist. Re-map units to surviving floors.
-                            if (b.units && b.units.length > 0) {
-                                const survivingFloorIds = new Set(newOccupiableFloors.map(f => f.id));
-                                // Find template units from any surviving floor
-                                const templateFloorId = b.units.find(u => survivingFloorIds.has(u.floorId || ''))?.floorId;
-                                if (templateFloorId) {
-                                    const templateUnits = b.units.filter(u => u.floorId === templateFloorId);
-                                    const resyncedUnits: typeof b.units = [];
-                                    newOccupiableFloors.forEach(floor => {
-                                        if ((floor.level !== undefined && floor.level < 0) || floor.type === 'Parking') return;
-                                        templateUnits.forEach(tmpl => {
-                                            const baseId = tmpl.id.includes('-u-') ? tmpl.id.split('-u-').pop() : tmpl.id;
-                                            resyncedUnits.push({ ...tmpl, id: `${floor.id}-u-${baseId}`, floorId: floor.id });
+                                const occupiableFloorsCount = newFloors;
+                                const parkingFloors = b.floors.filter(f => f.type === 'Parking');
+                                const occupiableFloors = b.floors.filter(f => f.type !== 'Parking');
+                                
+                                let newOccupiableFloors = occupiableFloors.slice(0, occupiableFloorsCount);
+                                if (newOccupiableFloors.length < occupiableFloorsCount) {
+                                    const diff = occupiableFloorsCount - newOccupiableFloors.length;
+                                    const colors = generateFloorColors(diff, b.intendedUse as BuildingIntendedUse);
+                                    const extra = Array.from({ length: diff }, (_, j) => ({
+                                        id: `floor-${b.id}-extra-${j}`,
+                                        height: b.typicalFloorHeight,
+                                        color: colors[j] || '#cccccc',
+                                        level: b.id.includes('-tower') ? (newOccupiableFloors.length + j) : (newOccupiableFloors.length + j)
+                                    }));
+                                    newOccupiableFloors = [...newOccupiableFloors, ...extra as Floor[]];
+                                }
+                                
+                                b.floors = [...parkingFloors, ...newOccupiableFloors];
+
+                                if (b.units && b.units.length > 0) {
+                                    const survivingFloorIds = new Set(newOccupiableFloors.map(f => f.id));
+                                    const templateFloorId = b.units.find(u => survivingFloorIds.has(u.floorId || ''))?.floorId;
+                                    if (templateFloorId) {
+                                        const templateUnits = b.units.filter(u => u.floorId === templateFloorId);
+                                        const resyncedUnits: typeof b.units = [];
+                                        newOccupiableFloors.forEach(floor => {
+                                            if ((floor.level !== undefined && floor.level < 0) || floor.type === 'Parking') return;
+                                            templateUnits.forEach(tmpl => {
+                                                const baseId = tmpl.id.includes('-u-') ? tmpl.id.split('-u-').pop() : tmpl.id;
+                                                resyncedUnits.push({ ...tmpl, id: `${floor.id}-u-${baseId}`, floorId: floor.id });
+                                            });
                                         });
-                                    });
-                                    b.units = resyncedUnits;
+                                        b.units = resyncedUnits;
+                                    }
                                 }
                             }
                         });
+
+                        // If FAR is STILL exceeded (because we refused to shrink floors below the minimum), we MUST prune buildings
+                        if (currentFAR > effectiveFARConstraint * 1.05) {
+                            console.warn(`FAR still exceeded after height compression (Current: ${currentFAR.toFixed(2)}). Pruning buildings...`);
+                            const sorted = [...newBuildings].sort((a, b) => (a.area * a.numFloors) - (b.area * b.numFloors)); // Prune smallest first
+                            const pruned: Building[] = [...newBuildings];
+                            for (const bld of sorted) {
+                                if (currentFAR <= effectiveFARConstraint * 1.05) break;
+                                const idx = pruned.findIndex(b => b.id === bld.id);
+                                if (idx !== -1) {
+                                    const bldFAR = (bld.area * bld.numFloors) / plotArea;
+                                    currentFAR -= bldFAR;
+                                    pruned.splice(idx, 1);
+                                }
+                            }
+                            newBuildings = pruned;
+                            console.log(`Pruning reduced FAR to ${currentFAR.toFixed(2)}. Remaining buildings: ${newBuildings.length}`);
+                        }
                     }
                 }
 

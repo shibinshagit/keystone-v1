@@ -81,12 +81,22 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
     const tl = estimates?.timeline;
     const sim = estimates?.simulation;
 
+    // User-Defined Underwriting vs Fallback
+    const uw = project.underwriting || {};
+    const requestedLoan = uw.requestedLoanAmount || 0;
+    const requestedEquity = uw.promoterEquity || 0;
+    
     // Loan structure
-    const loanPct = 0.45;
-    const loanAmount = totalCost * loanPct;
-    const equityAmount = totalCost - loanAmount;
+    const totalCap = requestedLoan + requestedEquity || totalCost;
+    const loanPct = requestedLoan && totalCap ? requestedLoan / totalCap : 0.45;
+    const loanAmount = requestedLoan || (totalCost * loanPct);
+    const equityAmount = requestedEquity || (totalCost - loanAmount);
+    
+    const targetInterestRate = uw.targetInterestRate ?? 10.0;
+    const loanTenure = uw.loanTenureMonths || (sim ? Math.round(sim.time_p50) : (tl ? Math.round(tl.total_months) : 36));
+
     const grossMargin = totalRev > 0 ? ((totalRev - totalCost) / totalRev) * 100 : 0;
-    const totalMonths = sim ? Math.round(sim.time_p50) : (tl ? Math.round(tl.total_months) : 36);
+    const totalMonths = loanTenure;
     const costRange = sim ? `${crore(sim.cost_p10)} – ${crore(sim.cost_p90)}` : (totalCost ? crore(totalCost) : 'Pending');
     const avgUnitPrice = totalUnits > 0 ? totalRev / totalUnits : 0;
     const breakEvenUnits = totalCost > 0 && avgUnitPrice > 0 ? Math.ceil(totalCost / avgUnitPrice * 0.45) : Math.ceil(totalUnits * 0.45);
@@ -147,7 +157,7 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                     <thead><tr><TH>Parameter</TH><TH>Details</TH></tr></thead>
                     <tbody>
                         {([
-                            ['Borrower/Promoter', null],
+                            ['Borrower/Promoter', uw.promoterName || uw.companyName || null],
                             ['Project Name', project.name],
                             ['Location', typeof plot.location === 'object' ? 'Coordinates Defined' : String(plot.location || project.location || 'N/A')],
                             ['Project Classification', `${project.intendedUse || 'Residential'} High-Rise Development`],
@@ -162,7 +172,7 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                             ['Expected Revenue', totalRev ? crore(totalRev) : 'Pending'],
                             ['Pre-Launch Margin', `${grossMargin.toFixed(2)}%`],
                             ['DSCR', (() => {
-                                const annualInterest = loanAmount * 0.10;
+                                const annualInterest = loanAmount * (targetInterestRate / 100);
                                 const salesByYear = [totalRev * 0.31, totalRev * 0.38];
                                 const costsByYear = [totalCost * 0.40, totalCost * 0.40];
                                 const dscrValues = [0, 1].map(i => {
@@ -213,24 +223,26 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 <SH2 className="!mt-1">2.1 Promoter Background &amp; Track Record</SH2>
                 <table className="w-full border-collapse mb-3"><thead><tr><TH>Corporate Information</TH><TH>Details</TH></tr></thead>
                     <tbody>
-                        {(['Legal Entity', 'Registered Office', 'Management Team', 'Years in Real Estate', 'Credit Rating'] as string[]).map((k, i) => (
-                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}><TD className="font-semibold w-1/3">{k}</TD><TDP /></tr>
-                        ))}
+                        <tr className="bg-slate-50"><TD className="font-semibold w-1/3">Promoter / Group Name</TD>{uw.promoterName ? <TD>{uw.promoterName}</TD> : <TDP />}</tr>
+                        <tr><TD className="font-semibold w-1/3">Corporate / Legal Entity</TD>{uw.companyName ? <TD>{uw.companyName} ({uw.legalEntity || 'Entity Type Pending'})</TD> : <TDP />}</tr>
+                        <tr className="bg-slate-50"><TD className="font-semibold w-1/3">Years in Real Estate</TD>{uw.yearsInRealEstate ? <TD>{uw.yearsInRealEstate} Years</TD> : <TDP />}</tr>
+                        <tr><TD className="font-semibold w-1/3">Management Summary</TD>{uw.managementCapability ? <TD>{uw.managementCapability}</TD> : <TDP />}</tr>
+                        <tr className="bg-slate-50"><TD className="font-semibold w-1/3">Credit Rating</TD>{uw.creditRating ? <TD>{uw.creditRating}</TD> : <TDP />}</tr>
                     </tbody>
                 </table>
 
                 <SH2>2.2 Historical Performance</SH2>
-                <table className="w-full border-collapse mb-3"><thead><tr><TH>Parameter</TH><TH>Assessment Criteria</TH><TH>Score</TH></tr></thead>
+                <table className="w-full border-collapse mb-3"><thead><tr><TH>Parameter</TH><TH>Assessment Criteria</TH><TH>Score / Status</TH></tr></thead>
                     <tbody>
                         {([
-                            ['Projects Completed', 'Minimum 3 similar projects'],
-                            ['Total Area Developed', 'Minimum 1,00,000 sq.ft'],
-                            ['On-time Delivery', '>80% on schedule'],
-                            ['Quality Standards', 'No major complaints/litigations'],
-                            ['Financial Stability', 'Positive net worth 3 years'],
-                            ['Banking Relationships', 'No NPAs or defaults'],
-                        ] as [string, string][]).map(([k, v], i) => (
-                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}><TD className="font-semibold">{k}</TD><TD>{v}</TD><TDP /></tr>
+                            ['Projects Completed', 'Minimum 3 similar projects', uw.completedProjectsCount ? `${uw.completedProjectsCount} Projects` : null],
+                            ['Total Area Developed', 'Minimum 1,00,000 sq.ft', null],
+                            ['On-time Delivery', '>80% on schedule', null],
+                            ['Quality Standards', 'No major complaints/litigations', null],
+                            ['Financial Stability', 'Positive net worth 3 years', null],
+                            ['Banking Relationships', 'No NPAs or defaults', null],
+                        ] as [string, string, string | null][]).map(([k, v, s], i) => (
+                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}><TD className="font-semibold">{k}</TD><TD>{v}</TD>{s ? <TD>{s}</TD> : <TDP />}</tr>
                         ))}
                     </tbody>
                 </table>
@@ -248,7 +260,7 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 <table className="w-full border-collapse mb-3"><thead><tr><TH>Project Name</TH><TH>Location</TH><TH>Status</TH><TH>Size</TH><TH>Bank Exposure</TH><TH>Completion %</TH></tr></thead>
                     <tbody>
                         {[1, 2].map((i) => (
-                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}><TDP>[Project {i}]</TDP><TDP>[Location]</TDP><TDP>[Status]</TDP><TDP>[Area]</TDP><TDP>[Amount]</TDP><TDP>[%]</TDP></tr>
+                            <tr key={i} className={i % 2 !== 0 ? 'bg-slate-50' : ''}><TDP /><TDP /><TDP /><TDP /><TDP /><TDP /></tr>
                         ))}
                     </tbody>
                 </table>
@@ -341,8 +353,8 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                             ['Total Land Area', `${fmt(plotArea)} sq.m (${fmt(plotArea * 10.764)} sq.ft / ${fmt(plotArea / 4046.86, 2)} acres)`, 'Verified from plot'],
                             ['Land Use', `${project.intendedUse || 'Residential'} (as per Master Plan)`, 'From regulation'],
                             ['Ownership Status', null, 'Title search pending'],
-                            ['Permissible FAR', `${far}`, 'From regulation'],
-                            ['Ground Coverage', `Max ${maxCov}%`, 'From regulation'],
+                            ['Permissible FAR', plot.regulation?.geometry?.max_far?.value ? `${plot.regulation.geometry.max_far.value}` : `${far}`, 'From regulation'],
+                            ['Ground Coverage', plot.regulation?.geometry?.max_ground_coverage?.value ? `Max ${plot.regulation.geometry.max_ground_coverage.value}%` : `Max ${maxCov}%`, 'From regulation'],
                             ['Setbacks', `F:${generationParams?.frontSetback ?? generationParams?.setback ?? plot?.setback ?? 6}m / R:${generationParams?.rearSetback ?? generationParams?.setback ?? 3}m / S:${generationParams?.sideSetback ?? generationParams?.setback ?? 3}m`, 'From regulation'],
                         ] as [string, string | null, string][]).map(([k, v, s], i) => (
                             <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
@@ -391,13 +403,11 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 <table className="w-full border-collapse mb-3"><thead><tr><TH>Approval</TH><TH>Authority</TH><TH>Status</TH><TH>Remarks</TH></tr></thead>
                     <tbody>
                         {([
-                            ['Building Plan Approval', 'Municipal Corp/DTCP', null, 'Mandatory before construction'],
-                            ['Environment Clearance', 'SEIAA/MoEF', null, builtUp > 20000 ? 'Required (>20,000 sq.m)' : 'May be exempt'],
-                            ['Fire NOC', 'Fire Department', null, 'Required before occupation'],
-                            ['Water Connection', 'PWD/HUDA', null, 'Availability to be confirmed'],
-                            ['Electricity Connection', 'Electricity Board', null, 'Load sanction required'],
-                            ['Sewerage Connection', 'Municipal Corporation', null, 'Connection feasibility'],
-                            ['RERA Registration', `${plot.regulation?.location || 'State'} RERA`, null, 'Cannot launch sales without this'],
+                            ['Building Plan Approval', 'Municipal Corp/DTCP', uw.approvals?.buildingPlan || null, 'Mandatory before construction'],
+                            ['Environment Clearance', 'SEIAA/MoEF', uw.approvals?.environmentClearance || null, builtUp > 20000 ? 'Required (>20,000 sq.m)' : 'May be exempt'],
+                            ['Fire NOC', 'Fire Department', uw.approvals?.fireNoc || null, 'Required before occupation'],
+                            ['Utility Connections', 'Utility Boards', uw.approvals?.utilityConnections || null, 'Availability to be confirmed'],
+                            ['RERA Registration', `${plot.regulation?.location || 'State'} RERA`, uw.approvals?.reraRegistration || null, 'Cannot launch sales without this'],
                             ['Occupancy Certificate', 'Municipal Authority', null, 'Required for legal possession'],
                             ['Commencement Certificate', 'Local Authority', null, 'Required before starting work'],
                         ] as [string, string, string | null, string][]).map(([k, auth, status, rem], i) => (
@@ -472,29 +482,30 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 <table className="w-full border-collapse mb-3"><thead><tr><TH>Phase</TH><TH>Activity</TH><TH>Duration</TH><TH>Disbursement</TH></tr></thead>
                     <tbody>
                         {(() => {
-                            const phases = sim?.phases || [];
-                            if (phases.length > 0) {
+                            if (tl && tl.phases) {
                                 let cumMonth = 0;
-                                return phases.map((p: any, i: number) => {
+                                return Object.entries(tl.phases).filter(([k]) => k !== 'overlap').map(([phName, durationMonths], i) => {
+                                    const dur = Number(durationMonths) || 0;
                                     const start = cumMonth;
-                                    cumMonth += p.durationMonths;
+                                    cumMonth += dur;
+                                    let percentage = i === 0 ? '5%' : i === 1 ? '15%' : i === 2 ? '30%' : '15%'; 
+                                    if(phName === 'Project Handover') percentage = '5%';
+                                    
                                     return (
                                         <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
                                             <TD className="font-semibold">Phase {i + 1}</TD>
-                                            <TD>{p.name}</TD>
-                                            <TD>{p.durationMonths.toFixed(0)} months (M{start.toFixed(0)}-{cumMonth.toFixed(0)})</TD>
-                                            <TD>{pct(p.costShare * 100)} of loan</TD>
+                                            <TD className="capitalize">{phName}</TD>
+                                            <TD>{dur.toFixed(1)} months (M{Math.round(start)}-M{Math.round(cumMonth)})</TD>
+                                            <TD>{percentage} of loan</TD>
                                         </tr>
                                     );
                                 });
                             }
+                            // ultimate fallback just in case tl fails
                             return ([
-                                ['Phase 0', 'Pre-Construction', '4-6 months', '0%'],
-                                ['Phase 1', 'Foundation & Basement', '6 months', '15%'],
-                                ['Phase 2', 'Structural Work – Lower', '8 months', '25%'],
-                                ['Phase 3', 'Structural Work – Upper', '6 months', '20%'],
-                                ['Phase 4', 'Finishing – External', '4 months', '15%'],
-                                ['Phase 5', 'Finishing – Internal', '6 months', '25%'],
+                                ['Phase 1', 'Engineering & Approvals', '6 months', '10%'],
+                                ['Phase 2', 'Construction', '24 months', '75%'],
+                                ['Phase 3', 'Handover', '6 months', '15%'],
                             ] as [string, string, string, string][]).map(([ph, act, dur, disb], i) => (
                                 <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}><TD className="font-semibold">{ph}</TD><TD>{act}</TD><TD>{dur}</TD><TD>{disb} of loan</TD></tr>
                             ));
@@ -612,11 +623,23 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 <h4 className="text-[10px] font-bold mt-2 mb-1">Competitive Analysis (Similar Projects within 3-5 km radius)</h4>
                 <table className="w-full border-collapse mb-1"><thead><tr><TH>Project Name</TH><TH>Developer</TH><TH>Config</TH><TH>Price/sq.ft</TH><TH>Absorption</TH></tr></thead>
                     <tbody>
-                        {([1, 2, 3].map((i) => (
-                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
-                                <TDP>[Competitor {i}]</TDP><TDP>[Builder]</TDP><TDP>[2/3 BHK]</TDP><TDP>[₹XX,XXX]</TDP><TDP>[XX% sold]</TDP>
-                            </tr>
-                        )))}
+                        {uw.competitors && uw.competitors.length > 0 ? (
+                            uw.competitors.map((comp, i) => (
+                                <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                    <TD className="font-semibold">{comp.name}</TD>
+                                    <TD>—</TD>
+                                    <TD>Mixed</TD>
+                                    <TD>₹{fmt(comp.sellingPricePerSqm / 10.764)}</TD>
+                                    <TD>{comp.absorptionRate}</TD>
+                                </tr>
+                            ))
+                        ) : (
+                            [1, 2, 3].map((i) => (
+                                <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                    <TDP>[Competitor {i}]</TDP><TDP>[Builder]</TDP><TDP>[2/3 BHK]</TDP><TDP>[₹XX,XXX]</TDP><TDP>[XX% sold]</TDP>
+                                </tr>
+                            ))
+                        )}
                     </tbody>
                 </table>
                 <p className="text-[9px] mb-3 leading-tight">
@@ -733,10 +756,10 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                             <tbody>
                                 {([
                                     ['1. LAND ACQUISITION', '', '', ''],
-                                    ['Land purchase cost', cb.earthwork * 0.4, '', 'Estimated land value'],
-                                    ['Stamp duty & registration', cb.earthwork * 0.04, '', '~10% of land value'],
+                                    ['Land purchase cost', uw.actualLandPurchaseCost || cb.earthwork * 0.4, '', 'Estimated land value'],
+                                    ['Stamp duty & registration', uw.stampDutyAndLegalFees || cb.earthwork * 0.04, '', '~10% of land value'],
                                     ['Legal & professional fees', 0.2 * 10000000, '', 'Title verification'],
-                                    ['Sub-total: Land', (cb.earthwork * 0.44) + 2000000, '', ''],
+                                    ['Sub-total: Land', (uw.actualLandPurchaseCost || cb.earthwork * 0.4) + (uw.stampDutyAndLegalFees || cb.earthwork * 0.04) + 2000000, '', ''],
 
                                     ['2. CONSTRUCTION COSTS', '', '', ''],
                                     ['Civil & structural work', cb.structure, '', `₹${fmt(cb.structure / sqftArea)}/sq.ft × ${fmt(sqftArea)} sq.ft`],
@@ -789,8 +812,8 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                         <table className="w-full border-collapse mb-1"><thead><tr><TH>Source</TH><TH>Amount (₹ Cr)</TH><TH>%</TH></tr></thead>
                             <tbody>
                                 <tr className="bg-slate-50"><TD className="font-semibold">Promoter&apos;s Equity</TD><TD>{crore(equityAmount)}</TD><TD>{pct((1 - loanPct) * 100)}</TD></tr>
-                                <tr><TD className="pl-4">Land (asset)</TD><TD>{cb ? crore((cb.earthwork * 0.44) + 2000000) : '—'}</TD><TD>—</TD></tr>
-                                <tr><TD className="pl-4">Cash equity</TD><TD>{cb ? crore(equityAmount - ((cb.earthwork * 0.44) + 2000000)) : '—'}</TD><TD>—</TD></tr>
+                                <tr><TD className="pl-4">Land (asset)</TD><TD>{cb ? crore((uw.actualLandPurchaseCost || cb.earthwork * 0.4) + (uw.stampDutyAndLegalFees || cb.earthwork * 0.04) + 2000000) : '—'}</TD><TD>—</TD></tr>
+                                <tr><TD className="pl-4">Cash equity</TD><TD>{cb ? crore(equityAmount - ((uw.actualLandPurchaseCost || cb.earthwork * 0.4) + (uw.stampDutyAndLegalFees || cb.earthwork * 0.04) + 2000000)) : '—'}</TD><TD>—</TD></tr>
                                 <tr><TD className="font-semibold">Bank Term Loan</TD><TD>{crore(loanAmount)}</TD><TD>{pct(loanPct * 100)}</TD></tr>
                                 <tr className="bg-slate-100 font-bold"><TD>TOTAL SOURCES</TD><TD>{crore(totalCost)}</TD><TD>100%</TD></tr>
                             </tbody>
@@ -804,7 +827,7 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                                 {cb ? (
                                     <>
                                         {([
-                                            ['Land & related', (cb.earthwork * 0.44) + 2000000, 'Equity'],
+                                            ['Land & related', (uw.actualLandPurchaseCost || cb.earthwork * 0.4) + (uw.stampDutyAndLegalFees || cb.earthwork * 0.04) + 2000000, 'Equity'],
                                             ['Construction', cb.structure + cb.finishing + cb.services + (cb.earthwork * 0.2), 'Bank loan + Equity'],
                                             ['Professional fees', 1.95 * 10000000, 'Equity'],
                                             ['Approvals', 0.45 * 10000000, 'Equity'],
@@ -912,8 +935,8 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 <p className="text-[10px] font-bold mb-1">DSCR Calculation Framework:</p>
                 <p className="text-[9px] mb-2 text-slate-600">DSCR = Net Operating Income ÷ Total Debt Service &nbsp;|&nbsp; Minimum bank requirement: <strong>1.25×</strong></p>
                 {(() => {
-                    // Interest per year: loan * 10% avg, spread over 3 construction years
-                    const interestRate = 0.10;
+                    // Interest per year: loan * target interest avg, spread over 3 construction years
+                    const interestRate = (uw?.targetInterestRate || 10) / 100;
                     const constructionYears = 3;
                     // Operating income = Net Cash Inflow from sales - construction outflow (before debt service)
                     // Using the same inflow/outflow ratios as cash flow table above
@@ -982,20 +1005,32 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 <p className="text-[10px] font-bold mb-1">Impact on Project IRR</p>
                 <table className="w-full border-collapse mb-1"><thead><tr><TH>Variable</TH><TH>Change</TH><TH>Impact on IRR</TH><TH>Risk Level</TH></tr></thead>
                     <tbody>
-                        {([
-                            ['Sales Price', '-10%', 'IRR drops to 18%', 'High risk', 'text-orange-600'],
-                            ['Sales Price', '-20%', 'IRR drops to 8%', 'Critical risk', 'text-red-600'],
-                            ['Construction Cost', '+10%', 'IRR drops to 22%', 'Medium risk', 'text-yellow-700'],
-                            ['Construction Cost', '+20%', 'IRR drops to 16%', 'High risk', 'text-orange-600'],
-                            ['Sales Timeline', '+6 months delay', 'IRR drops to 20%', 'Medium risk', 'text-yellow-700'],
-                            ['Sales Timeline', '+12 months delay', 'IRR drops to 14%', 'High risk', 'text-orange-600'],
-                            ['Interest Rate', '+2%', 'IRR drops to 24%', 'Low risk', 'text-green-700'],
-                        ] as [string, string, string, string, string][]).map(([v, ch, imp, risk, c], i) => (
-                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
-                                <TD className="font-semibold">{v}</TD><TD>{ch}</TD><TD>{imp}</TD>
-                                <TD className={`font-bold ${c}`}>{risk}</TD>
-                            </tr>
-                        ))}
+                        {(() => {
+                            // Simplified IRR proxies based on dynamic base ROI
+                            const baseIrr = roi > 0 ? roi * 0.8 : 30; // rough proxy for IRR from absolute ROI
+                            const pPriceDrop10 = Math.max(0, baseIrr - 12);
+                            const pPriceDrop20 = Math.max(0, baseIrr - 22);
+                            const pCostRise10 = Math.max(0, baseIrr - 8);
+                            const pCostRise20 = Math.max(0, baseIrr - 14);
+                            const pDelay6 = Math.max(0, baseIrr - 10);
+                            const pDelay12 = Math.max(0, baseIrr - 16);
+                            const pRateRise2 = Math.max(0, baseIrr - 6);
+
+                            return [
+                                ['Sales Price', '-10%', `IRR drops to ~${pPriceDrop10.toFixed(0)}%`, 'High risk', 'text-orange-600'],
+                                ['Sales Price', '-20%', `IRR drops to ~${pPriceDrop20.toFixed(0)}%`, 'Critical risk', 'text-red-600'],
+                                ['Construction Cost', '+10%', `IRR drops to ~${pCostRise10.toFixed(0)}%`, 'Medium risk', 'text-yellow-700'],
+                                ['Construction Cost', '+20%', `IRR drops to ~${pCostRise20.toFixed(0)}%`, 'High risk', 'text-orange-600'],
+                                ['Sales Timeline', '+6 months delay', `IRR drops to ~${pDelay6.toFixed(0)}%`, 'Medium risk', 'text-yellow-700'],
+                                ['Sales Timeline', '+12 months delay', `IRR drops to ~${pDelay12.toFixed(0)}%`, 'High risk', 'text-orange-600'],
+                                ['Interest Rate', '+2%', `IRR drops to ~${pRateRise2.toFixed(0)}%`, 'Low risk', 'text-green-700'],
+                            ].map(([v, ch, imp, risk, c], i) => (
+                                <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                    <TD className="font-semibold">{v}</TD><TD>{ch}</TD><TD>{imp}</TD>
+                                    <TD className={`font-bold ${c}`}>{risk}</TD>
+                                </tr>
+                            ));
+                        })()}
                     </tbody>
                 </table>
                 <div className="bg-slate-50 border border-slate-200 p-2 rounded mb-3 text-[9px]">

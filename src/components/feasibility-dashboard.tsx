@@ -23,10 +23,12 @@ import {
     DeliveryPhasesChart, StandardTimelineChart,
     SimBoxPlot, SimScatterCostTime, CriticalPathProbabilityChart
 } from './simulation-charts';
+import { exportProjectToExcel } from '@/lib/export-to-excel';
 import { generateDeliveryPhases } from '@/lib/cost-time-simulation';
 import { ProjectEstimates } from '@/lib/types';
 import { FeasibilityReport } from './feasibility-report';
 import { UnderwritingReport } from './underwriting-report';
+import { ProjectUnderwritingForm } from './project-underwriting-form';
 
 function MetricsTab() {
     const activeProject = useProjectData();
@@ -1763,6 +1765,8 @@ export function FeasibilityDashboard() {
     const { uiState, projects, activeProjectId } = useBuildingStore();
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [reportType, setReportType] = useState<'feasibility' | 'underwriting'>('feasibility');
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+    const [plannedReportType, setPlannedReportType] = useState<'feasibility' | 'underwriting'>('feasibility');
     const isOpen = uiState.isFeasibilityPanelOpen ?? true;
     const plots = useBuildingStore(state => state.plots);
     const selectedPlot = useSelectedPlot();
@@ -1862,22 +1866,28 @@ export function FeasibilityDashboard() {
                         <Badge variant="secondary" className="text-xs font-normal">KPIs & Regulations</Badge>
                     </div>
                     <div className="flex items-center gap-1">
-                        {/* <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={handleExportData}>
-                            Download Data
-                        </Button> */}
+                        {isOpen && (
+                            <Button variant="outline" size="sm" className="h-8 px-2 text-xs border-green-200 text-green-700 bg-green-50 hover:bg-green-100 hover:text-green-800 print:hidden" onClick={() => {
+                                if (activeProject && selectedPlot) {
+                                  exportProjectToExcel(activeProject, selectedPlot, metricsForSim, simEstimates, generationParams);
+                                }
+                            }}>
+                                Export Data (Excel)
+                            </Button>
+                        )}
                         {isOpen && (
                             <>
                             <Button
                                 variant={reportType === 'feasibility' ? 'default' : 'outline'}
                                 size="sm" className="h-8 px-2 text-xs print:hidden"
-                                onClick={() => { setReportType('feasibility'); setTimeout(() => window.print(), 100); }}
+                                onClick={() => { setPlannedReportType('feasibility'); setIsExportModalOpen(true); }}
                             >
                                 Feasibility Report
                             </Button>
                             <Button
                                 variant={reportType === 'underwriting' ? 'default' : 'outline'}
                                 size="sm" className="h-8 px-2 text-xs print:hidden"
-                                onClick={() => { setReportType('underwriting'); setTimeout(() => window.print(), 100); }}
+                                onClick={() => { setPlannedReportType('underwriting'); setIsExportModalOpen(true); }}
                             >
                                 Underwriting Report
                             </Button>
@@ -1943,7 +1953,7 @@ export function FeasibilityDashboard() {
             </Card>
             
             {/* Print-only Report Wrapper */}
-            <div className="hidden print:block absolute inset-0 z-[9999] bg-white print:overflow-visible print:h-auto print:static">
+            <div id="report-print-container" className="hidden print:block absolute inset-0 z-[9999] bg-white print:overflow-visible print:h-auto print:static">
                 {activeProject && selectedPlot && reportType === 'feasibility' && (
                     <FeasibilityReport project={activeProject} plot={selectedPlot} metrics={metricsForSim} estimates={simEstimates} generationParams={generationParams} />
                 )}
@@ -1951,6 +1961,68 @@ export function FeasibilityDashboard() {
                     <UnderwritingReport project={activeProject} plot={selectedPlot} metrics={metricsForSim} estimates={simEstimates} generationParams={generationParams} />
                 )}
             </div>
+
+            {/* Underwriting Form Modal */}
+            {activeProject && (
+                <ProjectUnderwritingForm
+                    project={activeProject}
+                    isOpen={isExportModalOpen}
+                    reportType={plannedReportType}
+                    onClose={() => setIsExportModalOpen(false)}
+                    onSave={(data) => {
+                        useBuildingStore.getState().actions.updateProject(activeProject.id, { underwriting: data });
+                    }}
+                    onContinueToPrint={() => {
+                        // 1. Close modal
+                        setIsExportModalOpen(false);
+                        // 2. Set the report type so the report component mounts
+                        setReportType(plannedReportType);
+                        // 3. Wait for report to render, then open in new tab
+                        setTimeout(() => {
+                            const reportEl = document.getElementById('report-print-container');
+                            if (!reportEl) return;
+
+                            const reportName = plannedReportType === 'feasibility' ? 'Feasibility Report' : 'Underwriting Report';
+                            const title = `${activeProject.name || 'Keystone'} - ${reportName}`;
+
+                            // Open new tab
+                            const printWindow = window.open('', '_blank');
+                            if (!printWindow) return;
+
+                            // Copy all stylesheets from the main page
+                            const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
+                                .map(el => el.outerHTML).join('\n');
+
+                            printWindow.document.write(`
+                                <!DOCTYPE html>
+                                <html>
+                                <head>
+                                    <title>${title}</title>
+                                    ${styles}
+                                    <style>
+                                        body { background: white !important; margin: 0; }
+                                        @media print {
+                                            body { background: white !important; }
+                                        }
+                                    </style>
+                                </head>
+                                <body>
+                                    ${reportEl.innerHTML}
+                                </body>
+                                </html>
+                            `);
+                            printWindow.document.close();
+
+                            // Wait for styles to load then print
+                            printWindow.onload = () => {
+                                setTimeout(() => printWindow.print(), 500);
+                            };
+                            // Fallback if onload already fired
+                            setTimeout(() => printWindow.print(), 2000);
+                        }, 1500);
+                    }}
+                />
+            )}
         </div>
     );
 }
