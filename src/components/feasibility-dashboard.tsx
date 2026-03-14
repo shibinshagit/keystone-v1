@@ -23,7 +23,6 @@ import {
     DeliveryPhasesChart, StandardTimelineChart,
     SimBoxPlot, SimScatterCostTime, CriticalPathProbabilityChart
 } from './simulation-charts';
-import { exportProjectToExcel } from '@/lib/export-to-excel';
 import { generateDeliveryPhases } from '@/lib/cost-time-simulation';
 import { ProjectEstimates } from '@/lib/types';
 import { FeasibilityReport } from './feasibility-report';
@@ -1866,15 +1865,9 @@ export function FeasibilityDashboard() {
                         <Badge variant="secondary" className="text-xs font-normal">KPIs & Regulations</Badge>
                     </div>
                     <div className="flex items-center gap-1">
-                        {isOpen && (
-                            <Button variant="outline" size="sm" className="h-8 px-2 text-xs border-green-200 text-green-700 bg-green-50 hover:bg-green-100 hover:text-green-800 print:hidden" onClick={() => {
-                                if (activeProject && selectedPlot) {
-                                  exportProjectToExcel(activeProject, selectedPlot, metricsForSim, simEstimates, generationParams);
-                                }
-                            }}>
-                                Export Data (Excel)
-                            </Button>
-                        )}
+                        {/* <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={handleExportData}>
+                            Download Data
+                        </Button> */}
                         {isOpen && (
                             <>
                             <Button
