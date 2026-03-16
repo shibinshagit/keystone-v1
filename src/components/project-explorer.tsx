@@ -286,11 +286,30 @@ export function ProjectExplorer({ className, embedded = false }: { className?: s
     const activeProject = useBuildingStore(s => s.projects.find(p => p.id === s.activeProjectId));
     const { regulations } = useGreenRegulations(activeProject as unknown as Project);
     const metrics = useDevelopmentMetrics(activeProject as any);
-    const currentCert = activeProject?.greenCertification?.[0] || null;
-    const handleRegulationChange = (value: string) => {
-        if (activeProject) {
-            actions.updateProject(activeProject.id, { greenCertification: [value as any] });
+    const currentCertRaw = activeProject?.greenCertification?.[0] || null;
+
+    // Normalize displayed certification type: support both storing a doc id (from create dialog)
+    // or storing the simple type string ('IGBC'|'GRIHA'|'LEED'). Prefer explicit type when available.
+    const normalizedCertType: string | null = React.useMemo(() => {
+        if (!currentCertRaw) return null;
+        const simple = String(currentCertRaw).toUpperCase();
+        if (['IGBC', 'GRIHA', 'LEED'].includes(simple)) return simple;
+        // Try to resolve from fetched green regulations (they include certificationType)
+        if (regulations && regulations.length > 0) {
+            const found = regulations.find((r: any) => r.id === currentCertRaw || String(r.id) === String(currentCertRaw));
+            if (found && found.certificationType) return String(found.certificationType).toUpperCase();
+            // maybe the stored id contains the type as substring (e.g., 'griha-v2')
+            const match = regulations.find((r: any) => String(r.certificationType || '').toUpperCase() === simple || String(r.name || '').toUpperCase().includes(simple));
+            if (match && match.certificationType) return String(match.certificationType).toUpperCase();
         }
+        // fallback: return raw value
+        return String(currentCertRaw);
+    }, [currentCertRaw, regulations]);
+
+    const handleRegulationChange = (value: string) => {
+        if (!activeProject) return;
+        // Preserve existing behavior: store the selected simple type (single-selection)
+        actions.updateProject(activeProject.id, { greenCertification: [value as any] });
     };
 
     const Container = embedded ? 'div' : Card;
@@ -314,29 +333,22 @@ export function ProjectExplorer({ className, embedded = false }: { className?: s
                             <Ghost className="h-3.5 w-3.5" />
                         </Button>
                     </div>
-                    {/* Certification toggles (IGBC / GRIHA / LEED) — updates project greenCertification */}
-                    <div className="mt-2 flex items-center gap-2">
-                        {['IGBC', 'GRIHA', 'LEED'].map(cert => {
-                            const isSelected = currentCert && currentCert.toLowerCase().includes(cert.toLowerCase());
-                            return (
-                                <div key={cert} className="flex items-center gap-2">
-                                    <Button
-                                        size="sm"
-                                        variant={isSelected ? 'default' : 'outline'}
-                                        onClick={() => {
-                                            if (!activeProject) return;
-                                            if (isSelected) actions.updateProject(activeProject.id, { greenCertification: [] });
-                                            else actions.updateProject(activeProject.id, { greenCertification: [cert as any] });
-                                        }}
-                                    >
-                                        {cert}
+                    {/* Selected certification (read-only) — show chosen cert and score; allow clearing */}
+                    <div className="mt-2">
+                        <div className="text-xs text-muted-foreground">Green Certification</div>
+                        {normalizedCertType ? (
+                            <div className="mt-1 flex items-center gap-3">
+                                <div className="font-semibold text-sm">{normalizedCertType}</div>
+                                <div className="text-xs text-muted-foreground">Score: <span className="font-bold ml-1">{metrics?.compliance?.green ?? '--'}</span></div>
+                                {activeProject && (
+                                    <Button size="sm" variant="ghost" onClick={() => actions.updateProject(activeProject.id, { greenCertification: [] })}>
+                                        Clear
                                     </Button>
-                                    {isSelected && (
-                                        <div className="text-xs text-muted-foreground">Score: <span className="font-bold ml-1">{metrics?.compliance?.green ?? '--'}</span></div>
-                                    )}
-                                </div>
-                            );
-                        })}
+                                )}
+                            </div>
+                        ) : (
+                            <div className="mt-1 text-xs text-muted-foreground">None selected</div>
+                        )}
                     </div>
                 </div>
                 <div className={cn("flex-1 overflow-hidden", embedded ? "" : "p-0")}>
