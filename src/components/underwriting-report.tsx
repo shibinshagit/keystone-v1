@@ -806,53 +806,132 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 )}
 
                 <SH2>5.2 Funding Structure</SH2>
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <p className="font-bold text-[10px] mb-1">Sources of Funds</p>
-                        <table className="w-full border-collapse mb-1"><thead><tr><TH>Source</TH><TH>Amount (₹ Cr)</TH><TH>%</TH></tr></thead>
-                            <tbody>
-                                <tr className="bg-slate-50"><TD className="font-semibold">Promoter&apos;s Equity</TD><TD>{crore(equityAmount)}</TD><TD>{pct((1 - loanPct) * 100)}</TD></tr>
-                                <tr><TD className="pl-4">Land (asset)</TD><TD>{cb ? crore((uw.actualLandPurchaseCost || cb.earthwork * 0.4) + (uw.stampDutyAndLegalFees || cb.earthwork * 0.04) + 2000000) : '—'}</TD><TD>—</TD></tr>
-                                <tr><TD className="pl-4">Cash equity</TD><TD>{cb ? crore(equityAmount - ((uw.actualLandPurchaseCost || cb.earthwork * 0.4) + (uw.stampDutyAndLegalFees || cb.earthwork * 0.04) + 2000000)) : '—'}</TD><TD>—</TD></tr>
-                                <tr><TD className="font-semibold">Bank Term Loan</TD><TD>{crore(loanAmount)}</TD><TD>{pct(loanPct * 100)}</TD></tr>
-                                <tr className="bg-slate-100 font-bold"><TD>TOTAL SOURCES</TD><TD>{crore(totalCost)}</TD><TD>100%</TD></tr>
-                            </tbody>
-                        </table>
-                        <p className="text-[9px] mb-3"><strong>Debt-Equity Ratio:</strong> {equityAmount > 0 ? (loanAmount / equityAmount).toFixed(2) : '—'}:1 <span className="text-green-700">(Healthy, below 1:1)</span></p>
-                    </div>
-                    <div>
-                        <p className="font-bold text-[10px] mb-1">Uses of Funds</p>
-                        <table className="w-full border-collapse mb-3"><thead><tr><TH>Application</TH><TH>Amount (₹ Cr)</TH><TH>%</TH><TH>Funding Source</TH></tr></thead>
-                            <tbody>
-                                {cb ? (
-                                    <>
-                                        {([
-                                            ['Land & related', (uw.actualLandPurchaseCost || cb.earthwork * 0.4) + (uw.stampDutyAndLegalFees || cb.earthwork * 0.04) + 2000000, 'Equity'],
-                                            ['Construction', cb.structure + cb.finishing + cb.services + (cb.earthwork * 0.2), 'Bank loan + Equity'],
-                                            ['Professional fees', 1.95 * 10000000, 'Equity'],
-                                            ['Approvals', 0.45 * 10000000, 'Equity'],
-                                            ['Marketing & sales', 3.4 * 10000000, 'Equity + Loan'],
-                                            ['Finance costs', 4.8 * 10000000, 'Loan + Equity'],
-                                            ['Contingency', cb.contingency, 'Equity'],
-                                            ['GST', 1.5 * 10000000, 'Loan'],
-                                            ['Working capital', 0.61 * 10000000, 'Equity']
-                                        ] as [string, number, string][]).map(([app, amt, src], i) => (
-                                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
-                                                <TD>{app}</TD>
-                                                <TD>{crore(amt)}</TD>
-                                                <TD>{pct(amt / totalCost * 100)}</TD>
-                                                <TD className="text-[9px]">{src}</TD>
+                {(() => {
+                    // ── Lakh helpers ──
+                    const L = (n: number) => (n / 100000).toFixed(2);
+                    const pL = (n: number, total: number) => total > 0 ? ((n / total) * 100).toFixed(2) + '%' : '—';
+
+                    // ── Land costs from form ──
+                    const landCost   = uw.actualLandPurchaseCost   || 0;
+                    const stampDuty  = uw.stampDutyAndLegalFees     || 0;
+                    const landTotal  = landCost + stampDuty;
+
+                    // ── Equity sub-breakdown ──
+                    const cashEquity = Math.max(0, equityAmount - landTotal);
+
+                    // ── Uses: derive from cost_breakdown or fallback % of totalCost ──
+                    const constructionAmt  = cb ? (cb.structure + cb.finishing + cb.services + cb.earthwork * 0.2) : totalCost * 0.555;
+                    const professionalAmt  = totalCost * 0.0297;
+                    const approvalsAmt     = totalCost * 0.0069;
+                    const marketingAmt     = totalCost * 0.0519;
+                    const financeAmt       = loanAmount * (targetInterestRate / 100) * (loanTenure / 12);
+                    const contingencyAmt   = cb?.contingency || totalCost * 0.0465;
+                    const gstAmt           = totalCost * 0.0229;
+                    const workingCapAmt    = totalCost * 0.0093;
+
+                    const usesTotal = landTotal + constructionAmt + professionalAmt + approvalsAmt + marketingAmt + financeAmt + contingencyAmt + gstAmt + workingCapAmt;
+                    const grandTotal = totalCost || usesTotal;
+
+                    const deRatio = equityAmount > 0 ? (loanAmount / equityAmount) : 0;
+                    const deHealthy = deRatio <= 1.0;
+
+                    const sourceRows: [string, number, string, string][] = [
+                        ["Promoter's Equity",    equityAmount, pL(equityAmount, grandTotal), 'To be infused in Phases 0-1'],
+                        ['  Land (existing asset)', landTotal,  landTotal > 0 ? pL(landTotal, grandTotal) : '—',             'Already owned/to be acquired'],
+                        ['  Cash equity',           cashEquity, cashEquity > 0 ? pL(cashEquity, grandTotal) : '—',           'Fresh infusion required'],
+                        ['Bank Term Loan',          loanAmount, pL(loanAmount, grandTotal),  'Subject to conditions'],
+                        ['  Requested loan amount', loanAmount, pL(loanAmount, grandTotal),  'Milestone-based disbursement'],
+                    ];
+
+                    const usesRows: [string, number, string][] = [
+                        ['Land & related',      landTotal,        'Promoter\'s equity'],
+                        ['Construction',        constructionAmt,  'Bank loan + Equity'],
+                        ['Professional fees',   professionalAmt,  'Equity'],
+                        ['Approvals',           approvalsAmt,     'Equity'],
+                        ['Marketing & sales',   marketingAmt,     'Equity + Loan'],
+                        ['Finance costs',       financeAmt,       'Loan + Equity'],
+                        ['Contingency',         contingencyAmt,   'Equity'],
+                        ['GST',                 gstAmt,           'Loan'],
+                        ['Working capital',     workingCapAmt,    'Equity'],
+                    ];
+
+                    return (
+                        <>
+                            {/* Sources of Funds */}
+                            <p className="font-bold text-[10px] mb-1">Sources of Funds</p>
+                            <table className="w-full border-collapse mb-2">
+                                <thead>
+                                    <tr>
+                                        <TH>Source</TH>
+                                        <TH>Amount (₹ Lakhs)</TH>
+                                        <TH>% of Total</TH>
+                                        <TH>Terms &amp; Conditions</TH>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sourceRows.map(([src, amt, pct, terms], i) => {
+                                        const isSubRow = src.startsWith('  ');
+                                        const isBold = !isSubRow;
+                                        return (
+                                            <tr key={i} className={isSubRow ? '' : 'bg-slate-50'}>
+                                                <TD className={isSubRow ? 'pl-6 text-slate-600' : 'font-semibold'}>
+                                                    {src.trimStart()}
+                                                </TD>
+                                                <TD>{amt > 0 ? L(amt) : '—'}</TD>
+                                                <TD>{amt > 0 ? pct : '—'}</TD>
+                                                <TD className="text-slate-600">{terms}</TD>
                                             </tr>
-                                        ))}
-                                    </>
-                                ) : (
-                                    <tr><TD colSpan={4} className="text-center italic">Pending estimates</TD></tr>
-                                )}
-                                <tr className="bg-slate-100 font-bold"><TD>TOTAL USES</TD><TD>{crore(totalCost)}</TD><TD>100%</TD><TD className="text-[9px]"> </TD></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                                        );
+                                    })}
+                                    <tr className="bg-slate-100 font-bold">
+                                        <TD className="font-semibold">TOTAL SOURCES</TD>
+                                        <TD>{L(grandTotal)}</TD>
+                                        <TD>100.00%</TD>
+                                        <TD> </TD>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <p className="text-[9px] mb-4">
+                                <strong>Debt-Equity Ratio:</strong>{' '}
+                                {equityAmount > 0 ? `${deRatio.toFixed(2)}:1` : '—'}{' '}
+                                <span className={deHealthy ? 'text-green-700' : 'text-red-600'}>
+                                    ({deHealthy
+                                        ? 'Healthy ratio, below regulatory threshold of 1:1 for most banks'
+                                        : 'High leverage — above 1:1, lender scrutiny expected'})
+                                </span>
+                            </p>
+
+                            {/* Uses of Funds */}
+                            <p className="font-bold text-[10px] mb-1">Uses of Funds</p>
+                            <table className="w-full border-collapse mb-3">
+                                <thead>
+                                    <tr>
+                                        <TH>Application</TH>
+                                        <TH>Amount (₹ Lakhs)</TH>
+                                        <TH>% of Total</TH>
+                                        <TH>Funding Source</TH>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {usesRows.map(([app, amt, src], i) => (
+                                        <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                            <TD>{app}</TD>
+                                            <TD>{amt > 0 ? L(amt) : '—'}</TD>
+                                            <TD>{amt > 0 ? pL(amt, grandTotal) : '—'}</TD>
+                                            <TD className="text-[9px]">{src}</TD>
+                                        </tr>
+                                    ))}
+                                    <tr className="bg-slate-100">
+                                        <TD className="font-semibold">TOTAL USES</TD>
+                                        <TD className="font-semibold">{L(grandTotal)}</TD>
+                                        <TD className="font-semibold">100.00%</TD>
+                                        <TD> </TD>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </>
+                    );
+                })()}
 
                 <SH2>5.3 Revenue Analysis</SH2>
                 <p className="text-[10px] font-bold mb-1">Base Case Scenario:</p>
@@ -1044,23 +1123,70 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                     </ol>
                 </div>
 
-                <SH2>5.7 Break-Even Analysis (Unit-Level)</SH2>
-                <div className="grid grid-cols-2 gap-4">
-                    <table className="w-full border-collapse mb-3 h-fit"><thead><tr><TH>Parameter</TH><TH>Value</TH></tr></thead>
-                        <tbody>
-                            <tr className="bg-slate-50"><TD>Total Fixed Costs</TD><TD>{crore(totalCost * 0.3)} (est)</TD></tr>
-                            <tr><TD>Variable Cost / Unit</TD><TD>{crore((totalCost * 0.7) / Math.max(1, totalUnits))}</TD></tr>
-                            <tr className="bg-slate-50"><TD>Selling Price / Unit</TD><TD>{crore(avgUnitPrice)}</TD></tr>
-                            <tr className="bg-slate-100 font-bold"><TD>Break-even Units</TD><TD>{breakEvenUnits} units</TD></tr>
-                            <tr className="bg-slate-100 font-bold"><TD>Break-even %</TD><TD>{totalUnits > 0 ? pct(breakEvenUnits / totalUnits * 100) : '—'}</TD></tr>
-                        </tbody>
-                    </table>
-                    <div className="bg-slate-50 p-2 border border-slate-200 rounded text-[9px] flex flex-col justify-center">
-                        <p className="mb-2"><strong>Interpretation:</strong> Project becomes profitable after selling {breakEvenUnits} out of {totalUnits} units.</p>
-                        <p className="mb-2">With projected 31% pre-sales ({Math.round(totalUnits * 0.31)} units), an additional {Math.max(0, breakEvenUnits - Math.round(totalUnits * 0.31))} units are needed to break even.</p>
-                        <p><strong>Time-Based Break-Even:</strong> Expected achievement around Month 18. Cash break-even estimated Month 24.</p>
-                    </div>
-                </div>
+                <SH2>5.7 Break-Even Analysis</SH2>
+                {(() => {
+                    const L = (n: number) => `₹${(n / 100000).toFixed(2)} lakhs`;
+
+                    // Fixed costs = land + professional fees + approvals + marketing + overhead
+                    const fixedCosts = totalCost * (0.2044 + 0.0297 + 0.0069 + 0.0519 + 0.0093);
+                    // Variable cost = construction + contingency + GST per unit
+                    const variableCostPerUnit = totalUnits > 0 ? (totalCost * (0.5553 + 0.0465 + 0.0229)) / totalUnits : 0;
+                    const sellingPricePerUnit = avgUnitPrice;
+                    const contributionPerUnit = sellingPricePerUnit - variableCostPerUnit;
+                    // BEU = Fixed costs / Contribution per unit
+                    const beu = contributionPerUnit > 0 ? Math.ceil(fixedCosts / contributionPerUnit) : breakEvenUnits;
+                    const beuPct = totalUnits > 0 ? (beu / totalUnits) * 100 : 0;
+
+                    // Pre-sales assumption: 31% of units (adjustable via underwriting data later)
+                    const preSalesPct = 0.31;
+                    const preSalesUnits = Math.round(totalUnits * preSalesPct);
+                    const additionalNeeded = Math.max(0, beu - preSalesUnits);
+
+                    // Time-based break-even
+                    const beMonth = totalMonths > 0 ? Math.round(totalMonths * 0.5) : 18;
+                    const cashBeMonth = totalMonths > 0 ? Math.round(totalMonths * 0.65) : 24;
+                    const bePctIntoProject = totalMonths > 0 ? ((beMonth / totalMonths) * 100).toFixed(0) : '50';
+
+                    const rows: [string, string][] = [
+                        ['Total fixed costs',      fixedCosts > 0          ? L(fixedCosts)           : '—'],
+                        ['Variable cost per unit', variableCostPerUnit > 0 ? L(variableCostPerUnit)  : '—'],
+                        ['Selling price per unit', sellingPricePerUnit > 0 ? L(sellingPricePerUnit)  : '—'],
+                        ['Contribution per unit',  contributionPerUnit > 0 ? L(contributionPerUnit)  : '—'],
+                        ['Break-even units',       `${beu} units`],
+                        ['Break-even %',           `${beuPct.toFixed(0)}%`],
+                    ];
+
+                    return (
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <p className="font-bold text-[10px] mb-1">Unit-Level Break-Even:</p>
+                                <table className="w-full border-collapse mb-3 h-fit">
+                                    <thead><tr><TH>Parameter</TH><TH>Value</TH></tr></thead>
+                                    <tbody>
+                                        {rows.map(([param, val], i) => {
+                                            const isBold = param.startsWith('Break-even');
+                                            return (
+                                                <tr key={i} className={isBold ? 'bg-slate-100' : i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                                    <TD className={isBold ? 'font-semibold' : ''}>{param}</TD>
+                                                    <TD className={isBold ? 'font-semibold' : ''}>{val}</TD>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div className="bg-slate-50 p-2 border border-slate-200 rounded text-[9px] flex flex-col justify-center gap-2">
+                                <p><strong>Interpretation:</strong> Project becomes profitable after selling{' '}
+                                    <strong>{beu} out of {totalUnits}</strong> units.</p>
+                                <p>With projected {(preSalesPct * 100).toFixed(0)}% pre-sales (<strong>{preSalesUnits} units</strong>),
+                                    additional <strong>{additionalNeeded} units</strong> needed to break even.</p>
+                                <p className="mt-1 font-semibold">Time-Based Break-Even:</p>
+                                <p>Expected break-even achievement: <strong>Month {beMonth}</strong> ({bePctIntoProject}% into project)</p>
+                                <p>Cash break-even: <strong>Month {cashBeMonth}</strong> (when cumulative inflow exceeds outflow)</p>
+                            </div>
+                        </div>
+                    );
+                })()}
             </div>
             <PageBreak />
 
@@ -1657,40 +1783,80 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 <SH2 className="!mt-1">8.1 Primary Security Package</SH2>
                 <p className="font-bold text-[10px] mb-1">A. Land &amp; Building Mortgage</p>
                 {(() => {
-                    const landVal = plotArea * 60000 / 10000000;
-                    const buildVal = totalRev / 10000000;
-                    const totalSec = landVal + buildVal;
-                    const landCovPct = loanAmount > 0 ? (landVal * 10000000 / loanAmount * 100).toFixed(0) : '—';
-                    const totCov = loanAmount > 0 ? (totalSec * 10000000 / loanAmount).toFixed(2) : '—';
+                    // Land value: prefer actual cost from form, else estimate from plot area at ₹60k/sqm
+                    const landCostFromForm = (uw.actualLandPurchaseCost || 0) + (uw.stampDutyAndLegalFees || 0);
+                    const landValRaw  = landCostFromForm > 0 ? landCostFromForm : plotArea * 60000;
+                    const buildValRaw = totalRev > 0 ? totalRev : totalCost * 1.3;
+                    const wipValRaw   = totalCost * 0.4; // ~40% of construction cost as progressive WIP
+                    const totalSecRaw = landValRaw + buildValRaw;
+
+                    const fsvMultiplier = 0.75; // FSV = 75% of market value
+                    const landFSV  = landValRaw  * fsvMultiplier;
+                    const buildFSV = buildValRaw * fsvMultiplier;
+                    const totalFSV = totalSecRaw * fsvMultiplier;
+
+                    const landCovPct  = loanAmount > 0 ? ((landFSV  / loanAmount) * 100).toFixed(0) + '%' : '—';
+                    const buildCovStr = loanAmount > 0 ? `${(buildFSV / loanAmount).toFixed(2)}x` : '—';
+                    const totCovStr   = loanAmount > 0 ? `${(totalFSV / loanAmount).toFixed(2)}x` : '—';
+                    const totCovPct   = loanAmount > 0 ? ((totalFSV / loanAmount) * 100).toFixed(0) + '%' : '—';
+
+                    // Receivable flow: divide project timeline into yearly buckets
+                    const projectYears = Math.max(2, Math.ceil(totalMonths / 12));
+                    // Revenue distribution: front-loaded (31%, 38%, then remainder spread evenly)
+                    const revFracs: number[] = [];
+                    if (projectYears === 2)      { revFracs.push(0.55, 0.45); }
+                    else if (projectYears === 3) { revFracs.push(0.38, 0.43, 0.19); }
+                    else {
+                        revFracs.push(0.31, 0.38);
+                        const remaining = 1 - 0.69;
+                        for (let y = 2; y < projectYears; y++) {
+                            revFracs.push(remaining / (projectYears - 2));
+                        }
+                    }
+                    const cumPreSold = [31, 69, 92, 100];
+                    let cum = 0;
+
                     return (
                         <>
-                            <table className="w-full border-collapse mb-1 text-[9px]"><thead><tr>
-                                <TH>Security Component</TH><TH>Description</TH><TH>Est. Value</TH><TH>Security Coverage</TH>
-                            </tr></thead>
+                            <p className="font-bold text-[9px] mb-1 text-slate-600">Security Details:</p>
+                            <table className="w-full border-collapse mb-1 text-[9px]">
+                                <thead><tr>
+                                    <TH>Security Component</TH>
+                                    <TH>Description</TH>
+                                    <TH>Value</TH>
+                                    <TH>Margin</TH>
+                                    <TH>Security Coverage</TH>
+                                </tr></thead>
                                 <tbody>
                                     <tr className="bg-slate-50">
                                         <TD className="font-semibold">Land (Freehold)</TD>
-                                        <TD>{fmt(plotArea)} sq.m</TD>
-                                        <TD>{crore(landVal * 10000000)}</TD>
-                                        <TD>{landCovPct}% of loan</TD>
+                                        <TD>{fmt(plotArea)} sq.m{typeof plot.location === 'string' && plot.location ? ` in ${plot.location}` : ''}</TD>
+                                        <TD>{crore(landValRaw)}</TD>
+                                        <TD>-</TD>
+                                        <TD>{landCovPct} of loan</TD>
                                     </tr>
                                     <tr>
                                         <TD className="font-semibold">Building (Under Construction)</TD>
-                                        <TD>{totalUnits} apartments, {fmt(builtUp * 10.764)} sq.ft</TD>
-                                        <TD>{crore(buildVal * 10000000)} (progressive)</TD>
-                                        <TD>{loanAmount > 0 ? `${(buildVal * 10000000 / loanAmount).toFixed(2)}x of loan (at completion)` : '—'}</TD>
+                                        <TD>{totalUnits} apartments, ~{fmt(builtUp * 10.764)} sq.ft</TD>
+                                        <TD>{crore(buildValRaw)} (progressive)</TD>
+                                        <TD>-</TD>
+                                        <TD>{buildCovStr} of loan (at completion)</TD>
                                     </tr>
                                     <tr className="bg-slate-50">
                                         <TD className="font-semibold">Construction WIP</TD>
                                         <TD>Work-in-progress value</TD>
-                                        <TD>Progressive</TD>
+                                        <TD>Progressive (~{crore(wipValRaw)} mid)</TD>
+                                        <TD>-</TD>
                                         <TD>Growing security</TD>
                                     </tr>
                                     <tr className="bg-slate-100 font-bold">
                                         <TD>Total Primary Security</TD>
                                         <TD>Land + Building + WIP</TD>
-                                        <TD>{crore(totalSec * 10000000)} (at completion)</TD>
-                                        <TD className="text-green-700">{totCov}x coverage</TD>
+                                        <TD>{crore(totalSecRaw)} (at completion)</TD>
+                                        <TD>{totCovPct}</TD>
+                                        <TD className={parseFloat(totCovStr) >= 1.5 ? 'text-green-700' : 'text-orange-600'}>
+                                            {totCovStr} coverage
+                                        </TD>
                                     </tr>
                                 </tbody>
                             </table>
@@ -1698,22 +1864,26 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                                 <div className="bg-slate-50 border border-slate-200 p-2">
                                     <p className="font-bold mb-1">Valuation Requirements:</p>
                                     <ul className="list-disc pl-3 space-y-0.5 text-slate-700">
-                                        <li>By bank's approved valuer (Category-I)</li>
-                                        <li>Land: Comparable sale method</li>
-                                        <li>Building: Cost + Depreciation / Market value</li>
-                                        <li>Revaluation: Annual during construction</li>
-                                        <li>FSV: 75% of market value</li>
-                                        <li>Min cover: 1.5x on FSV basis</li>
+                                        <li><strong>Independent Valuation:</strong> By bank's approved valuer (Category-I)</li>
+                                        <li><strong>Land:</strong> Comparable sale method</li>
+                                        <li><strong>Building:</strong> Cost + Depreciation or Market value</li>
+                                        <li>Revaluation: Annual basis during construction</li>
+                                        <li><strong>Forced Sale Value (FSV):</strong> 75% of market value</li>
+                                        <li>Security Cover: Minimum 1.5x of loan on FSV basis</li>
                                     </ul>
                                 </div>
                                 <div className="bg-slate-50 border border-slate-200 p-2">
-                                    <p className="font-bold mb-1">Mortgage Type &amp; Title Conditions:</p>
+                                    <p className="font-bold mb-1">Mortgage Type:</p>
                                     <ul className="list-disc pl-3 space-y-0.5 text-slate-700">
                                         <li><strong>Initial:</strong> Equitable mortgage (deposit of title deeds)</li>
-                                        <li><strong>Upon Title Clarity:</strong> Registered mortgage within 120 days</li>
-                                        <li>Registration: Sub-Registrar + ROC CHG-1 + CERSAI</li>
-                                        <li>Clear, marketable &amp; transferable title required</li>
+                                        <li><strong>Upon Title Clarity:</strong> Registered mortgage within 120 days of disbursement</li>
+                                        <li>Registration: Sub-Registrar + ROC (Form CHG-1) + CERSAI</li>
+                                    </ul>
+                                    <p className="font-bold mt-1 mb-0.5">Title Conditions:</p>
+                                    <ul className="list-disc pl-3 space-y-0.5 text-slate-700">
+                                        <li>Clear, marketable &amp; transferable title</li>
                                         <li>No prior charges or encumbrances</li>
+                                        <li>Legal opinion confirming title</li>
                                         <li>Title insurance recommended</li>
                                     </ul>
                                 </div>
@@ -1723,9 +1893,10 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                 })()}
 
                 <p className="font-bold text-[10px] mb-1">B. Assignment of Project Receivables</p>
-                <table className="w-full border-collapse mb-1 text-[9px]"><thead><tr>
-                    <TH>Receivable Type</TH><TH>Assignment Mechanism</TH><TH>Collection Method</TH>
-                </tr></thead>
+                <table className="w-full border-collapse mb-1 text-[9px]">
+                    <thead><tr>
+                        <TH>Receivable Type</TH><TH>Assignment Mechanism</TH><TH>Collection Method</TH>
+                    </tr></thead>
                     <tbody>
                         <tr className="bg-slate-50"><TD className="font-semibold">Customer Installments</TD><TD>Absolute assignment to bank</TD><TD>Tripartite agreement (Buyer-Bank-Builder)</TD></tr>
                         <tr><TD className="font-semibold">Customer Loan Disbursements</TD><TD>Direct routing to project account</TD><TD>Escrow arrangement</TD></tr>
@@ -1733,29 +1904,56 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                         <tr><TD className="font-semibold">Insurance Claims</TD><TD>All project insurance policies</TD><TD>Bank as loss payee/beneficiary</TD></tr>
                     </tbody>
                 </table>
+                <div className="bg-slate-50 border border-slate-200 rounded p-2 text-[9px] mb-2">
+                    <p className="font-bold mb-1">Tripartite Agreement Terms:</p>
+                    <ul className="list-disc pl-3 space-y-0.5 text-slate-700">
+                        <li>All customer payments route through escrow account</li>
+                        <li>Bank holds first lien on receivables</li>
+                        <li>Borrower can withdraw only as per approved schedule</li>
+                        <li>Undisbursed customer advances held as security</li>
+                    </ul>
+                </div>
                 {(() => {
-                    const yr = [0.31, 0.38, 0.23, 0.08];
+                    const projectYears = Math.max(2, Math.ceil(totalMonths / 12));
+                    const revFracs: number[] = [];
+                    if (projectYears === 2)      { revFracs.push(0.55, 0.45); }
+                    else if (projectYears === 3) { revFracs.push(0.38, 0.43, 0.19); }
+                    else {
+                        revFracs.push(0.31, 0.38);
+                        const remaining = 1 - 0.69;
+                        for (let y = 2; y < projectYears; y++) {
+                            revFracs.push(remaining / (projectYears - 2));
+                        }
+                    }
+                    const preSoldCum = projectYears === 2
+                        ? [55, 100]
+                        : projectYears === 3
+                            ? [38, 81, 100]
+                            : [31, 69, 92, 100];
                     let cum = 0;
                     return (
-                        <table className="w-full border-collapse mb-3 text-[9px]"><thead><tr>
-                            <TH>Year</TH><TH>Customer Collections (Est.)</TH><TH>% Pre-sold</TH><TH>Cumulative Receivables</TH>
-                        </tr></thead>
-                            <tbody>
-                                {yr.map((frac, i) => {
-                                    const annual = totalRev * frac;
-                                    cum += annual;
-                                    const preSold = [31, 69, 92, 100][i];
-                                    return (
-                                        <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
-                                            <TD className="font-semibold">Year {i + 1}</TD>
-                                            <TD>{crore(annual)}</TD>
-                                            <TD>{preSold}%</TD>
-                                            <TD className="font-semibold">{crore(cum)}</TD>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
+                        <>
+                            <p className="font-bold text-[9px] mb-1 text-slate-600">Expected Receivable Flow:</p>
+                            <table className="w-full border-collapse mb-3 text-[9px]">
+                                <thead><tr>
+                                    <TH>Year</TH><TH>Customer Collections</TH><TH>% Pre-sold</TH><TH>Cumulative Receivables</TH>
+                                </tr></thead>
+                                <tbody>
+                                    {revFracs.map((frac, i) => {
+                                        const annual = totalRev * frac;
+                                        cum += annual;
+                                        return (
+                                            <tr key={i} className={i % 2 === 0 ? 'bg-slate-50' : ''}>
+                                                <TD className="font-semibold">Year {i + 1}</TD>
+                                                <TD>{crore(annual)}</TD>
+                                                <TD>{preSoldCum[i] ?? 100}%</TD>
+                                                <TD className="font-semibold">{crore(cum)}</TD>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </>
                     );
                 })()}
             </div>
@@ -2574,8 +2772,8 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                             <ul className="list-disc pl-3 mb-2 space-y-0.5 text-green-800">
                                 <li>Customer payments route through escrow</li>
                                 <li>Debt servicing from sales proceeds</li>
-                                <li>Target: 70% loan repayment by month {totalMonths}</li>
-                                <li>Final 30% by month {totalMonths + 6}</li>
+                                <li>Target: 70% loan repayment by month {Math.max(12, loanTenure - 6)}</li>
+                                <li>Final 30% by month {loanTenure}</li>
                             </ul>
                             <p className="font-semibold text-green-800 underline mb-0.5">Security Release:</p>
                             <ul className="list-disc pl-3 space-y-0.5 text-green-800">
@@ -2643,9 +2841,9 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                             <table className="w-full mt-2 border border-red-200">
                                 <thead className="bg-red-100 text-[7px]"><tr><TH colSpan={3} className="border-b border-red-200">Recovery Timeline Estimates</TH></tr></thead>
                                 <tbody>
-                                    <tr className="border-b border-red-200"><TD className="font-bold">Normal</TD><TD>42-48 months</TD><TD className="italic">As per original plan</TD></tr>
-                                    <tr className="border-b border-red-200"><TD className="font-bold">Stressed</TD><TD>54-60 months</TD><TD className="italic">With restructuring</TD></tr>
-                                    <tr><TD className="font-bold">NPA</TD><TD>72+ months</TD><TD className="italic">Via legal recovery</TD></tr>
+                                    <tr className="border-b border-red-200"><TD className="font-bold">Normal</TD><TD>{loanTenure}-{loanTenure + 6} months</TD><TD className="italic">As per original plan</TD></tr>
+                                    <tr className="border-b border-red-200"><TD className="font-bold">Stressed</TD><TD>{loanTenure + 12}-{loanTenure + 18} months</TD><TD className="italic">With restructuring</TD></tr>
+                                    <tr><TD className="font-bold">NPA</TD><TD>{loanTenure + 30}+ months</TD><TD className="italic">Via legal recovery</TD></tr>
                                 </tbody>
                             </table>
                         </div>

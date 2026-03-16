@@ -5,7 +5,7 @@ import { Feature, Polygon, Point } from 'geojson';
  * Configuration for Vastu Center calculation.
  * Set to 'centroid' or 'centerOfMass'.
  */
-export const VASTU_CENTER_METHOD: 'centroid' | 'centerOfMass' = 'centroid';
+export const VASTU_CENTER_METHOD: 'centroid' | 'centerOfMass' = 'centerOfMass';
 
 /**
  * Returns the Vastu center point for a given geometry based on the configured method.
