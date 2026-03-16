@@ -41,17 +41,14 @@ function BuildingProperties() {
     //     actions.rotateBuilding(selectedPlot.id, selectedBuilding.id, angle);
     // };
     const handleRotate = (angle: number) => {
-    if (angle === 0) return;
+        if (angle === 0) return;
 
-    const newAngle =
-        (selectedBuilding.alignmentRotation ?? 0) + angle;
-
-    actions.rotateBuilding(
-        selectedPlot.id,
-        selectedBuilding.id,
-        newAngle
-    );
-};
+        actions.rotateBuilding(
+            selectedPlot.id,
+            selectedBuilding.id,
+            angle
+        );
+    };
 
     const handleRestoreRotation = () => {
         actions.restoreBuilding(selectedPlot.id, selectedBuilding.id);

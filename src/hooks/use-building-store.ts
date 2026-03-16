@@ -379,6 +379,10 @@ const rotateBuildingFromSnapshot = (building: Building, angle: number) => {
         rotation,
         { pivot }
     );
+    building.geometry.properties = {
+        ...(building.geometry.properties || {}),
+        alignmentRotation: rotation,
+    };
     building.centroid = turf.transformRotate(
         building.originalCentroid,
         rotation,
@@ -872,8 +876,11 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         if (!building || !building.geometry) return;
 
                         const nextRotation = normalizeRotation((building.alignmentRotation ?? 0) + angle);
+
                         rotateBuildingFromSnapshot(building, nextRotation);
                     }));
+
+                    get().actions.recalculateGreenAreas(plotId);
                 },
                 restoreBuilding: (plotId: string, buildingId: string) => {
                     set(produce((draft: BuildingState) => {
@@ -884,6 +891,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                         restoreBuildingRotationSnapshot(building);
                     }));
+
+                    get().actions.recalculateGreenAreas(plotId);
                 },
         // setMapLocation: Moved to bottom
         // loadProjects: Moved to bottom
@@ -6410,5 +6419,3 @@ const useProjectData = () => {
 }
 
 export { useBuildingStore, useSelectedBuilding, useProjectData, useSelectedPlot };
-
-

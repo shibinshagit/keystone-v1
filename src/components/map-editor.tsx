@@ -64,6 +64,54 @@ const getBuildingColor = (use: string | BuildingIntendedUse) => {
   return '#9E9E9E'; // Grey default
 };
 
+const createBuildingFrontMarker = (
+  geometry: Feature<Polygon | MultiPolygon> | Polygon | MultiPolygon,
+  centroid: Feature<Point>,
+  facingBearing: number,
+  roofBaseHeight: number
+) => {
+  try {
+    const geomFeature = geometry?.type === 'Feature' ? geometry as Feature<Polygon | MultiPolygon> : turf.feature(geometry);
+    const boundary = turf.polygonToLine(geomFeature as any);
+    const center = centroid.geometry.coordinates as [number, number];
+    const probe = turf.destination(center, 200, facingBearing, { units: 'meters' });
+    const ray = turf.lineString([center, probe.geometry.coordinates as [number, number]]);
+    const intersections = turf.lineIntersect(ray as any, boundary as any);
+
+    if (!intersections.features.length) return null;
+
+    const hit = intersections.features
+      .map((feature) => ({
+        point: feature,
+        distance: turf.distance(center, feature.geometry.coordinates as [number, number], { units: 'meters' }),
+      }))
+      .filter(({ distance }) => distance > 0.1)
+      .sort((a, b) => a.distance - b.distance)[0];
+
+    if (!hit) return null;
+
+    const dims = planarDimensions(geomFeature as any);
+    const halfWidth = Math.max(2, Math.min(dims.width, dims.length) * 0.18);
+    const depth = Math.max(1.5, Math.min(dims.width, dims.length) * 0.08);
+    const frontLeft = turf.destination(hit.point, halfWidth, facingBearing + 90, { units: 'meters' });
+    const frontRight = turf.destination(hit.point, halfWidth, facingBearing - 90, { units: 'meters' });
+    const backLeft = turf.destination(frontLeft, depth, facingBearing + 180, { units: 'meters' });
+    const backRight = turf.destination(frontRight, depth, facingBearing + 180, { units: 'meters' });
+
+    return turf.polygon([[
+      frontLeft.geometry.coordinates as [number, number],
+      frontRight.geometry.coordinates as [number, number],
+      backRight.geometry.coordinates as [number, number],
+      backLeft.geometry.coordinates as [number, number],
+      frontLeft.geometry.coordinates as [number, number],
+    ]], {
+      base_height: roofBaseHeight,
+      height: roofBaseHeight + 1.6,
+    });
+  } catch {
+    return null;
+  }
+};
 
 interface MapEditorProps {
   onMapReady?: () => void;
@@ -2683,7 +2731,7 @@ useEffect(() => {
             }
           }
 
-          if (building.units && floorsToRender) {
+        if (building.units && floorsToRender) {
             const layerId = `units-${building.id}`;
             renderedIds.add(layerId);
 
@@ -2745,6 +2793,44 @@ useEffect(() => {
             } else {
               mapInstance.setPaintProperty(layerId, 'fill-extrusion-opacity', unitOpacity);
               mapInstance.setPaintProperty(layerId, 'fill-extrusion-color', ['get', 'color']);
+            }
+          }
+
+          const frontMarkerSourceId = `building-front-${building.id}`;
+          const frontMarkerLayerId = `building-front-${building.id}`;
+          renderedIds.add(frontMarkerSourceId);
+          renderedIds.add(frontMarkerLayerId);
+
+          const frontMarker = building.centroid
+            ? createBuildingFrontMarker(
+                building.geometry as any,
+                building.centroid as Feature<Point>,
+                building.alignmentRotation ?? (building.geometry as any)?.properties?.alignmentRotation ?? 0,
+                visualBuildingTop + 0.2
+              )
+            : null;
+
+          if (frontMarker) {
+            const frontSource = mapInstance.getSource(frontMarkerSourceId) as GeoJSONSource;
+            if (frontSource) frontSource.setData(frontMarker as any);
+            else mapInstance.addSource(frontMarkerSourceId, { type: 'geojson', data: frontMarker as any });
+
+            const isSelected = selectedObjectId?.type === 'Building' && selectedObjectId.id === building.id;
+            if (!mapInstance.getLayer(frontMarkerLayerId)) {
+              mapInstance.addLayer({
+                id: frontMarkerLayerId,
+                type: 'fill-extrusion',
+                source: frontMarkerSourceId,
+                paint: {
+                  'fill-extrusion-color': isSelected ? '#f59e0b' : '#f8fafc',
+                  'fill-extrusion-base': ['get', 'base_height'],
+                  'fill-extrusion-height': ['get', 'height'],
+                  'fill-extrusion-opacity': isSelected ? 0.98 : 0.9,
+                }
+              }, LABELS_LAYER_ID);
+            } else {
+              mapInstance.setPaintProperty(frontMarkerLayerId, 'fill-extrusion-color', isSelected ? '#f59e0b' : '#f8fafc');
+              mapInstance.setPaintProperty(frontMarkerLayerId, 'fill-extrusion-opacity', isSelected ? 0.98 : 0.9);
             }
           }
 
@@ -3295,7 +3381,7 @@ useEffect(() => {
     if (currentStyle && currentStyle.layers) {
       currentStyle.layers.forEach(layer => {
         const layerId = layer.id;
-        const isManagedByPlots = layerId.startsWith('plot-') || layerId.startsWith('building-') || layerId.startsWith('building-floor-fill-') || layerId.startsWith('building-slab-') || layerId.startsWith('green-') || layerId.startsWith('parking-') || layerId.startsWith('buildable-') || layerId.startsWith('util-') || layerId.startsWith('utility-area-') || layerId.startsWith('core-') || layerId.startsWith('unit-') || layerId.startsWith('units-') || layerId.startsWith('cores-') || layerId.startsWith('electrical-') || layerId.startsWith('hvac-') || layerId.startsWith('gates-');
+        const isManagedByPlots = layerId.startsWith('plot-') || layerId.startsWith('building-') || layerId.startsWith('building-floor-fill-') || layerId.startsWith('building-slab-') || layerId.startsWith('building-front-') || layerId.startsWith('green-') || layerId.startsWith('parking-') || layerId.startsWith('buildable-') || layerId.startsWith('util-') || layerId.startsWith('utility-area-') || layerId.startsWith('core-') || layerId.startsWith('unit-') || layerId.startsWith('units-') || layerId.startsWith('cores-') || layerId.startsWith('electrical-') || layerId.startsWith('hvac-') || layerId.startsWith('gates-');
 
         if (isManagedByPlots && !renderedIds.has(layerId) && layerId !== LABELS_LAYER_ID) {
           if (mapInstance.getLayer(layerId)) mapInstance.removeLayer(layerId);
@@ -3305,7 +3391,7 @@ useEffect(() => {
 
     if (currentStyle && currentStyle.sources) {
       Object.keys(currentStyle.sources).forEach(sourceId => {
-        const isManagedByPlots = sourceId.startsWith('plot-') || sourceId.startsWith('building-') || sourceId.startsWith('building-floor-fill-') || sourceId.startsWith('building-slab-') || sourceId.startsWith('green-') || sourceId.startsWith('parking-') || sourceId.startsWith('buildable-') || sourceId.startsWith('util-') || sourceId.startsWith('utility-area-') || sourceId.startsWith('core-') || sourceId.startsWith('unit-') || sourceId.startsWith('units-') || sourceId.startsWith('cores-') || sourceId.startsWith('electrical-') || sourceId.startsWith('hvac-') || sourceId.startsWith('gates-');
+        const isManagedByPlots = sourceId.startsWith('plot-') || sourceId.startsWith('building-') || sourceId.startsWith('building-floor-fill-') || sourceId.startsWith('building-slab-') || sourceId.startsWith('building-front-') || sourceId.startsWith('green-') || sourceId.startsWith('parking-') || sourceId.startsWith('buildable-') || sourceId.startsWith('util-') || sourceId.startsWith('utility-area-') || sourceId.startsWith('core-') || sourceId.startsWith('unit-') || sourceId.startsWith('units-') || sourceId.startsWith('cores-') || sourceId.startsWith('electrical-') || sourceId.startsWith('hvac-') || sourceId.startsWith('gates-');
 
         if (isManagedByPlots && !renderedIds.has(sourceId) && sourceId !== LABELS_SOURCE_ID) {
           const style = mapInstance.getStyle();
