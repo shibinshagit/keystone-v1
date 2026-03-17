@@ -927,6 +927,57 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
     const roi_p10 = sim.cost_p90 > 0 ? (profit_p10 / sim.cost_p90) * 100 : 0;
     const roi_p90 = sim.cost_p10 > 0 ? (profit_p90 / sim.cost_p10) * 100 : 0;
 
+    // ----- New: Additional Site Cost Components (Road, Parking, Boundary Wall) -----
+    // We'll read plot/metric data directly so these values auto-update with project changes.
+    const project = useProjectData();
+    const metrics = useDevelopmentMetrics(project || null);
+
+    // Areas and perimeter (safely handle missing geometry)
+    const roadArea = metrics?.roadArea || 0; // m² (engine provides roadArea when utilityAreas include Roads)
+    const parkingArea = (project?.plots || []).flatMap(p => p.parkingAreas || []).reduce((s, pa) => s + (pa.area || 0), 0);
+    const totalPerimeter = (project?.plots || []).reduce((s, p) => {
+        try {
+            // Ensure we compute the polygon outer ring length (meters) reliably
+            const coords = (p.geometry as any)?.geometry?.coordinates?.[0];
+            if (!coords || coords.length === 0) return s;
+            const line = turf.lineString(coords);
+            const len = turf.length(line as any, { units: 'meters' }) || 0;
+            return s + len;
+        } catch (e) { return s; }
+    }, 0);
+
+    // Rate state (user-adjustable within required ranges)
+    const [roadRate, setRoadRate] = React.useState<number>(7000); // ₹/m² (5k-10k)
+    const [parkingRate, setParkingRate] = React.useState<number>(7000); // ₹/m² (5k-10k)
+    const [boundaryRate, setBoundaryRate] = React.useState<number>(10000); // ₹/m (9k-12k)
+
+    // Clear display variables to avoid accidental binding mixups
+    const displayRoadArea = Math.round(roadArea || 0);
+    const displayParkingArea = Math.round(parkingArea || 0);
+    const displayPerimeter = Math.round(totalPerimeter || 0);
+
+    // Clamp helper to avoid out-of-range values
+    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
+    // Calculations (reactive)
+    const roadMin = Math.round(5000 * roadArea);
+    const roadMax = Math.round(10000 * roadArea);
+
+    const parkingMin = Math.round(5000 * parkingArea);
+    const parkingMax = Math.round(10000 * parkingArea);
+
+    const boundaryMin = Math.round(9000 * totalPerimeter);
+    const boundaryMax = Math.round(12000 * totalPerimeter);
+
+    const formatToCr = (value: number) => {
+    return `${(value / 10000000).toFixed(2)} Cr`;
+    };
+
+    // Adjust simulated totals to include these site-level costs for display
+    const adj_cost_p10 = sim ? (sim.cost_p10 + roadMin + parkingMin + boundaryMin) : 0;
+    const adj_cost_p50 = sim ? (sim.cost_p50 + roadMin + parkingMin + boundaryMin) : 0;
+    const adj_cost_p90 = sim ? (sim.cost_p90 + roadMin + parkingMin + boundaryMin) : 0;
+
     return (
         <div className="space-y-4 pb-4">
 
@@ -1032,6 +1083,136 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
                 })()}
             </div>
 
+            {/* New: Site-Level Additional Costs */}
+            {/* <div className="rounded-lg border p-3 bg-secondary/10 border-border/30">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">Site-level Costs</div>
+                <div className="grid grid-cols-3 gap-5 text-xs">
+                    <div className="col-span-3 md:col-span-1 flex flex-col gap-3">
+                        <div>
+                            <div className="text-[11px] text-muted-foreground mb-1">Road Cost</div>
+                            <div className="flex items-center gap-3">
+                                <input aria-label="road-rate" type="number" min={5000} max={10000} value={roadRate} onChange={e => setRoadRate(Number(e.target.value))}
+                                    className="w-[110px] rounded border px-2 py-1 text-sm text-black bg-white" />
+                                <div className="text-sm font-semibold" data-qa="road-value">{displayRoadArea.toLocaleString()} <span className="text-xs text-muted-foreground ml-1">m²</span></div>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground italic mt-1">Unit: ₹/m² (5,000–10,000)</div>
+                        </div>
+                        <div className="rounded p-2 bg-secondary/20 border border-border/20">
+                            <div className="text-xs text-muted-foreground">Road Cost</div>
+                            <div className="font-bold">₹{roadCost.toLocaleString()}</div>
+                        </div>
+                    </div>
+
+                    <div className="col-span-3 md:col-span-1 flex flex-col gap-3">
+                        <div>
+                            <div className="text-[11px] text-muted-foreground mb-1">Parking Cost</div>
+                            <div className="flex items-center gap-3">
+                                <input aria-label="parking-rate" type="number" min={5000} max={10000} value={parkingRate} onChange={e => setParkingRate(Number(e.target.value))}
+                                    className="w-[110px] rounded border px-2 py-1 text-sm text-black bg-white" />
+                                <div className="text-sm font-semibold" data-qa="parking-value">{displayParkingArea.toLocaleString()} <span className="text-xs text-muted-foreground ml-1">m²</span></div>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground italic mt-1">Unit: ₹/m² (5,000–10,000)</div>
+                        </div>
+                        <div className="rounded p-2 bg-secondary/20 border border-border/20">
+                            <div className="text-xs text-muted-foreground">Parking Cost</div>
+                            <div className="font-bold">₹{parkingCost.toLocaleString()}</div>
+                        </div>
+                    </div>
+
+                    <div className="col-span-3 md:col-span-1 flex flex-col gap-3">
+                        <div>
+                            <div className="text-[11px] text-muted-foreground mb-1">Boundary Wall</div>
+                            <div className="flex items-center gap-3">
+                                <input aria-label="boundary-rate" type="number" min={9000} max={12000} value={boundaryRate} onChange={e => setBoundaryRate(Number(e.target.value))}
+                                    className="w-[110px] rounded border px-2 py-1 text-sm text-black bg-white" />
+                                <div className="text-base font-semibold" data-qa="boundary-value">
+                                    {displayPerimeter.toLocaleString()} <span className="text-xs font-normal text-muted-foreground ml-1">m</span></div>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground italic mt-1">Unit: ₹/m (9,000–12,000)</div>
+                        </div>
+                        <div className="rounded p-2 bg-secondary/20 border border-border/20">
+                            <div className="text-xs text-muted-foreground">Boundary Wall</div>
+                            <div className="font-bold">₹{boundaryCost.toLocaleString()}</div>
+                        </div>
+                    </div>
+                </div>
+            </div> */}
+            
+            <div className="rounded-lg border p-3 bg-secondary/10 border-border/30">
+    <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-2">
+        Site-level Costs
+    </div>
+
+    <div className="grid grid-cols-3 gap-5 text-xs">
+
+        {/* Road */}
+        <div className="col-span-3 md:col-span-1 flex flex-col gap-3">
+            <div>
+                <div className="text-[11px] text-muted-foreground mb-1">Road Cost (Range)</div>
+                <div className="flex items-center gap-3">
+                    <div className="text-sm font-semibold" data-qa="road-value">
+                        {displayRoadArea.toLocaleString()}
+                        <span className="text-xs text-muted-foreground ml-1">m²</span>
+                    </div>
+                </div>
+
+                <div className="text-[11px] text-muted-foreground italic mt-1">
+                    Unit: ₹/m² (5,000–10,000)
+                </div>
+            </div>
+
+            <div className="rounded p-2 bg-secondary/20 border border-border/20">
+                <div className="text-xs text-muted-foreground">Road Cost</div>
+                <div className="font-bold">{formatToCr(roadMin)} – {formatToCr(roadMax)}</div>
+            </div>
+        </div>
+
+        {/* Parking */}
+        <div className="col-span-3 md:col-span-1 flex flex-col gap-3">
+            <div>
+                <div className="text-[11px] text-muted-foreground mb-1">Parking Cost (Range)</div>
+                <div className="flex items-center gap-3">
+                    <div className="text-sm font-semibold" data-qa="parking-value">
+                        {displayParkingArea.toLocaleString()}
+                        <span className="text-xs text-muted-foreground ml-1">m²</span>
+                    </div>
+                </div>
+
+                <div className="text-[11px] text-muted-foreground italic mt-1">
+                    Unit: ₹/m² (5,000–10,000)
+                </div>
+            </div>
+
+            <div className="rounded p-2 bg-secondary/20 border border-border/20">
+                <div className="text-xs text-muted-foreground">Parking Cost</div>
+                <div className="font-bold">{formatToCr(parkingMin)} – {formatToCr(parkingMax)}</div>
+            </div>
+        </div>
+
+        {/* Boundary */}
+        <div className="col-span-3 md:col-span-1 flex flex-col gap-3">
+            <div>
+                <div className="text-[11px] text-muted-foreground mb-1">Boundary Wall (Range)</div>
+                <div className="flex items-center gap-3">
+                    <div className="text-sm font-semibold" data-qa="boundary-value">
+                        {displayPerimeter.toLocaleString()}
+                        <span className="text-xs text-muted-foreground ml-1">m</span>
+                    </div>
+                </div>
+
+                <div className="text-[11px] text-muted-foreground italic mt-1">
+                    Unit: ₹/m (9,000–12,000)
+                </div>
+            </div>
+
+            <div className="rounded p-2 bg-secondary/20 border border-border/20">
+                <div className="text-xs text-muted-foreground">Boundary Wall</div>
+                <div className="font-bold">{formatToCr(boundaryMin)} – {formatToCr(boundaryMax)}</div>
+            </div>
+        </div>
+
+    </div>
+</div>
             {/* S-Curve Cash-Flow Band */}
             {sim && (
                 <SimSCurveBand
@@ -1063,16 +1244,25 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
                     <div className="grid grid-cols-3 gap-2">
                         <div className="p-2 rounded bg-slate-600/20 border border-slate-500/20 text-center">
                             <div className="text-[10px] text-muted-foreground">P10 (Optimistic)</div>
-                            <div className="text-sm font-bold text-slate-300">{fmtCr(sim.cost_p10)}</div>
+                            <div className="text-sm font-bold text-slate-300">{fmtCr(adj_cost_p10 || sim.cost_p10)}</div>
                         </div>
                         <div className="p-2 rounded bg-slate-600/20 border border-slate-500/20 text-center">
                             <div className="text-[10px] text-muted-foreground">P50 (Expected)</div>
-                            <div className="text-sm font-bold text-slate-300">{fmtCr(sim.cost_p50)}</div>
+                            <div className="text-sm font-bold text-slate-300">{fmtCr(adj_cost_p50 || sim.cost_p50)}</div>
                         </div>
                         <div className="p-2 rounded bg-slate-600/20 border border-slate-500/20 text-center">
                             <div className="text-[10px] text-muted-foreground">P90 (Pessimistic)</div>
-                            <div className="text-sm font-bold text-slate-300">{fmtCr(sim.cost_p90)}</div>
+                            <div className="text-sm font-bold text-slate-300">{fmtCr(adj_cost_p90 || sim.cost_p90)}</div>
                         </div>
+                    </div>
+
+                    {/* Show added infra cost breakdown */}
+                    <div className="mt-3 text-[11px] text-muted-foreground border-t border-border/10 pt-2">
+                        <div className="flex justify-between">
+                            <span>Additional Site Costs</span>
+                            {/* <span className="font-bold">₹{additionalInfraCost.toLocaleString()}</span> */}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground/70 italic mt-1">Includes Road, Parking & Boundary Wall estimates (user-adjustable rates)</div>
                     </div>
                 </div>
             )}
