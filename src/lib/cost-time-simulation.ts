@@ -291,6 +291,8 @@ interface UtilityInput {
     solarKW?: number;
     electricalKVA?: number;
     utilitiesPresent?: string[];
+    perBuildingBreakdown?: BuildingBreakdownInput[];
+    surfaceParkingArea?: number;
 }
 
 function calculateUtilityCosts(input: UtilityInput): { items: UtilityCostBreakdown[]; total: number } {
@@ -300,82 +302,217 @@ function calculateUtilityCosts(input: UtilityInput): { items: UtilityCostBreakdo
     // Default utility costs from standard reference if not provided
     const defaults = {
         ugt_pumping: 25000000,       // ₹2.5 crore
-        stp_per_kld: 20000,          // ₹20,000 per KLD
+        stp_per_kld: 50000,          // ₹50,000 per KLD
         wtp_cost: 2000000,           // ₹20 lakh
         transformer_per_kva: 10000,  // ₹10,000 per kVA
         dg_per_kva: 8000,            // ₹8,000 per kVA
         fire_fighting: 50000000,     // ₹5 crore
-        lifts_per_unit: 15000000,    // ₹1.5 crore per lift
+        lifts_per_unit: 4500000,     // ₹45 lakh per lift
         solar_per_kw: 52000,         // ₹52,000 per kW
         hvac_per_tr: 130000,         // ₹1.3 lakh per TR
+        owc_per_kg_per_day: 6000,    // ₹6,000 per kg/day
     };
 
     const u = {
         ugt_pumping: uc?.ugt_pumping ?? defaults.ugt_pumping,
+        ugt_pumping_min: uc?.ugt_pumping_min,
+        ugt_pumping_max: uc?.ugt_pumping_max,
+        
         stp_per_kld: uc?.stp_per_kld ?? defaults.stp_per_kld,
+        stp_per_kld_min: uc?.stp_per_kld_min,
+        stp_per_kld_max: uc?.stp_per_kld_max,
+        
         wtp_cost: uc?.wtp_cost ?? defaults.wtp_cost,
+        wtp_cost_min: uc?.wtp_cost_min,
+        wtp_cost_max: uc?.wtp_cost_max,
+        
         transformer_per_kva: uc?.transformer_per_kva ?? defaults.transformer_per_kva,
+        transformer_per_kva_min: uc?.transformer_per_kva_min,
+        transformer_per_kva_max: uc?.transformer_per_kva_max,
+        
         dg_per_kva: uc?.dg_per_kva ?? defaults.dg_per_kva,
+        dg_per_kva_min: uc?.dg_per_kva_min,
+        dg_per_kva_max: uc?.dg_per_kva_max,
+        
         fire_fighting: uc?.fire_fighting ?? defaults.fire_fighting,
+        fire_fighting_min: uc?.fire_fighting_min,
+        fire_fighting_max: uc?.fire_fighting_max,
+        
         lifts_per_unit: uc?.lifts_per_unit ?? defaults.lifts_per_unit,
+        lifts_per_unit_min: uc?.lifts_per_unit_min,
+        lifts_per_unit_max: uc?.lifts_per_unit_max,
+        
         solar_per_kw: uc?.solar_per_kw ?? defaults.solar_per_kw,
+        solar_per_kw_min: uc?.solar_per_kw_min,
+        solar_per_kw_max: uc?.solar_per_kw_max,
+        
         hvac_per_tr: uc?.hvac_per_tr ?? defaults.hvac_per_tr,
+        hvac_per_tr_min: uc?.hvac_per_tr_min,
+        hvac_per_tr_max: uc?.hvac_per_tr_max,
+        
+        owc_per_kg_per_day: uc?.owc_per_kg_per_day ?? defaults.owc_per_kg_per_day,
+        owc_per_kg_per_day_min: uc?.owc_per_kg_per_day_min,
+        owc_per_kg_per_day_max: uc?.owc_per_kg_per_day_max,
     };
 
     const hasUtility = (matches: string[]) => {
         if (!input.utilitiesPresent) return true;
-        return matches.some(m => input.utilitiesPresent!.some(u => u === m));
+        const normalizedMatches = matches.map(m => m.toLowerCase());
+        return input.utilitiesPresent.some(u => 
+            normalizedMatches.some(m => u.toLowerCase().includes(m))
+        );
+    };
+
+    const formatRange = (min: number, max: number, formatAs: 'Cr' | 'L' | 'Raw', suffix: string = '') => {
+        if (formatAs === 'Cr') return `₹${(min/10000000).toFixed(2)} - ₹${(max/10000000).toFixed(2)} Cr${suffix}`;
+        if (formatAs === 'L') return `₹${(min/100000).toFixed(1)} - ₹${(max/100000).toFixed(1)} L${suffix}`;
+        return `₹${min.toLocaleString('en-IN')} - ₹${max.toLocaleString('en-IN')}${suffix}`;
     };
 
     // UGT + Pumping (fixed cost) - Assume always required or basic site infrastructure
     if (hasUtility(['Water', 'UGT', 'WTP', 'STP'])) {
-        items.push({ label: 'UGT + Pumping', amount: u.ugt_pumping, unit: 'Fixed' });
+        items.push({ 
+            label: 'UGT + Pumping', amount: u.ugt_pumping, unit: 'Fixed',
+            rateRange: '₹1.50 - ₹4.00 Cr', minAmount: 15000000, maxAmount: 40000000 
+        });
     }
 
     // STP: estimate 150 liters/person/day, 1 person per 15sqm GFA → KLD ≈ GFA/15 * 150/1000
     if (hasUtility(['STP', 'Sewage'])) {
         const kld = (input.totalGFA / 15) * 150 / 1000;
-        items.push({ label: 'STP', amount: kld * u.stp_per_kld, unit: `${kld.toFixed(0)} KLD` });
+        items.push({ 
+            label: 'STP', amount: kld * u.stp_per_kld, unit: `${kld.toFixed(0)} KLD`,
+            rateRange: '₹25,000 - ₹75,000 / KLD', minAmount: kld * 25000, maxAmount: kld * 75000 
+        });
     }
 
     // WTP
     if (hasUtility(['WTP', 'Water'])) {
-        items.push({ label: 'WTP', amount: u.wtp_cost, unit: 'Fixed' });
+        items.push({ 
+            label: 'WTP', amount: u.wtp_cost, unit: 'Fixed',
+            rateRange: '₹10.0 - ₹30.0 L', minAmount: 1000000, maxAmount: 3000000 
+        });
     }
 
     // Transformer: estimate 20W/sqm → kVA ≈ GFA * 20 / 1000 / 0.8 PF
     const kva = input.electricalKVA ?? (input.totalGFA * 20 / 1000 / 0.8);
     if (hasUtility(['Transformer', 'Substation', 'Transformer Yard'])) {
-        items.push({ label: 'Transformer + HT', amount: kva * u.transformer_per_kva, unit: `${kva.toFixed(0)} kVA` });
+        items.push({ 
+            label: 'Transformer + HT', amount: kva * u.transformer_per_kva, unit: `${kva.toFixed(0)} kVA`,
+            rateRange: '₹8,000 - ₹12,000 / kVA', minAmount: kva * 8000, maxAmount: kva * 12000 
+        });
     }
 
     // DG Set: 30% of connected load as backup
     if (hasUtility(['DG Set'])) {
         const dgKva = kva * 0.3;
-        items.push({ label: 'DG Set', amount: dgKva * u.dg_per_kva, unit: `${dgKva.toFixed(0)} kVA` });
+        items.push({ 
+            label: 'DG Set', amount: dgKva * u.dg_per_kva, unit: `${dgKva.toFixed(0)} kVA`,
+            rateRange: '₹6,000 - ₹10,000 / kVA', minAmount: dgKva * 6000, maxAmount: dgKva * 10000 
+        });
     }
 
     // Fire Fighting
     if (hasUtility(['Fire Fighting', 'Fire'])) {
-        items.push({ label: 'Fire Fighting', amount: u.fire_fighting, unit: 'Fixed' });
+        items.push({ 
+            label: 'Fire Fighting', amount: u.fire_fighting, unit: 'Fixed',
+            rateRange: '₹3.00 - ₹8.00 Cr', minAmount: 30000000, maxAmount: 80000000 
+        });
     }
 
     // Lifts: estimate based on floors. If utilities array is present, only include if 'Lifts' or 'Core' is specifically generated.
     if (hasUtility(['Lifts', 'Core']) || (input.floors > 3 && !input.utilitiesPresent)) {
-        const numLifts = input.numLifts ?? Math.max(2, Math.ceil(input.floors / 8) * 2);
-        items.push({ label: 'Lifts', amount: numLifts * u.lifts_per_unit, unit: `${numLifts} lifts` });
+        let numLifts = 0;
+        if (input.numLifts) {
+            numLifts = input.numLifts;
+        } else if (input.perBuildingBreakdown && input.perBuildingBreakdown.length > 0) {
+            numLifts = input.perBuildingBreakdown.reduce((acc, b) => {
+                const bFloors = b.floors || 1;
+                // Only tall buildings need lifts
+                return acc + (bFloors > 3 ? Math.max(2, Math.ceil(bFloors / 8) * 2) : 0);
+            }, 0);
+            
+            // Fallback if no buildings are >3 floors but the overall max was >3 (edge case)
+            if (numLifts === 0 && input.floors > 3) {
+                numLifts = Math.max(2, Math.ceil(input.floors / 8) * 2);
+            }
+        } else {
+            numLifts = Math.max(2, Math.ceil(input.floors / 8) * 2);
+        }
+
+        if (numLifts > 0) {
+            const minR = u.lifts_per_unit_min ?? 3000000;
+            const maxR = u.lifts_per_unit_max ?? 5000000;
+            items.push({ 
+                label: 'Lifts', amount: numLifts * (u.lifts_per_unit ?? 4500000), unit: `${numLifts} lifts`,
+                rateRange: formatRange(minR, maxR, 'L', ' / lift'), minAmount: numLifts * minR, maxAmount: numLifts * maxR 
+            });
+        }
     }
 
-    // Solar: estimate 5W/sqm roof area (top floor area ≈ GFA/floors)
+    // Solar: estimate 5W/sqm roof area. Accurate roof area is the sum of all building footprints + surface parking areas.
     if (hasUtility(['Solar PV', 'Solar'])) {
-        const solarKW = input.solarKW ?? ((input.totalGFA / Math.max(1, input.floors)) * 5 / 1000);
-        items.push({ label: 'Solar PV', amount: solarKW * u.solar_per_kw, unit: `${solarKW.toFixed(0)} kW` });
+        let solarKW = 0;
+        if (input.solarKW) {
+            solarKW = input.solarKW;
+        } else if (input.perBuildingBreakdown && input.perBuildingBreakdown.length > 0) {
+            const totalRoofArea = input.perBuildingBreakdown.reduce((acc, b) => acc + ((b.gfa || 0) / Math.max(1, b.floors || 1)), 0);
+            const parkingArea = input.surfaceParkingArea || 0;
+            solarKW = (totalRoofArea + parkingArea) * 5 / 1000;
+        } else {
+            const parkingArea = input.surfaceParkingArea || 0;
+            solarKW = ((input.totalGFA / Math.max(1, input.floors)) + parkingArea) * 5 / 1000;
+        }
+
+        if (solarKW > 0) {
+            const minR = u.solar_per_kw_min ?? 45000;
+            const maxR = u.solar_per_kw_max ?? 75000;
+            items.push({ 
+                label: 'Solar PV', amount: solarKW * (u.solar_per_kw ?? 52000), unit: `${solarKW.toFixed(0)} kW`,
+                rateRange: formatRange(minR, maxR, 'Raw', ' / kW'), minAmount: solarKW * minR, maxAmount: solarKW * maxR 
+            });
+        }
     }
 
     // HVAC: estimate 1 TR per 200 sqft (18.6 sqm)
     if (hasUtility(['HVAC'])) {
-        const hvacTR = input.hvacTR ?? (input.totalGFA / 18.6);
-        items.push({ label: 'HVAC', amount: hvacTR * u.hvac_per_tr, unit: `${hvacTR.toFixed(0)} TR` });
+        let hvacTR = 0;
+        if (input.hvacTR) {
+            hvacTR = input.hvacTR;
+        } else if (input.perBuildingBreakdown && input.perBuildingBreakdown.length > 0 && input.utilitiesPresent) {
+            // Check if any specific building has HVAC assigned
+            const hvacGFA = input.perBuildingBreakdown.reduce((acc, b) => {
+                const bHasHvac = b.utilities?.includes('HVAC');
+                return acc + (bHasHvac ? (b.gfa || 0) : 0);
+            }, 0);
+            
+            // If specific buildings have HVAC, only calculate for those.
+            // Otherwise, if HVAC is placed functionally as a global plot utility, calculate for all buildings.
+            hvacTR = (hvacGFA > 0 ? hvacGFA : input.totalGFA) / 18.6;
+        } else {
+            hvacTR = input.totalGFA / 18.6;
+        }
+
+        if (hvacTR > 0) {
+            const minR = u.hvac_per_tr_min ?? 80000;
+            const maxR = u.hvac_per_tr_max ?? 200000;
+            items.push({ 
+                label: 'HVAC', amount: hvacTR * (u.hvac_per_tr ?? 130000), unit: `${hvacTR.toFixed(0)} TR`,
+                rateRange: formatRange(minR, maxR, 'Raw', ' / TR'), minAmount: hvacTR * minR, maxAmount: hvacTR * maxR 
+            });
+        }
+    }
+
+    // OWC: estimate 0.3 kg/person/day organic waste, 1 person per 15sqm GFA
+    if (hasUtility(['OWC', 'Organic Waste', 'Waste'])) {
+        const population = input.totalGFA / 15;
+        const wasteKgPerDay = population * 0.3;
+        const minR = u.owc_per_kg_per_day_min ?? 2000;
+        const maxR = u.owc_per_kg_per_day_max ?? 10000;
+        items.push({ 
+            label: 'OWC', amount: wasteKgPerDay * (u.owc_per_kg_per_day ?? 6000), unit: `${wasteKgPerDay.toFixed(0)} kg/day`,
+            rateRange: formatRange(minR, maxR, 'Raw', ' / kg/day'), minAmount: wasteKgPerDay * minR, maxAmount: wasteKgPerDay * maxR 
+        });
     }
 
     const total = items.reduce((s, it) => s + it.amount, 0);
@@ -560,6 +697,7 @@ interface BuildingBreakdownInput {
     };
     gfa?: number;
     floors?: number;
+    utilities?: string[];
 }
 
 /**
@@ -643,6 +781,7 @@ export interface RunSimulationInput {
     iterations?: number; 
     utilitiesPresent?: string[];
     perBuildingBreakdown?: BuildingBreakdownInput[];
+    surfaceParkingArea?: number;
 }
 
 export function runFullSimulation(input: RunSimulationInput): SimulationResults {
@@ -664,6 +803,8 @@ export function runFullSimulation(input: RunSimulationInput): SimulationResults 
         solarKW: input.solarKW,
         electricalKVA: input.electricalKVA,
         utilitiesPresent: input.utilitiesPresent,
+        perBuildingBreakdown: input.perBuildingBreakdown,
+        surfaceParkingArea: input.surfaceParkingArea,
     });
 
     // Simulate utility costs with ±20% triangular uncertainty per iteration

@@ -1,13 +1,13 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, deleteDoc, writeBatch, query, where } from 'firebase/firestore';
 import { DEFAULT_COST_PARAMETERS } from '@/lib/default-data/cost-parameters';
 import type { CostRevenueParameters } from '@/lib/types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from './ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { toast } from '@/hooks/use-toast';
@@ -444,33 +444,83 @@ export function CostRevenuePanel() {
                             <div className="space-y-4">
                                 <h4 className="text-sm font-semibold flex items-center gap-2">Utility Costs</h4>
                                 <div className="grid grid-cols-2 gap-4">
-                                    {[
-                                        { key: 'ugt_pumping', label: 'UGT + Pumping (Fixed, ₹)' },
-                                        { key: 'stp_per_kld', label: 'STP (₹ per KLD)' },
-                                        { key: 'wtp_cost', label: 'WTP (Fixed, ₹)' },
-                                        { key: 'transformer_per_kva', label: 'Transformer (₹/kVA)' },
-                                        { key: 'dg_per_kva', label: 'DG Set (₹/kVA)' },
-                                        { key: 'fire_fighting', label: 'Fire Fighting (Fixed, ₹)' },
-                                        { key: 'lifts_per_unit', label: 'Lifts (₹ per lift)' },
-                                        { key: 'solar_per_kw', label: 'Solar PV (₹/kW)' },
-                                        { key: 'hvac_per_tr', label: 'HVAC (₹/TR)' },
-                                    ].map(u => (
-                                        <div key={u.key} className="space-y-2">
-                                            <Label className="text-xs">{u.label}</Label>
-                                            <Input
-                                                type="number" className="h-8 text-sm"
-                                                value={formData.utility_costs?.[u.key as keyof typeof formData.utility_costs] || ''}
-                                                onChange={(e) => setFormData({
-                                                    ...formData,
-                                                    utility_costs: {
-                                                        ...formData.utility_costs,
-                                                        [u.key]: parseFloat(e.target.value) || undefined
-                                                    }
-                                                })}
-                                                disabled={!isEditing}
-                                            />
-                                        </div>
-                                    ))}
+                                    {(() => {
+                                        const defaultParam = DEFAULT_COST_PARAMETERS.find(p => p.location === formData.location && p.building_type === formData.building_type);
+                                        return [
+                                            { key: 'ugt_pumping', label: 'UGT + Pumping (Fixed, ₹)' },
+                                            { key: 'stp_per_kld', label: 'STP (₹ per KLD)' },
+                                            { key: 'wtp_cost', label: 'WTP (Fixed, ₹)' },
+                                            { key: 'transformer_per_kva', label: 'Transformer (₹/kVA)' },
+                                            { key: 'dg_per_kva', label: 'DG Set (₹/kVA)' },
+                                            { key: 'fire_fighting', label: 'Fire Fighting (Fixed, ₹)' },
+                                            { key: 'lifts_per_unit', label: 'Lifts (₹ per lift)' },
+                                            { key: 'solar_per_kw', label: 'Solar PV (₹/kW)' },
+                                            { key: 'hvac_per_tr', label: 'HVAC (₹/TR)' },
+                                            { key: 'owc_per_kg_per_day', label: 'OWC (₹/kg/day)' },
+                                        ].map(u => {
+                                            const dbVal = formData.utility_costs?.[u.key as keyof typeof formData.utility_costs];
+                                            const defVal = defaultParam?.utility_costs?.[u.key as keyof typeof formData.utility_costs];
+                                            
+                                            const dbValMin = formData.utility_costs?.[`${u.key}_min` as keyof typeof formData.utility_costs];
+                                            const defValMin = defaultParam?.utility_costs?.[`${u.key}_min` as keyof typeof formData.utility_costs];
+
+                                            const dbValMax = formData.utility_costs?.[`${u.key}_max` as keyof typeof formData.utility_costs];
+                                            const defValMax = defaultParam?.utility_costs?.[`${u.key}_max` as keyof typeof formData.utility_costs];
+
+                                            return (
+                                                <div key={u.key} className="space-y-2 p-3 border rounded-md bg-background/50">
+                                                    <Label className="text-xs font-semibold">{u.label}</Label>
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        <div className="space-y-1">
+                                                            <span className="text-[10px] text-muted-foreground block">Base</span>
+                                                            <Input
+                                                                type="number" className="h-7 text-xs"
+                                                                value={dbVal !== undefined ? dbVal : (defVal || '')}
+                                                                onChange={(e) => setFormData({
+                                                                    ...formData,
+                                                                    utility_costs: {
+                                                                        ...formData.utility_costs,
+                                                                        [u.key]: parseFloat(e.target.value) || undefined
+                                                                    }
+                                                                })}
+                                                                disabled={!isEditing}
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <span className="text-[10px] text-muted-foreground block">Min</span>
+                                                            <Input
+                                                                type="number" className="h-7 text-xs"
+                                                                value={dbValMin !== undefined ? dbValMin : (defValMin || '')}
+                                                                onChange={(e) => setFormData({
+                                                                    ...formData,
+                                                                    utility_costs: {
+                                                                        ...formData.utility_costs,
+                                                                        [`${u.key}_min`]: parseFloat(e.target.value) || undefined
+                                                                    }
+                                                                })}
+                                                                disabled={!isEditing}
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <span className="text-[10px] text-muted-foreground block">Max</span>
+                                                            <Input
+                                                                type="number" className="h-7 text-xs"
+                                                                value={dbValMax !== undefined ? dbValMax : (defValMax || '')}
+                                                                onChange={(e) => setFormData({
+                                                                    ...formData,
+                                                                    utility_costs: {
+                                                                        ...formData.utility_costs,
+                                                                        [`${u.key}_max`]: parseFloat(e.target.value) || undefined
+                                                                    }
+                                                                })}
+                                                                disabled={!isEditing}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        });
+                                    })()}
                                 </div>
                             </div>
 

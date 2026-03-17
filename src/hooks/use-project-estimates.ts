@@ -299,6 +299,10 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                     },
                     gfa: bGFA,
                     floors: totalFloors,
+                    utilities: Array.from(new Set([
+                        ...(b.utilities || []),
+                        ...(b.internalUtilities?.map(u => u.type) || [])
+                    ]))
                 });
             });
         } else {
@@ -420,6 +424,18 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
         const totalLiftCount = buildings.reduce((sum, b) => 
             sum + (b.cores ? b.cores.filter(c => c.type === 'Lift').length : 0), 0);
 
+        // Accumulate surface parking for solar calculation
+        let totalSurfaceParkingArea = 0;
+        if (!isPotential && project.plots) {
+            project.plots.forEach(p => {
+                if (p.parkingAreas) {
+                    totalSurfaceParkingArea += p.parkingAreas
+                        .filter(pa => pa.type === 'Surface' || pa.type === 'Stilt' || pa.type === 'Podium')
+                        .reduce((acc, pa) => acc + pa.area, 0);
+                }
+            });
+        }
+
         let simulation;
         try {
             // Skip simulation entirely if nothing to simulate
@@ -434,6 +450,7 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                     numLifts: totalLiftCount > 0 ? totalLiftCount : undefined,
                     utilitiesPresent: utilitiesPresent,
                     perBuildingBreakdown: perBuildingBreakdown,
+                    surfaceParkingArea: totalSurfaceParkingArea,
                 });
             }
         } catch (e) {

@@ -769,15 +769,45 @@ export interface CostRevenueParameters {
 
   // Utility Costs (absolute or per-unit)
   utility_costs?: {
-    ugt_pumping?: number;       // ₹ crore (Underground tank + pumping)
-    stp_per_kld?: number;       // ₹ per KLD (Sewage Treatment Plant)
-    wtp_cost?: number;          // ₹ lakh (Water Treatment Plant)
-    transformer_per_kva?: number; // ₹ per kVA
-    dg_per_kva?: number;        // ₹ per kVA (Diesel Generator)
-    fire_fighting?: number;     // ₹ crore
-    lifts_per_unit?: number;    // ₹ crore per lift
-    solar_per_kw?: number;      // ₹ per kW
-    hvac_per_tr?: number;       // ₹ per TR (Ton of Refrigeration)
+    ugt_pumping?: number;
+    ugt_pumping_min?: number;
+    ugt_pumping_max?: number;
+    
+    stp_per_kld?: number;
+    stp_per_kld_min?: number;
+    stp_per_kld_max?: number;
+
+    wtp_cost?: number;
+    wtp_cost_min?: number;
+    wtp_cost_max?: number;
+
+    transformer_per_kva?: number;
+    transformer_per_kva_min?: number;
+    transformer_per_kva_max?: number;
+
+    dg_per_kva?: number;
+    dg_per_kva_min?: number;
+    dg_per_kva_max?: number;
+
+    fire_fighting?: number;
+    fire_fighting_min?: number;
+    fire_fighting_max?: number;
+
+    lifts_per_unit?: number;
+    lifts_per_unit_min?: number;
+    lifts_per_unit_max?: number;
+
+    solar_per_kw?: number;
+    solar_per_kw_min?: number;
+    solar_per_kw_max?: number;
+
+    hvac_per_tr?: number;
+    hvac_per_tr_min?: number;
+    hvac_per_tr_max?: number;
+
+    owc_per_kg_per_day?: number;
+    owc_per_kg_per_day_min?: number;
+    owc_per_kg_per_day_max?: number;
   };
 
   // Revenue Parameters
@@ -918,11 +948,13 @@ export interface DeliveryPhase {
   buildings: DeliveryPhaseBuilding[];
 }
 
-// Utility cost breakdown
 export interface UtilityCostBreakdown {
   label: string;
   amount: number;
   unit: string;
+  rateRange?: string; // e.g. "₹25K - ₹75K / KLD"
+  minAmount?: number;
+  maxAmount?: number;
 }
 
 // Simulation results from Monte Carlo

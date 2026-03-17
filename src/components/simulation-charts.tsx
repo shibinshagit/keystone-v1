@@ -332,31 +332,70 @@ export function PhaseBreakdownChart({ phases, title, mode }: PhaseBreakdownProps
 
 // ─── UTILITY COSTS TABLE ─────────────────────────────────────────────────────
 interface UtilityCostsProps {
-    items: { label: string; amount: number; unit: string }[];
+    items: { 
+        label: string; 
+        amount: number; 
+        unit: string;
+        rateRange?: string;
+        minAmount?: number;
+        maxAmount?: number;
+    }[];
     total: number;
 }
 
 export function UtilityCostsTable({ items, total }: UtilityCostsProps) {
+    const fmt = (v: number) => v >= 10000000 
+        ? `₹${(v / 10000000).toFixed(2)} Cr` 
+        : `₹${(v / 100000).toFixed(1)} L`;
+
     return (
         <div className="rounded-lg border p-3 bg-secondary/10 border-border/30">
             <div className="text-xs uppercase tracking-wider font-semibold text-muted-foreground mb-2">Utility Costs</div>
             <div className="space-y-1">
-                {items.map(item => (
-                    <div key={item.label} className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">{item.label}</span>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground/60">{item.unit}</span>
-                            <span className="font-medium w-16 text-right">
-                                {item.amount >= 10000000
-                                    ? `₹${(item.amount / 10000000).toFixed(2)} Cr`
-                                    : `₹${(item.amount / 100000).toFixed(1)} L`}
-                            </span>
+                {items.map(item => {
+                    // Figure out numeric unit value to show calculation
+                    const unitValMatch = item.unit.match(/^(\d+(?:\.\d+)?)/);
+                    const unitVal = unitValMatch ? parseFloat(item.unit) : 1;
+                    const calculatedRate = item.unit !== 'Fixed' && unitVal > 0 
+                        ? Math.round(item.amount / unitVal) 
+                        : item.amount;
+
+                    return (
+                        <div key={item.label} className="flex justify-between items-center text-xs py-1.5 border-b border-border/5 last:border-0">
+                            <div>
+                                <span className="text-muted-foreground font-medium">{item.label}</span>
+                                <div className="text-[10px] text-muted-foreground/70 mt-0.5 space-y-0.5">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="bg-secondary/30 px-1 py-0.5 rounded">{item.unit}</span>
+                                        {item.unit !== 'Fixed' && (
+                                            <span>
+                                                × ₹{calculatedRate.toLocaleString('en-IN')}/{item.unit.replace(/^[\d.]+\s*/, '')}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {item.rateRange && (
+                                        <div className="text-primary/60 font-medium">Range: {item.rateRange}</div>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex flex-col items-end justify-center">
+                                {item.minAmount && item.maxAmount ? (
+                                    <span className="font-semibold text-right text-[11px] whitespace-nowrap">
+                                        {fmt(item.minAmount)} – {fmt(item.maxAmount)}
+                                    </span>
+                                ) : (
+                                    <span className="font-semibold text-right text-[11px] whitespace-nowrap">
+                                        {fmt(item.amount)}
+                                    </span>
+                                )}
+                                <span className="text-[9px] text-muted-foreground/60 mt-0.5">Est. {fmt(item.amount)}</span>
+                            </div>
                         </div>
-                    </div>
-                ))}
-                <div className="flex justify-between text-xs pt-1 border-t border-border/20 font-semibold">
-                    <span>Total Utilities</span>
-                    <span className="text-amber-400">₹{(total / 10000000).toFixed(2)} Cr</span>
+                    );
+                })}
+                <div className="flex justify-between items-center text-xs pt-2 mt-1 border-t border-border/20 font-semibold">
+                    <span>Total Utilities Estimate</span>
+                    <span className="text-amber-400 text-sm">₹{(total / 10000000).toFixed(2)} Cr</span>
                 </div>
             </div>
         </div>
