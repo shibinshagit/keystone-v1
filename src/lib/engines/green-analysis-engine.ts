@@ -7,6 +7,11 @@ interface GreenAnalysisScore {
     breakdown: {
         category: string;
         score: number;
+        // new fields exposed for UI
+        maxScore?: number;
+        value?: number | string;
+        threshold?: number | string;
+        status?: boolean;
         feedback: string;
     }[];
 }
@@ -33,6 +38,7 @@ export function calculateGreenAnalysis(
     // Goal: Maximize North/South facade area to reduce heat gain (East/West).
     let orientationScore = 0;
     let orientationFeedback = "";
+    let aspectRatio = 1;
 
     // For simplicity, check the largest building
     const mainBldg = buildings.reduce((a, b) => (a.area > b.area ? a : b));
@@ -43,7 +49,7 @@ export function calculateGreenAnalysis(
         const width = turf.distance([bbox[0], bbox[1]], [bbox[2], bbox[1]]);
         const height = turf.distance([bbox[0], bbox[1]], [bbox[0], bbox[3]]);
 
-        const aspectRatio = width / height;
+    aspectRatio = width / height;
 
         if (aspectRatio > 1.5) {
             orientationScore = 90;
@@ -60,9 +66,15 @@ export function calculateGreenAnalysis(
         }
     }
 
+    // Expose orientation-related values for UI without changing scoring logic
+    const orientationThreshold = 1.5; // existing condition used in scoring branches
     result.breakdown.push({
         category: "Passive Solar Orientation",
         score: orientationScore,
+        maxScore: 100,
+        value: parseFloat(aspectRatio.toFixed(2)),
+        threshold: orientationThreshold,
+        status: aspectRatio > orientationThreshold,
         feedback: orientationFeedback
     });
 
@@ -125,9 +137,15 @@ export function calculateGreenAnalysis(
         depthFeedback = "Low: Deep floor plates may require artificial lighting.";
     }
 
+    // Expose depth/daylight values for UI
+    const depthThreshold = 15; // proxy threshold used to decide high/low depth
     result.breakdown.push({
         category: "Daylight Potential",
         score: depthScore,
+        maxScore: 100,
+        value: parseFloat(averageDepthProxy.toFixed(2)),
+        threshold: depthThreshold,
+        status: averageDepthProxy <= depthThreshold,
         feedback: depthFeedback
     });
 

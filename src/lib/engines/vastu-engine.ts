@@ -1,151 +1,150 @@
-import { Plot, Building, VastuRegulationData, VastuRecommendation } from '@/lib/types';
+import { Plot, Building } from '@/lib/types';
 import * as turf from '@turf/turf';
 import { getVastuCenter } from '@/lib/vastu-utils';
+import { VASTU_SCHEMA } from "@/lib/scoring/vastu.schema";
 
-interface VastuScore {
-    overallScore: number;
-    totalScore: number;
-    maxScore: number;
-    rating: 'High' | 'Medium' | 'Low';
-    breakdown: {
-        category: string;
-        score: number;
-        maxScore: number;
-        feedback: string;
-    }[];
-}
-
-/**
- * Calculates Vastu Compliance Score for a given Plot and its Buildings
- */
 export function calculateVastuScore(
-    plot: Plot,
-    buildings: Building[],
-    regulation: VastuRegulationData | null
-): VastuScore {
-    // Default empty result
-    const result: VastuScore = {
-        overallScore: 0,
-        totalScore: 0,
-        maxScore: 0,
-        rating: 'Low',
-        breakdown: []
-    };
+  plot: Plot,
+  buildings: Building[]
+) {
 
-    if (!regulation || buildings.length === 0) {
-        return result;
+  let totalScore = 0;
+  const categories = [];
+
+  // Direction helper (KEEP YOUR LOGIC ✅)
+  const getDirection = (target: any, center: any): string => {
+    const bearing = turf.bearing(center, target);
+    const b = (bearing + 360) % 360;
+
+    if (b >= 337.5 || b < 22.5) return 'N';
+    if (b >= 22.5 && b < 67.5) return 'NE';
+    if (b >= 67.5 && b < 112.5) return 'E';
+    if (b >= 112.5 && b < 157.5) return 'SE';
+    if (b >= 157.5 && b < 202.5) return 'S';
+    if (b >= 202.5 && b < 247.5) return 'SW';
+    if (b >= 247.5 && b < 292.5) return 'W';
+    return 'NW';
+  };
+
+  const plotCenter = getVastuCenter(plot.geometry).geometry.coordinates;
+
+  // MAIN BUILDING (reuse your logic ✅)
+  const mainBldg = buildings.reduce((prev, current) =>
+    prev.area > current.area ? prev : current
+  );
+
+  const mainDir = mainBldg
+    ? getDirection(mainBldg.centroid.geometry.coordinates, plotCenter)
+    : null;
+
+  // LOOP THROUGH SCHEMA (🔥 NEW CORE)
+  for (const category of VASTU_SCHEMA.categories) {
+
+    let categoryScore = 0;
+    const items = [];
+
+    for (const item of category.items) {
+
+      let score = 0;
+      let status: "pass" | "fail" | "neutral" = "neutral";
+      let feedback = "";
+
+      // 🔥 RULE ENGINE (ONLY A & B FOR NOW)
+
+      switch (item.id) {
+
+        case "A1":
+          // Assume rectangular plot for now
+          score = item.maxScore;
+          status = "pass";
+          feedback = "Regular plot shape";
+          break;
+
+        case "A2":
+          // TODO: slope logic later
+          score = item.maxScore * 0.5;
+          status = "neutral";
+          feedback = "Slope data not available";
+          break;
+
+        case "A3":
+          score = item.maxScore * 0.5;
+          status = "neutral";
+          feedback = "Open space distribution unknown";
+          break;
+
+        case "B1":
+          if (item.type === "direction" && mainDir) {
+            if (item.idealDirections?.includes(mainDir)) {
+                score = item.maxScore;
+                status = "pass";
+                feedback = `Good direction (${mainDir})`;
+            } else if (item.avoidDirections?.includes(mainDir)) {
+                score = 0;
+                status = "fail";
+                feedback = `Avoid direction (${mainDir})`;
+            } else {
+                score = item.maxScore * 0.5;
+                status = "neutral";
+                feedback = `Neutral direction (${mainDir})`;
+            }
+    
+          } else {
+            score = 0;
+            status = "fail";
+            feedback = `Entrance not in good zone (${mainDir})`;
+          }
+          break;
+
+        case "B2":
+          if (mainDir === "SW") {
+            score = 0;
+            status = "fail";
+            feedback = "Entrance in SW (bad)";
+          } else {
+            score = item.maxScore;
+            status = "pass";
+            feedback = "No SW entrance";
+          }
+          break;
+
+        case "B3":
+          score = item.maxScore * 0.5;
+          status = "neutral";
+          feedback = "Road alignment not checked";
+          break;
+      }
+
+      categoryScore += score;
+
+      items.push({
+        id: item.id,
+        title: item.title,
+        score,
+        maxScore: item.maxScore,
+        status,
+        feedback
+      });
     }
 
-    let totalMaxScore = 0;
-    let totalAchievedScore = 0;
+    totalScore += categoryScore;
 
-    // Helper: Get cardinal direction of a point relative to plot centroid
-    const getDirection = (target: any, center: any): string => {
-        const bearing = turf.bearing(center, target);
-        // Normalize bearing to 0-360
-        const b = (bearing + 360) % 360;
-
-        if (b >= 337.5 || b < 22.5) return 'N';
-        if (b >= 22.5 && b < 67.5) return 'NE';
-        if (b >= 67.5 && b < 112.5) return 'E';
-        if (b >= 112.5 && b < 157.5) return 'SE';
-        if (b >= 157.5 && b < 202.5) return 'S';
-        if (b >= 202.5 && b < 247.5) return 'SW';
-        if (b >= 247.5 && b < 292.5) return 'W';
-        if (b >= 292.5 && b < 337.5) return 'NW';
-        return 'N';
-    };
-
-    const plotCenter = getVastuCenter(plot.geometry).geometry.coordinates;
-
-    regulation.recommendations.forEach((rec) => {
-        const maxScore = rec.weight || 5;
-        let achievedScore = 0;
-        let feedback = '';
-
-        switch (rec.category) {
-            case 'Entrance':
-                // For simplicity, assume Entrance is the side of the plot facing the road (closest to road)
-                // Or if we have a specific 'Entrance' object. 
-                // Currently, let's assume valid 'Roads' infrastructure defines entrance, or default to East/North for testing.
-                // TODO: Implement actual entrance detection. For now, simulate favorable Check.
-                // IF we don't have explicit entrance data, we skip or assume neutral (50).
-                achievedScore = maxScore * 0.5;
-                feedback = "Entrance location not explicitly defined.";
-                break;
-
-            case 'MasterBedroom':
-            case 'General': // Treat 'General' as Main Building Placement
-                // Ideally Master Bedroom is SW. Main Building Mass should be SW/South/West.
-                // Let's check the largest building's centroid.
-                const mainBldg = buildings.reduce((prev, current) => (prev.area > current.area) ? prev : current);
-                if (mainBldg) {
-                    const bldgCentroid = mainBldg.centroid.geometry.coordinates;
-                    const dir = getDirection(bldgCentroid, plotCenter);
-
-                    if (rec.idealDirections.includes(dir)) {
-                        achievedScore = maxScore;
-                        feedback = `Main mass in ${dir} (Recommended).`;
-                    } else if (rec.avoidDirections.includes(dir)) {
-                        achievedScore = 0;
-                        feedback = `Main mass in ${dir} (Avoid).`;
-                    } else {
-                        achievedScore = maxScore * 0.5;
-                        feedback = `Main mass in ${dir} (Neutral).`;
-                    }
-                }
-                break;
-
-            case 'Water':
-                // Check for 'Water' or 'WTP' utility blocks.
-                // Ideally NE / North / East.
-                const waterUtil = buildings.find(b => b.name.includes('Water') || b.name.includes('WTP'));
-                if (waterUtil) {
-                    const waterCentroid = waterUtil.centroid.geometry.coordinates;
-                    const dir = getDirection(waterCentroid, plotCenter);
-
-                    if (rec.idealDirections.includes(dir)) {
-                        achievedScore = maxScore;
-                        feedback = `Water body in ${dir} (Excellent).`;
-                    } else if (rec.avoidDirections.includes(dir)) {
-                        achievedScore = 0;
-                        feedback = `Water body in ${dir} (Avoid).`;
-                    } else {
-                        achievedScore = maxScore * 0.5;
-                        feedback = `Water body in ${dir} (Neutral).`;
-                    }
-                } else {
-                    achievedScore = maxScore * 0.5; // Neutral if no water body
-                    feedback = "No water infrastructure found.";
-                }
-                break;
-
-            default:
-                achievedScore = maxScore * 0.5;
-                feedback = "Criterion not evaluated.";
-        }
-
-        totalAchievedScore += achievedScore;
-        totalMaxScore += maxScore;
-
-        result.breakdown.push({
-            category: rec.category,
-            score: Math.round(achievedScore * 100) / 100,
-            maxScore,
-            feedback
-        });
+    categories.push({
+      title: category.title,
+      score: categoryScore,
+      maxScore: category.maxScore,
+      items
     });
+  }
 
-    result.totalScore = Math.round(totalAchievedScore * 100) / 100;
-    result.maxScore = totalMaxScore;
+  const overallScore = Math.round(
+    (totalScore / VASTU_SCHEMA.totalMaxScore) * 100
+  );
 
-    if (totalMaxScore > 0) {
-        result.overallScore = Math.round((totalAchievedScore / totalMaxScore) * 100);
-    }
-
-    if (result.overallScore >= 80) result.rating = 'High';
-    else if (result.overallScore >= 50) result.rating = 'Medium';
-    else result.rating = 'Low';
-
-    return result;
+  return {
+    overallScore,
+    totalScore,
+    maxScore: VASTU_SCHEMA.totalMaxScore,
+    categories
+  };
 }

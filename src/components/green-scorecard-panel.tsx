@@ -2,6 +2,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import { VASTU_SCHEMA } from "@/lib/scoring/vastu.schema";
 import { useBuildingStore, useProjectData, useSelectedPlot } from '@/hooks/use-building-store';
 import { useGreenRegulations } from '@/hooks/use-green-regulations';
 import { useGreenStandardChecks } from '@/hooks/use-green-standard-checks';
@@ -13,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { CheckCircle2, Circle, XCircle, AlertCircle, Leaf, Wind, Sun, MapPin, Loader2, MousePointerClick, Hand } from 'lucide-react';
+import { calculateGreenAnalysis } from '@/lib/engines/green-analysis-engine';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 
@@ -184,7 +186,6 @@ export function GreenScorecardPanel() {
 
             return { ...cat, credits };
         });
-
         return {
             id: regulation.id || regulation.certificationType,
             certificationType: regulation.certificationType,
@@ -230,6 +231,17 @@ export function GreenScorecardPanel() {
     const plots = useBuildingStore(state => state.plots);
     const isPlotCreated = plots.length > 0;
 
+    const engineAnalysis = useMemo(() => {
+        if (!isPlotCreated) return null;
+        const plot = plots[0];
+        const buildings = (plot && plot.buildings) ? plot.buildings : [];
+        try {
+            return calculateGreenAnalysis(plot, buildings);
+        } catch (e) {
+            return null;
+        }
+    }, [plots, isPlotCreated]);
+
     if (!activeProject) return <div className="p-4 text-center text-muted-foreground">Select a project to view scorecard</div>;
 
     if (!isPlotCreated) {
@@ -256,12 +268,8 @@ export function GreenScorecardPanel() {
     }
 
 
-    if (isLoading && scorecardDataList.length === 0) return (
-        <div className="p-8 flex items-center justify-center text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading Green Regulations...
-        </div>
-    );
-    if (scorecardDataList.length === 0) return <div className="p-4 text-center text-muted-foreground">No Green Regulation data found for this project.</div>;
+    // Per strict UI rule: rely only on engine output. If engine analysis is not available, render nothing.
+    if (!engineAnalysis) return null;
 
     return (
         <div className="h-full flex flex-col w-full max-h-[calc(100vh-200px)]">
@@ -274,34 +282,12 @@ export function GreenScorecardPanel() {
                         {isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
                     </h2>
                     <div className="flex gap-2 flex-wrap items-center justify-end">
-                        {visibleScorecards.map((scorecard) => (
-                            <Badge key={scorecard.id} variant="outline">{getStandardName(scorecard.certificationType || scorecard.label)}</Badge>
-                        ))}
+                        {/* Removed regulation-based badges per strict engine-only UI rule */}
                     </div>
                 </div>
-                <div className="mt-2 space-y-2">
-                    {visibleScorecards.map((scorecard) => {
-                        const percentage = scorecard.totalPoints > 0 ? (scorecard.achievedPoints / scorecard.totalPoints) * 100 : 0;
-                        const achievedBand = scorecard.ratingBands.find((band) =>
-                            scorecard.achievedPoints >= band.minPoints &&
-                            (band.maxPoints === undefined || scorecard.achievedPoints <= band.maxPoints)
-                        );
-
-                        return (
-                            <div key={scorecard.id} className="space-y-1">
-                                <div className="flex justify-between text-sm font-medium">
-                                    <span>{getStandardName(scorecard.certificationType || scorecard.label)}: {scorecard.achievedPoints} / {scorecard.totalPoints}</span>
-                                    <span>{percentage.toFixed(0)}%</span>
-                                </div>
-                                <Progress value={percentage} className="h-2" />
-                                {achievedBand && (
-                                    <div className="text-[11px] text-muted-foreground">
-                                        Rating: {achievedBand.label}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
+                <div className="mt-2">
+                    {/* Header: show only overallScore / 100 — no percentage, no progress bar */}
+                    <div className="text-sm font-medium">{engineAnalysis.overallScore} / 100</div>
                 </div>
             </div>
 
@@ -309,70 +295,39 @@ export function GreenScorecardPanel() {
             <ScrollArea className="flex-1">
                 <div className="p-4">
                     <div className="space-y-6">
-                        {visibleScorecards.map((scorecard) => (
-                            <div key={scorecard.id} className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <h3 className="text-sm font-semibold">{getStandardName(scorecard.certificationType || scorecard.label)}</h3>
-                                    <span className="text-xs text-muted-foreground">{scorecard.achievedPoints} / {scorecard.totalPoints}</span>
+                        <div className="space-y-3">
+                            {engineAnalysis.breakdown.map((bd, idx) => (
+                                <div key={idx} className="rounded-lg border border-border/40 bg-secondary/10 p-3">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="text-sm font-semibold">{bd.category}</h4>
+                                        {/* LINE 1 (RIGHT): show only when both score and maxScore exist */}
+                                        <div>
+                                            {bd.score != null && bd.maxScore != null ? (
+                                                <span className="text-xs text-muted-foreground">{bd.score} / {bd.maxScore}</span>
+                                            ) : null}
+                                        </div>
+                                    </div>
+
+                                    {/* LINE 2 (BELOW): if value and threshold exist show value/threshold; else if feedback exists show feedback */}
+                                    <div className="mt-1">
+                                        {bd.value != null && bd.threshold != null ? (
+                                            <div className="text-xs text-muted-foreground">{String(bd.value)} / {String(bd.threshold)}</div>
+                                        ) : bd.feedback ? (
+                                            <div className="text-xs text-muted-foreground">{bd.feedback}</div>
+                                        ) : null}
+                                    </div>
+
+                                    {/* STATUS ICON: render only when status is explicitly true/false */}
+                                    <div className="mt-2">
+                                        {bd.status === true ? (
+                                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                        ) : bd.status === false ? (
+                                            <AlertCircle className="h-4 w-4 text-red-500" />
+                                        ) : null}
+                                    </div>
                                 </div>
-                                <Accordion type="multiple" defaultValue={scorecard.categories.map((c: any) => `${scorecard.id}-${c.name}`)} className="space-y-4">
-                                    {scorecard.categories.map((cat: any, idx: number) => (
-                                        <AccordionItem value={`${scorecard.id}-${cat.name}`} key={`${scorecard.id}-${idx}`} className="border rounded-lg px-3 bg-secondary/10">
-                                            <AccordionTrigger className="hover:no-underline py-3">
-                                                <div className="flex items-center gap-2 text-sm font-semibold">
-                                                    {cat.name.includes("Location") ? <MapPin className="h-4 w-4 text-orange-500" /> :
-                                                        cat.name.includes("Energy") ? <Sun className="h-4 w-4 text-yellow-500" /> :
-                                                            cat.name.includes("Water") ? <Wind className="h-4 w-4 text-blue-500" /> :
-                                                                <Circle className="h-3 w-3 text-muted-foreground" />}
-                                                    {cat.name}
-                                                </div>
-                                            </AccordionTrigger>
-                                            <AccordionContent className="pb-3">
-                                                <div className="space-y-1">
-                                                    {cat.credits.map((credit: any, cIdx: number) => (
-                                                        <div key={cIdx} className="flex items-center gap-2 p-2 rounded-md hover:bg-secondary/20 transition-colors group">
-                                                            <div className="shrink-0">
-                                                                {credit.status === 'achieved' ? <CheckCircle2 className="h-4 w-4 text-green-500" /> :
-                                                                    credit.status === 'failed' ? <XCircle className="h-4 w-4 text-red-500" /> :
-                                                                        <Circle className="h-4 w-4 text-muted-foreground/30" />}
-                                                            </div>
-                                                            <div className="flex-1 min-w-0">
-                                                                <span className={cn(
-                                                                    "text-sm font-medium leading-tight",
-                                                                    credit.status === 'achieved' && "text-green-700 dark:text-green-400"
-                                                                )}>
-                                                                    {credit.name}
-                                                                </span>
-                                                                {credit.isAuto && !credit.isManualOnly && (
-                                                                    <span className="text-[10px] text-muted-foreground ml-1.5">
-                                                                        {credit.dataKey === 'standard' ? '· Standard' :
-                                                                         credit.dataKey === 'ventilation' || credit.dataKey === 'daylighting' || credit.dataKey === 'energy_optimization' ? '· Simulation' :
-                                                                         credit.dataKey === 'transit' || credit.dataKey === 'amenity' ? '· Proximity' :
-                                                                         ['green_cover', 'open_space', 'site_planning', 'land_use_planning'].includes(credit.dataKey) ? '· Plot Data' :
-                                                                         ['far_compliance', 'ground_coverage', 'parking_compliance'].includes(credit.dataKey) ? '· KPIs' :
-                                                                         ['rainwater_harvesting', 'solar_energy', 'water_recycling', 'waste_management', 'ev_charging', 'fire_safety', 'energy_efficiency'].includes(credit.dataKey) ? '· Utilities' : ''}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center gap-2 shrink-0">
-                                                                <span className="text-xs font-mono text-muted-foreground">
-                                                                    {credit.score}/{credit.maxPoints}
-                                                                </span>
-                                                                <Switch
-                                                                    checked={credit.status === 'achieved'}
-                                                                    onCheckedChange={() => handleToggleManual(credit.overrideKey)}
-                                                                    className="scale-[0.6] origin-right"
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </AccordionContent>
-                                        </AccordionItem>
-                                    ))}
-                                </Accordion>
-                            </div>
-                        ))}
+                            ))}
+                        </div>
                     </div>
                 </div>
             </ScrollArea>
@@ -399,3 +354,6 @@ function Sparkles4Icon(props: any) {
         </svg>
     )
 }
+
+
+

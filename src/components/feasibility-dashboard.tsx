@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
 import { useBuildingStore, useSelectedBuilding, useProjectData, useSelectedPlot } from '@/hooks/use-building-store';
-import { AreaChart, Scale, Building, Car, CheckCircle, AlertTriangle, ShieldCheck, DollarSign, LocateFixed, ChevronUp, ChevronDown, Compass, DoorOpen, Clock, TrendingUp, BarChart2, Zap, Settings2, Maximize2, Minimize2, Calculator, Star } from 'lucide-react';
+import { AreaChart, Scale, Building, Car, CheckCircle, AlertTriangle, XCircle, ShieldCheck, DollarSign, LocateFixed, ChevronUp, ChevronDown, Compass, DoorOpen, Clock, TrendingUp, BarChart2, Zap, Settings2, Maximize2, Minimize2, Calculator, Star } from 'lucide-react';
 import { useDevelopmentMetrics } from '@/hooks/use-development-metrics';
 import { useRegulations } from '@/hooks/use-regulations';
 import { useProjectEstimates } from '@/hooks/use-project-estimates';
@@ -1720,6 +1720,8 @@ function FeasibilityTab() {
         return 'Excellent';
     };
 
+    // NOTE: Acceptance mapping removed to enforce icon-only display
+
     const getLabelColorClass = (label: string, type: 'cert' | 'vastu') => {
         if (type === 'cert') {
             const l = (label || '').toLowerCase();
@@ -1740,8 +1742,9 @@ function FeasibilityTab() {
     };
 
     const getStatusIcon = (status: string) => {
-        if (status === 'pass') return <CheckCircle className="h-3 w-3 text-green-500" />;
-        if (status === 'fail') return <AlertTriangle className="h-3 w-3 text-red-500" />;
+        const s = String(status || '').toLowerCase();
+        if (s.includes('pass') || s.includes('achieved') || s.includes('success')) return <CheckCircle className="h-3 w-3 text-green-500" />;
+        if (s.includes('fail') || s.includes('failed') || s.includes('reject')) return <XCircle className="h-3 w-3 text-red-500" />;
         return <AlertTriangle className="h-3 w-3 text-yellow-500" />;
     };
 
@@ -1802,36 +1805,16 @@ function FeasibilityTab() {
                                 <CardTitle className="text-base font-semibold flex items-center gap-2">
                                     <card.icon className="h-4 w-4" /> {card.label}
                                 </CardTitle>
-                                {/* Certification / Grade label under the title */}
-                                <div className="mt-1">
-                                    {card.label.toLowerCase().includes('green') && certLabel && (
-                                        <div className={`text-sm font-bold ${getLabelColorClass(certLabel, 'cert')}`}>
-                                            {certLabel.toLowerCase().includes('griha') ? (
-                                                // render star icons for GRIHA
-                                                <span className="inline-flex items-center gap-1">
-                                                    {(() => {
-                                                        const s = Math.round(card.score || 0);
-                                                        const stars = (s <= 60) ? 1 : (s <= 70) ? 2 : (s <= 80) ? 3 : (s <= 90) ? 4 : 5;
-                                                        return Array.from({ length: stars }).map((_, i) => (
-                                                            <Star key={i} className="h-4 w-4 text-yellow-400" />
-                                                        ));
-                                                    })()}
-                                                </span>
-                                            ) : (
-                                                <div className="text-sm font-bold">{getCertLabelForScore(Math.round(card.score ?? 0), certLabel)}</div>
-                                            )}
-                                        </div>
-                                    )}
-                                    {card.label.toLowerCase().includes('vastu') && (
-                                        <div className={`text-sm font-bold ${getLabelColorClass(getVastuGrade(Math.round(card.score || 0)), 'vastu')}`}>
-                                            {getVastuGrade(Math.round(card.score || 0))}
-                                        </div>
-                                    )}
-                                </div>
+                                {/* Certification / Grade label removed to enforce icon-only status in header */}
                             </div>
                             <div className="flex items-center gap-4">
-                                <div className={`h-3 w-3 rounded-full ${getTrafficLight(card.score)}`} />
-                                <div className="text-lg font-semibold">{Math.round(card.score ?? 0)} <span className="text-xs text-muted-foreground">/ 100</span></div>
+                                <div className="text-sm text-muted-foreground text-right">
+                                    <div className="font-semibold text-lg">{Math.round(card.score ?? 0)} <span className="text-xs text-muted-foreground">/ 100</span></div>
+                                </div>
+                                <div className="text-sm font-medium ml-2">
+                                    {/* subtle status dot (single indicator) */}
+                                    <div className={`h-3 w-3 rounded-full ${getTrafficLight(card.score)}`} />
+                                </div>
                             </div>
                         </CardHeader>
                         <CardContent className="p-3 pt-0">
@@ -1863,11 +1846,76 @@ function FeasibilityTab() {
                                                             {code && <Badge variant="outline" className="text-[11px] font-mono px-1.5 py-0.5">{code}</Badge>}
                                                             <div className="text-sm font-medium truncate">{title}</div>
                                                         </div>
-                                                        {item.detail && <div className="text-xs text-muted-foreground mt-0.5">{item.detail}</div>}
                                                     </div>
-                                                    <div className="text-right flex-shrink-0 flex items-center gap-3">
-                                                        <div className="text-sm text-muted-foreground">{statusText}</div>
-                                                        <div className="flex items-center gap-1">{getStatusIcon(item.status)}</div>
+                                                    <div className="flex-shrink-0 w-[340px] flex flex-col items-end justify-center">
+                                                        {/* Top: Value or primary display per item type */}
+                                                        <div className="text-sm text-right">
+                                                            {(() => {
+                                                                    const isBylaw = card.label.toLowerCase().includes('bylaw');
+                                                                    const isVastu = card.label.toLowerCase().includes('vastu');
+
+                                                                    // CASE 1: Has score and maxScore (Vastu)
+                                                                    if (isVastu && item.score != null && item.maxScore != null) {
+                                                                        return String(`${item.score} / ${item.maxScore}`);
+                                                                    }
+
+                                                                    // CASE 2: Numeric comparison (Bylaw) — show value/limit only when both present
+                                                                    if (isBylaw && item.value != null && (item.limit != null || item.limitValue != null || item.threshold != null)) {
+                                                                        const limit = item.limit ?? item.limitValue ?? item.threshold;
+                                                                        return String(`${item.value} / ${limit}`);
+                                                                    }
+
+                                                                    // CASE 3: Only status/text — show only explicit value text or statusText or compliance when explicitly provided as string/boolean
+                                                                    if (typeof item.value === 'string' && item.value.trim().length > 0) {
+                                                                        return item.value;
+                                                                    }
+
+                                                                    if (typeof item.statusText === 'string' && item.statusText.trim().length > 0) {
+                                                                        return item.statusText;
+                                                                    }
+
+                                                                    if (typeof item.compliance === 'boolean') {
+                                                                        return item.compliance ? 'Provided' : 'Not provided';
+                                                                    }
+
+                                                                    // If none of the explicit data exists, render nothing (per strict rule)
+                                                                    return null;
+                                                                })()}
+                                                        </div>
+
+                                                        {/* Middle: For Bylaw show item score/percentage if present; for Vastu show score; for rule-based nothing extra */}
+                                                        <div className="flex items-center gap-3 mt-1">
+                                                            {(() => {
+                                                                const isBylaw = card.label.toLowerCase().includes('bylaw');
+                                                                const isVastu = card.label.toLowerCase().includes('vastu');
+
+                                                                if (isVastu && item.score != null && item.maxScore != null) {
+                                                                    return <div className="text-sm font-semibold tabular-nums">{item.score} / {item.maxScore}</div>;
+                                                                }
+
+                                                                if (isBylaw) {
+                                                                    if (item.score != null && item.maxScore != null) {
+                                                                        return <div className="text-sm font-semibold tabular-nums">{item.score} / {item.maxScore}</div>;
+                                                                    }
+                                                                    return null;
+                                                                }
+
+                                                                // Rule-based: never show numeric placeholders unless explicitly present
+                                                                return null;
+                                                            })()}
+
+                                                            {/* Icon must come after value/percentage */}
+                                                            <div className="flex items-center" aria-hidden>
+                                                                {getStatusIcon(item.status || statusText)}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Bottom: Description below, right-aligned, clamp to 2 lines */}
+                                                        {item.detail && (
+                                                            <div className="text-xs text-muted-foreground mt-1 text-right max-w-[320px] overflow-hidden" style={{display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical'}}>
+                                                                {item.detail}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
                                             );
