@@ -66,6 +66,25 @@ function getStandardLabel(raw: string | undefined): string {
     return label;
 }
 
+/** Return the canonical standard short name without version (used for UI display) */
+function getStandardName(raw: string | undefined): string {
+    if (!raw) return 'Generic';
+    const lower = raw.toLowerCase();
+    const STANDARDS: Record<string, string> = {
+        'igbc': 'IGBC',
+        'griha': 'GRIHA',
+        'leed': 'LEED',
+        'well': 'WELL',
+        'breeam': 'BREEAM',
+        'edge': 'EDGE',
+    };
+    for (const [key, name] of Object.entries(STANDARDS)) {
+        if (lower.includes(key)) return name;
+    }
+    // fallback: return the raw string (trimmed)
+    return String(raw).split(' ')[0];
+}
+
 export function GreenScorecardPanel() {
     const activeProject = useProjectData();
     const { regulations, isLoading } = useGreenRegulations(activeProject as unknown as Project);
@@ -186,6 +205,21 @@ export function GreenScorecardPanel() {
         }>;
     }, [regulations, creditStatusMap, manualOverrides]);
 
+    // UI-only: pick the first scorecard per certification for display purposes.
+    // This does not mutate the underlying data; it only controls what is rendered.
+    const visibleScorecards = useMemo(() => {
+        const seen = new Set<string>();
+        const res: typeof scorecardDataList = [] as any;
+        for (const sc of scorecardDataList) {
+            const key = getStandardName(sc.certificationType || sc.label || sc.id).toUpperCase();
+            if (!seen.has(key)) {
+                seen.add(key);
+                res.push(sc);
+            }
+        }
+        return res;
+    }, [scorecardDataList]);
+
     const handleToggleManual = (overrideKey: string) => {
         setManualOverrides(prev => ({
             ...prev,
@@ -240,20 +274,13 @@ export function GreenScorecardPanel() {
                         {isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
                     </h2>
                     <div className="flex gap-2 flex-wrap items-center justify-end">
-                        {scorecardDataList.map((scorecard) => (
-                            <Badge key={scorecard.id} variant="outline">{scorecard.certificationType}</Badge>
+                        {visibleScorecards.map((scorecard) => (
+                            <Badge key={scorecard.id} variant="outline">{getStandardName(scorecard.certificationType || scorecard.label)}</Badge>
                         ))}
-                        {regulations && regulations.length > 0 && (
-                            <div className="text-xs text-muted-foreground ml-2">
-                                {regulations.map(r => (
-                                    <div key={r.id}>{r.name || r.certificationType}</div>
-                                ))}
-                            </div>
-                        )}
                     </div>
                 </div>
                 <div className="mt-2 space-y-2">
-                    {scorecardDataList.map((scorecard) => {
+                    {visibleScorecards.map((scorecard) => {
                         const percentage = scorecard.totalPoints > 0 ? (scorecard.achievedPoints / scorecard.totalPoints) * 100 : 0;
                         const achievedBand = scorecard.ratingBands.find((band) =>
                             scorecard.achievedPoints >= band.minPoints &&
@@ -263,7 +290,7 @@ export function GreenScorecardPanel() {
                         return (
                             <div key={scorecard.id} className="space-y-1">
                                 <div className="flex justify-between text-sm font-medium">
-                                    <span>{scorecard.certificationType}: {scorecard.achievedPoints} / {scorecard.totalPoints}</span>
+                                    <span>{getStandardName(scorecard.certificationType || scorecard.label)}: {scorecard.achievedPoints} / {scorecard.totalPoints}</span>
                                     <span>{percentage.toFixed(0)}%</span>
                                 </div>
                                 <Progress value={percentage} className="h-2" />
@@ -282,10 +309,10 @@ export function GreenScorecardPanel() {
             <ScrollArea className="flex-1">
                 <div className="p-4">
                     <div className="space-y-6">
-                        {scorecardDataList.map((scorecard) => (
+                        {visibleScorecards.map((scorecard) => (
                             <div key={scorecard.id} className="space-y-3">
                                 <div className="flex items-center justify-between">
-                                    <h3 className="text-sm font-semibold">{scorecard.label}</h3>
+                                    <h3 className="text-sm font-semibold">{getStandardName(scorecard.certificationType || scorecard.label)}</h3>
                                     <span className="text-xs text-muted-foreground">{scorecard.achievedPoints} / {scorecard.totalPoints}</span>
                                 </div>
                                 <Accordion type="multiple" defaultValue={scorecard.categories.map((c: any) => `${scorecard.id}-${c.name}`)} className="space-y-4">
