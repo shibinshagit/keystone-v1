@@ -33,8 +33,10 @@ export interface ScoringSchema {
 // Result provided to the engine per item
 export interface ItemResult {
   score?: number; // explicit numeric score
-  status?: boolean; // pass/fail boolean
+  // Accept boolean or string status ('pass'|'fail') from translators or UI
+  status?: boolean | 'pass' | 'fail';
   value?: any; // raw measured value (optional)
+  threshold?: any; // optional threshold or target to display
 }
 
 // Engine output types
@@ -54,12 +56,38 @@ export interface EngineCategoryOutput {
   items: EngineItemOutput[];
 }
 
+// Strict output shape required by UI (numbers only, no nulls) plus compatibility breakdown
+export interface EngineItemStrict {
+  id: string;
+  title: string;
+  score: number;
+  maxScore: number;
+  status: 'pass' | 'fail' | 'neutral';
+}
+
+export interface EngineCategoryStrict {
+  title: string;
+  score: number;
+  maxScore: number;
+  items: EngineItemStrict[];
+}
+
 export interface EngineOutput {
-  overallScore: number | null;
-  totalScore: number | null;
-  maxScore: number | null;
-  categories: EngineCategoryOutput[];
+  overallScore: number;
+  totalScore: number;
+  maxScore: number;
+  categories: EngineCategoryStrict[];
   fail?: boolean; // overall fail if any mandatory item failed
+  // compatibility: breakdown used by some components (category per-item flattened)
+  breakdown?: {
+    category: string;
+    score: number | null;
+    maxScore: number | null;
+    value?: any;
+    threshold?: any;
+    status?: boolean | null;
+    feedback?: string;
+  }[];
 }
 
 /**
@@ -93,14 +121,20 @@ export function evaluateSchema(schema: ScoringSchema, results: Record<string, It
       if (res !== undefined && res !== null) {
         if (typeof res.score === 'number') {
           itemScore = res.score;
-        } else if (res.status === true) {
-          // explicit pass => full points
-          itemScore = itemMax !== null ? itemMax : null;
-        } else if (res.status === false) {
-          itemScore = itemMax !== null ? 0 : 0;
-        }
+        } else {
+          // Accept both boolean status and string status ('pass'|'fail')
+          const statusVal = res.status;
+          const statusBool = (typeof statusVal === 'boolean') ? statusVal : (typeof statusVal === 'string' ? (statusVal === 'pass') : null);
 
-        itemStatus = typeof res.status === 'boolean' ? res.status : null;
+          if (statusBool === true) {
+            // explicit pass => full points
+            itemScore = itemMax !== null ? itemMax : null;
+          } else if (statusBool === false) {
+            itemScore = itemMax !== null ? 0 : 0;
+          }
+
+          itemStatus = (typeof statusBool === 'boolean') ? statusBool : null;
+        }
       }
 
       // If an item is mandatory and explicitly failed (status === false) mark category and overall fail
@@ -144,12 +178,43 @@ export function evaluateSchema(schema: ScoringSchema, results: Record<string, It
   }
 
   const output: EngineOutput = {
-    overallScore: anyScoreDefined ? totalScoreAcc : null,
-    totalScore: anyScoreDefined ? totalScoreAcc : null,
-    maxScore: totalMaxAcc > 0 ? totalMaxAcc : null,
-    categories: categoriesOut,
+    // Strict numeric output: convert nulls to 0 to match required strict shape
+    overallScore: anyScoreDefined ? totalScoreAcc : 0,
+    totalScore: anyScoreDefined ? totalScoreAcc : 0,
+    maxScore: totalMaxAcc > 0 ? totalMaxAcc : 0,
+    categories: categoriesOut.map(cat => ({
+      title: cat.title,
+      score: cat.score !== null ? cat.score : 0,
+      maxScore: cat.maxScore !== null ? cat.maxScore : 0,
+      items: cat.items.map(it => ({
+        id: it.id,
+        title: it.title,
+        score: it.score !== null ? it.score : 0,
+        maxScore: it.maxScore !== null ? it.maxScore : 0,
+        status: (it.status === true) ? 'pass' : (it.status === false) ? 'fail' : 'neutral'
+      }))
+    })),
     fail: overallFail || false,
+    breakdown: []
   };
+
+  // Build a compatibility breakdown array (flatten per-item) for components that expect it.
+  const breakdown: EngineOutput['breakdown'] = [];
+  for (const cat of categoriesOut) {
+    for (const it of cat.items) {
+      breakdown.push({
+        category: it.title,
+        score: it.score,
+        maxScore: it.maxScore,
+        value: undefined,
+        threshold: undefined,
+        status: it.status,
+        feedback: undefined
+      });
+    }
+  }
+
+  output.breakdown = breakdown;
 
   return output;
 }

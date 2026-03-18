@@ -1428,12 +1428,15 @@ export function FeasibilityReport({ project, plot, metrics, estimates, generatio
                         
                         {stats?.greenAnalysis && (
                             <div className="mt-2 bg-green-50 border border-green-200 p-2 rounded">
-                                <strong className="text-green-800 block mb-1">Live Green Analysis: {stats.greenAnalysis.rating} ({stats.greenAnalysis.overall}/100)</strong>
-                                {stats.greenAnalysis.breakdown?.slice(0, 3).map((item, i) => (
-                                    <div key={i} className="flex justify-between text-[9px] text-green-900 border-t border-green-100/50 pt-0.5 mt-0.5">
-                                        <span>{item.category}: {item.score}%</span>
-                                    </div>
-                                ))}
+                                <strong className="text-green-800 block mb-1">Live Green Analysis: {(stats.greenAnalysis as any).overallScore} / {(stats.greenAnalysis as any).maxScore}</strong>
+                                {(() => {
+                                    const items = ((stats.greenAnalysis as any).categories || []).flatMap((c: any) => c.items || []);
+                                    return items.slice(0, 3).map((item: any, i: number) => (
+                                        <div key={i} className="flex justify-between text-[9px] text-green-900 border-t border-green-100/50 pt-0.5 mt-0.5">
+                                            <span>{item.title}: {item.score}</span>
+                                        </div>
+                                    ));
+                                })()}
                             </div>
                         )}
                     </div>

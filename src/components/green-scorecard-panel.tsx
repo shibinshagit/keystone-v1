@@ -14,7 +14,8 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { CheckCircle2, Circle, XCircle, AlertCircle, Leaf, Wind, Sun, MapPin, Loader2, MousePointerClick, Hand } from 'lucide-react';
-import { calculateGreenAnalysis } from '@/lib/engines/green-analysis-engine';
+import { GREEN_SCHEMA } from '@/lib/scoring/green.schema';
+import evaluateSchema, { ItemResult } from '@/lib/scoring/schema-engine';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 
@@ -92,159 +93,80 @@ export function GreenScorecardPanel() {
     const { regulations, isLoading } = useGreenRegulations(activeProject as unknown as Project);
 
     const creditStatusMap = useGreenStandardChecks(activeProject, activeProject?.simulationResults);
-    const [manualOverrides, setManualOverrides] = useState<Record<string, boolean>>({});
+    const [results, setResults] = useState<Record<string, ItemResult | undefined>>({});
+    const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+    // Use project's certification only for label — schema is always GREEN_SCHEMA
+    // The project type stores certification under `greenCertification` (array). Use first entry if present.
+    const certification = activeProject?.greenCertification ? activeProject.greenCertification[0] : undefined;
+    const activeSchema = GREEN_SCHEMA;
 
-    const scorecardDataList = useMemo(() => {
-        if (!regulations?.length) return [];
-
-        return regulations.map((regulation) => {
-        if (!regulation?.categories?.length) return null;
-
-        let totalPoints = 0;
-        let achievedPoints = 0;
-
-        const categories = regulation.categories.map((cat: any, catIdx: number) => {
-            const credits = (cat.credits || []).map((credit: any, creditIdx: number) => {
-                const maxPoints = credit.points || 0;
-                let status: 'pending' | 'achieved' | 'failed' = 'pending';
-                let score = 0;
-                let isAuto = false;
-                let isManualOnly = false;
-                let dataKey = '';
-                // Use category+index as fallback to handle duplicate credit names (e.g., 4x Innovation in Design)
-                const overrideKey = credit.code || `${catIdx}-${creditIdx}-${credit.name}`;
-
-                const nameLower = credit.name.toLowerCase();
-                
-                // Find matching rule
-                const matchedRule = CREDIT_MATCH_RULES.find(rule => 
-                    rule.keywords.some(kw => nameLower.includes(kw))
-                );
-
-                const isPrerequisite = credit.type === 'mandatory' || credit.type === 'prerequisite' || maxPoints === 0;
-
-                if (matchedRule) {
-                    if (matchedRule.checkKey === 'manual_tracking') {
-                        isManualOnly = true;
-                    } else if (matchedRule.checkKey === 'heat_island') {
-                        if (creditStatusMap['ventilation']?.status === 'achieved' && creditStatusMap['green_cover']?.status === 'achieved') {
-                            status = 'achieved';
-                            score = maxPoints;
-                            isAuto = true;
-                            dataKey = matchedRule.checkKey;
-                        }
-                    } else if (matchedRule.checkKey === 'energy_optimization') {
-                        // Energy optimization proven by good daylighting OR ventilation simulation
-                        if (creditStatusMap['ventilation']?.status === 'achieved' || creditStatusMap['daylighting']?.status === 'achieved') {
-                            status = 'achieved';
-                            score = maxPoints;
-                            isAuto = true;
-                            dataKey = 'energy_optimization';
-                        }
-                    } else {
-                        const engineStatus = creditStatusMap[matchedRule.checkKey];
-                        if (engineStatus) {
-                            status = engineStatus.status;
-                            if (status === 'achieved') score = maxPoints;
-                            isAuto = true;
-                            dataKey = matchedRule.checkKey;
-                        }
-                    }
-                } else {
-                    isManualOnly = true;
-                }
-
-                if (isPrerequisite && !isAuto && !isManualOnly) {
-                    isManualOnly = true;
-                }
-
-                // Final override: user toggle always takes precedence
-                if (overrideKey in manualOverrides) {
-                    if (manualOverrides[overrideKey]) {
-                        status = 'achieved';
-                        score = maxPoints;
-                    } else {
-                        status = 'pending';
-                        score = 0;
-                    }
-                }
-
-                totalPoints += maxPoints;
-                achievedPoints += score;
-
-                return { 
-                    ...credit, 
-                    status, 
-                    score, 
-                    maxPoints, 
-                    isAuto, 
-                    isManualOnly, 
-                    dataKey,
-                    overrideKey
-                };
-            });
-
-            return { ...cat, credits };
+    // Initialize expanded state and mandatory results whenever the active schema changes
+    React.useEffect(() => {
+        const expInit: Record<string, boolean> = {};
+        (activeSchema.categories || []).forEach((cat: any) => {
+            expInit[cat.id || cat.name || String(Math.random())] = true;
         });
-        return {
-            id: regulation.id || regulation.certificationType,
-            certificationType: regulation.certificationType,
-            label: getStandardLabel(regulation.name || regulation.certificationType),
-            categories,
-            totalPoints,
-            achievedPoints,
-            ratingBands: regulation.ratingBands || [],
-        };
-        }).filter(Boolean) as Array<{
-            id: string;
-            certificationType: string;
-            label: string;
-            categories: any[];
-            totalPoints: number;
-            achievedPoints: number;
-            ratingBands: { label: string; minPoints: number; maxPoints?: number }[];
-        }>;
-    }, [regulations, creditStatusMap, manualOverrides]);
+        setExpanded(expInit);
 
-    // UI-only: pick the first scorecard per certification for display purposes.
-    // This does not mutate the underlying data; it only controls what is rendered.
-    const visibleScorecards = useMemo(() => {
-        const seen = new Set<string>();
-        const res: typeof scorecardDataList = [] as any;
-        for (const sc of scorecardDataList) {
-            const key = getStandardName(sc.certificationType || sc.label || sc.id).toUpperCase();
-            if (!seen.has(key)) {
-                seen.add(key);
-                res.push(sc);
-            }
-        }
-        return res;
-    }, [scorecardDataList]);
+        // Initialize mandatory items (including children) in results
+        const initial: Record<string, ItemResult> = {};
+        (activeSchema.categories || []).forEach((cat: any) => {
+            (cat.items || []).forEach((item: any) => {
+                if (item.mandatory) initial[item.id] = { status: 'pass' };
+                if (item.children && Array.isArray(item.children)) {
+                    item.children.forEach((child: any) => {
+                        if (child.mandatory) initial[child.id] = { status: 'pass' };
+                    });
+                }
+            });
+        });
 
-    const handleToggleManual = (overrideKey: string) => {
-        setManualOverrides(prev => ({
-            ...prev,
-            [overrideKey]: !prev[overrideKey]
-        }));
-    };
+        setResults(initial);
+    }, [activeSchema]);
 
-    const plots = useBuildingStore(state => state.plots);
-    const isPlotCreated = plots.length > 0;
-
-    const engineAnalysis = useMemo(() => {
-        if (!isPlotCreated) return null;
-        const plot = plots[0];
-        const buildings = (plot && plot.buildings) ? plot.buildings : [];
+    // Compute analysis from evaluateSchema using activeSchema and current results
+    const analysis = useMemo(() => {
         try {
-            return calculateGreenAnalysis(plot, buildings);
+            return evaluateSchema(activeSchema as any, results as Record<string, ItemResult | undefined>);
         } catch (e) {
-            return null;
+            console.error('evaluateSchema failed', e);
+            return null as any;
         }
-    }, [plots, isPlotCreated]);
+    }, [activeSchema, results]);
+
+    // Debug logs to validate data flow
+    React.useEffect(() => {
+        console.log('CERT:', certification);
+        console.log('SCHEMA:', activeSchema);
+        console.log('RESULTS', results);
+        console.log('ANALYSIS', analysis);
+    }, [certification, activeSchema, results, analysis]);
+
+    // Reset results when certification changes
+    React.useEffect(() => {
+        const initial: Record<string, ItemResult> = {};
+        (activeSchema.categories || []).forEach((cat: any) => {
+            (cat.items || []).forEach((item: any) => {
+                if (item.mandatory) initial[item.id] = { status: 'pass' };
+                if (item.children && Array.isArray(item.children)) {
+                    item.children.forEach((child: any) => {
+                        if (child.mandatory) initial[child.id] = { status: 'pass' };
+                    });
+                }
+            });
+        });
+        setResults(initial);
+    }, [certification]);
 
     if (!activeProject) return <div className="p-4 text-center text-muted-foreground">Select a project to view scorecard</div>;
 
-    if (!isPlotCreated) {
+    // If schema not available, show empty state (no fallback)
+    if (!activeSchema) {
+        return <div className="p-4 text-sm text-muted-foreground">No schema available for certification: {certification}</div>;
+    }
+
+    // We no longer require a created plot for schema-driven UI; render using `analysis` alone.
+    if (!analysis) {
         return (
             <div className="flex flex-col h-full">
                 <div className="px-3 py-2 border-b shrink-0">
@@ -259,7 +181,7 @@ export function GreenScorecardPanel() {
                             <MousePointerClick className="h-6 w-6 text-muted-foreground/50" />
                         </div>
                         <p className="text-sm text-muted-foreground max-w-[200px]">
-                            Create a plot on the map to start tracking your green score.
+                            Scorecard data is not yet available.
                         </p>
                     </div>
                 </div>
@@ -267,9 +189,8 @@ export function GreenScorecardPanel() {
         );
     }
 
-
-    // Per strict UI rule: rely only on engine output. If engine analysis is not available, render nothing.
-    if (!engineAnalysis) return null;
+    // Per strict UI rule: rely only on engine output (evaluateSchema).
+    if (!analysis) return null;
 
     return (
         <div className="h-full flex flex-col w-full max-h-[calc(100vh-200px)]">
@@ -285,10 +206,25 @@ export function GreenScorecardPanel() {
                         {/* Removed regulation-based badges per strict engine-only UI rule */}
                     </div>
                 </div>
-                <div className="mt-2">
-                    {/* Header: show only overallScore / 100 — no percentage, no progress bar */}
-                    <div className="text-sm font-medium">{engineAnalysis.overallScore} / 100</div>
-                </div>
+                                <div className="mt-2">
+                                                        {/* Certification label from project */}
+                                                        <div className="text-sm text-muted-foreground mb-1"><strong>Certification:</strong> {certification || 'GRIHA'}</div>
+
+                                                        {/* Header: show only overallScore / totalPoints from analysis */}
+                                                        <div className="text-sm font-medium">{analysis.overallScore} / {analysis.maxScore || 100}</div>
+
+                                        {/* Progress bar driven strictly by analysis values */}
+                                        <div style={{ marginTop: 8 }}>
+                                            {(() => {
+                                                const percentage = analysis.maxScore > 0 ? (analysis.overallScore / analysis.maxScore) * 100 : 0;
+                                                return (
+                                                    <div style={{ height: '6px', width: '100%', background: '#eee', borderRadius: '4px' }}>
+                                                        <div style={{ height: '6px', width: `${percentage}%`, background: '#22c55e', borderRadius: '4px' }} />
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
+                                </div>
             </div>
 
             {/* Scrollable List */}
@@ -296,37 +232,88 @@ export function GreenScorecardPanel() {
                 <div className="p-4">
                     <div className="space-y-6">
                         <div className="space-y-3">
-                            {engineAnalysis.breakdown.map((bd, idx) => (
-                                <div key={idx} className="rounded-lg border border-border/40 bg-secondary/10 p-3">
-                                    <div className="flex items-center justify-between">
-                                        <h4 className="text-sm font-semibold">{bd.category}</h4>
-                                        {/* LINE 1 (RIGHT): show only when both score and maxScore exist */}
-                                        <div>
-                                            {bd.score != null && bd.maxScore != null ? (
-                                                <span className="text-xs text-muted-foreground">{bd.score} / {bd.maxScore}</span>
-                                            ) : null}
+                            { (activeSchema.categories || []).map((category: any) => {
+                                const catId = category.id || category.name || category.title;
+                                const isExpanded = expanded[catId] !== false;
+                                const catAnalysis = (analysis.categories || []).find((c: any) => c.title === category.name || c.title === category.title);
+
+                                return (
+                                    <div key={catId} className="space-y-2">
+                                        <div
+                                            style={{
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                fontWeight: 600,
+                                                marginTop: 10,
+                                                cursor: 'pointer'
+                                            }}
+                                            onClick={() => setExpanded(prev => ({ ...prev, [catId]: !prev[catId] }))}
+                                        >
+                                            <span>{category.name || category.title}</span>
+                                            <span style={{ textAlign: 'right' }}>{catAnalysis ? `${catAnalysis.score} / ${category.maxScore || 0}` : `0 / ${category.maxScore || 0}`}</span>
                                         </div>
-                                    </div>
 
-                                    {/* LINE 2 (BELOW): if value and threshold exist show value/threshold; else if feedback exists show feedback */}
-                                    <div className="mt-1">
-                                        {bd.value != null && bd.threshold != null ? (
-                                            <div className="text-xs text-muted-foreground">{String(bd.value)} / {String(bd.threshold)}</div>
-                                        ) : bd.feedback ? (
-                                            <div className="text-xs text-muted-foreground">{bd.feedback}</div>
+                                        {isExpanded ? (
+                                            <div className="rounded-lg border border-border/40 bg-secondary/10 p-3">
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    { (category.items || []).map((item: any) => {
+                                                        const itemRes = results[item.id];
+                                                        const isPass = !!itemRes && (itemRes.status === true || itemRes.status === 'pass');
+                                                        const itemAnalysis = (analysis.categories || []).flatMap((c: any) => c.items).find((i: any) => i.id === String(item.id));
+
+                                                        return (
+                                                            <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', marginBottom: 6 }}>
+                                                                {/* LEFT: TITLE */}
+                                                                <span style={{ flex: 1 }}>{item.name || item.title}</span>
+
+                                                                {/* CENTER-RIGHT: SCORE */}
+                                                                <span style={{ width: '60px', textAlign: 'right', marginRight: 10 }}>{itemAnalysis ? `${itemAnalysis.score} / ${item.maxScore || 0}` : `0 / ${item.maxScore || 0}`}</span>
+
+                                                                {/* RIGHT: TOGGLE */}
+                                                                <div
+                                                                    onClick={() => {
+                                                                        const isActive = results[item.id]?.status === 'pass';
+                                                                        setResults(prev => ({ ...prev, [item.id]: { status: isActive ? 'fail' : 'pass' } }));
+                                                                    }}
+                                                                    style={{ width: 34, height: 18, borderRadius: 20, background: results[item.id]?.status === 'pass' ? '#22c55e' : '#ccc', display: 'flex', alignItems: 'center', padding: 2, cursor: 'pointer' }}
+                                                                >
+                                                                    <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', transform: results[item.id]?.status === 'pass' ? 'translateX(16px)' : 'translateX(0px)', transition: '0.2s' }} />
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+
+                                                    {/* Child items (if any) */}
+                                                    { (category.items || []).map((item: any) => {
+                                                        if (!item.children || !Array.isArray(item.children) || item.children.length === 0) return null;
+                                                        return (
+                                                            <div key={`${item.id}-children`} style={{ paddingLeft: 12, marginBottom: 6 }}>
+                                                                {item.children.map((child: any) => {
+                                                                    const childRes = results[child.id];
+                                                                    const childPass = !!childRes && (childRes.status === true || childRes.status === 'pass');
+                                                                    const childAnalysis = (analysis.categories || []).flatMap((c: any) => c.items).find((i: any) => i.id === String(child.id));
+                                                                    return (
+                                                                        <div key={child.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
+                                                                            <span style={{ flex: 1 }}>{child.name || child.title}</span>
+                                                                            <span style={{ width: '60px', textAlign: 'right', marginRight: 10 }}>{childAnalysis ? `${childAnalysis.score} / ${child.maxScore || 0}` : `0 / ${child.maxScore || 0}`}</span>
+                                                                            <div
+                                                                                onClick={() => setResults(prev => ({ ...prev, [child.id]: { status: childPass ? 'fail' : 'pass' } }))}
+                                                                                style={{ width: 34, height: 18, borderRadius: 20, background: results[child.id]?.status === 'pass' ? '#22c55e' : '#ccc', display: 'flex', alignItems: 'center', padding: 2, cursor: 'pointer' }}
+                                                                            >
+                                                                                <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', transform: results[child.id]?.status === 'pass' ? 'translateX(16px)' : 'translateX(0px)', transition: '0.2s' }} />
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
                                         ) : null}
                                     </div>
-
-                                    {/* STATUS ICON: render only when status is explicitly true/false */}
-                                    <div className="mt-2">
-                                        {bd.status === true ? (
-                                            <CheckCircle2 className="h-4 w-4 text-green-500" />
-                                        ) : bd.status === false ? (
-                                            <AlertCircle className="h-4 w-4 text-red-500" />
-                                        ) : null}
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
                 </div>

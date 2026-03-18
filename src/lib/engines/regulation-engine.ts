@@ -694,7 +694,8 @@ export class RegulationEngine {
 
         fallbackCredits.forEach(c => {
             // Default evaluation is 'warn' so they appear available but not achieved without audits
-            greenItems.push(this.createScoreItem(`${c.code} ${c.name}`, this.greenStandards ? 'pass' : 'warn', this.greenStandards ? 'Mapped to standard' : 'Fallback credit', c.points));
+            // Avoid emitting legacy 'Mapped to standard' text; regulation engine is deprecated for scoring UI
+            greenItems.push(this.createScoreItem(`${c.code} ${c.name}`, this.greenStandards ? 'pass' : 'warn', this.greenStandards ? 'Standard match' : 'Fallback credit', c.points));
         });
 
         // ========== VASTU ==========

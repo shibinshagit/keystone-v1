@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { Toaster as HotToaster } from 'react-hot-toast';
+import { ScoringProvider } from '@/hooks/use-scoring-store';
 
 export const metadata: Metadata = {
   title: 'Key Stone AI',
@@ -25,7 +26,9 @@ export default function RootLayout({
       </head>
       <body className="font-body antialiased">
         <HotToaster />
-        {children}
+        <ScoringProvider>
+          {children}
+        </ScoringProvider>
       </body>
     </html>
   );

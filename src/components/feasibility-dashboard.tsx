@@ -1,6 +1,7 @@
 
 'use client';
 import React, { useState, useMemo } from 'react';
+import { calculateVastuScore } from "@/lib/engines/vastu-engine";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { ScrollArea } from './ui/scroll-area';
@@ -1676,11 +1677,13 @@ function FeasibilityTab() {
             label: "Green Simulation (Beta)",
             score: (metrics as any).greenAnalysis.overall,
             icon: CheckCircle,
-            items: (metrics as any).greenAnalysis.breakdown.map((b: any) => ({
-                label: b.category,
-                status: b.score > 70 ? 'pass' : b.score > 40 ? 'warn' : 'fail',
-                detail: b.feedback
-            }))
+            items: (metrics as any).greenAnalysis.categories.flatMap((cat: any) => (
+                (cat.items || []).map((it: any) => ({
+                    label: it.title,
+                    status: it.status === 'pass' ? 'pass' : it.status === 'fail' ? 'fail' : 'warn',
+                    detail: it.feedback || (it.value != null && it.threshold != null ? `${it.value} / ${it.threshold}` : undefined)
+                }))
+            ))
         }] : [])
     ];
 
@@ -2070,9 +2073,6 @@ function FeasibilityTab() {
         </div>
     );
 }
-
-
-
 export function FeasibilityDashboard() {
     const { uiState, projects, activeProjectId } = useBuildingStore();
     const [isFullscreen, setIsFullscreen] = useState(false);
@@ -2090,6 +2090,22 @@ export function FeasibilityDashboard() {
     const activeProjectData = useProjectData();
     const metricsForSim = useDevelopmentMetrics(activeProjectData);
     const { estimates: simEstimates, isLoading: simLoading } = useProjectEstimates(activeProjectData, metricsForSim);
+
+    // demo
+        const plot = plots[0];
+
+        const buildings = plots.flatMap(p => (p as any).buildings || []);
+
+        const vastuResult = plot
+        ? calculateVastuScore(plot, buildings)
+        : null;
+
+        const vastuScore = vastuResult?.overallScore ?? 0;
+        
+            <div className="text-sm font-medium">
+                Vastu Score: {vastuScore}
+            </div>
+        //end demo
 
     const handleExportData = () => {
         if (!activeProjectData || !metricsForSim) return;
@@ -2156,9 +2172,9 @@ export function FeasibilityDashboard() {
                             </div>
                         </div>
                     )}
-                </Card>
-            </div>
-        );
+        </Card>
+    </div>
+);
     }
 
     const cardClasses = "bg-background/95 backdrop-blur-md border border-border shadow-2xl";
@@ -2257,7 +2273,6 @@ export function FeasibilityDashboard() {
                     )}
                 </div>
             </Card>
-            
             {/* Print-only Report Wrapper */}
             <div id="report-print-container" className="hidden print:block absolute inset-0 z-[9999] bg-white print:overflow-visible print:h-auto print:static">
                 {activeProject && selectedPlot && reportType === 'feasibility' && (

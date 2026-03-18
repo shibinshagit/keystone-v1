@@ -799,9 +799,13 @@ function collectRenderingData(_plots: Plot[], selectedPlot: Plot, designParams: 
     const plotsWithBuildings = selectedPlot.buildings.length > 0 ? 1 : 0;
     const vastuScoreSummary: AdditiveScoreSummary | undefined = plotsWithBuildings > 0 && selectedPlot.developmentStats?.vastuScore
         ? {
-            totalScore: selectedPlot.developmentStats.vastuScore.breakdown.reduce((sum, item) => sum + (item.score || 0), 0),
-            maxScore: selectedPlot.developmentStats.vastuScore.breakdown.reduce((sum, item) => sum + (item.maxScore || 0), 0),
-            percentage: Math.round(selectedPlot.developmentStats.vastuScore.overall ?? 0),
+            totalScore: ((selectedPlot.developmentStats.vastuScore as any).categories || []).reduce((catAcc: number, cat: any) => {
+                return catAcc + ((cat.items || []).reduce((itAcc: number, it: any) => itAcc + (it.score || 0), 0));
+            }, 0),
+            maxScore: ((selectedPlot.developmentStats.vastuScore as any).categories || []).reduce((catAcc: number, cat: any) => {
+                return catAcc + ((cat.items || []).reduce((itAcc: number, it: any) => itAcc + (it.maxScore || 0), 0));
+            }, 0),
+            percentage: Math.round(((selectedPlot.developmentStats.vastuScore as any).overallScore) ?? 0),
         }
         : undefined;
 
@@ -5492,11 +5496,13 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                 if (!activePlot.developmentStats) {
                                     activePlot.developmentStats = calculateDevelopmentStats(activePlot as any, DEFAULT_FEASIBILITY_PARAMS);
                                 }
+                                // Map schema engine output into the developmentStats shape expected elsewhere.
                                 activePlot.developmentStats.vastuScore = {
-                                    overall: result.overallScore,
-                                    rating: result.rating,
-                                    breakdown: result.breakdown
-                                };
+                                    overall: result.overallScore ?? 0,
+                                    // 'rating' was part of the old engine; schema engine does not provide it.
+                                    rating: undefined as any,
+                                    breakdown: result.breakdown || []
+                                } as any;
                             }
                         }
                     }
