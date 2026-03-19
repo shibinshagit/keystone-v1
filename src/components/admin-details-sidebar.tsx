@@ -11,6 +11,7 @@ import { Textarea } from './ui/textarea';
 import { toast } from '@/hooks/use-toast';
 import { Separator } from './ui/separator';
 import { Switch } from './ui/switch';
+import { REGULATION_SUB_GROUPS } from '@/lib/types';
 
 interface AdminDetailsSidebarProps {
     title: string;
@@ -21,14 +22,14 @@ interface AdminDetailsSidebarProps {
     onClose: () => void;
 }
 
-const renderValueInput = (currentPath: string, value: any, onUpdate: (path: string, value: any) => void) => {
+const renderValueInput = (currentPath: string, value: any, onUpdate: (path: string, value: any) => void, placeholder?: string) => {
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
         return (
             <div className="space-y-4 pl-4 border-l ml-2 mt-2">
-                {Object.entries(value).map(([key, subValue]) => (
-                    <div key={key} className="grid grid-cols-2 items-center">
-                        <Label className="text-xs capitalize text-muted-foreground">{key.replace(/_/g, ' ')}</Label>
-                        {renderValueInput(`${currentPath}.${key}`, subValue, onUpdate)}
+                {Object.entries(value).map(([subKey, subValue]) => (
+                    <div key={subKey} className="grid grid-cols-2 items-center">
+                        <Label className="text-xs capitalize text-muted-foreground">{subKey.replace(/_/g, ' ')}</Label>
+                        {renderValueInput(`${currentPath}.${subKey}`, subValue, onUpdate)}
                     </div>
                 ))}
             </div>
@@ -36,9 +37,18 @@ const renderValueInput = (currentPath: string, value: any, onUpdate: (path: stri
     } else {
         return (
             <Input
-                type={typeof value === 'number' ? 'number' : 'text'}
-                value={value}
-                onChange={(e) => onUpdate(currentPath, typeof value === 'number' ? parseFloat(e.target.value) || 0 : e.target.value)}
+                type="text"
+                value={value === undefined ? '' : value}
+                placeholder={placeholder}
+                onChange={(e) => {
+                    const text = e.target.value;
+                    const num = parseFloat(text);
+                    if (text !== "" && !isNaN(Number(text))) {
+                        onUpdate(currentPath, num);
+                    } else {
+                        onUpdate(currentPath, text);
+                    }
+                }}
                 className="text-xs h-8 bg-background"
             />
         );
@@ -86,54 +96,85 @@ export function AdminDetailsSidebar({ title, data, path, onUpdate, onFullUpdate,
                 <CardContent className="space-y-6 h-full">
                     {view === 'form' ? (
                          <>
-                            {data && Object.entries(data).map(([key, item]) => (
-                                <Card key={key} className="bg-background/50">
-                                    <CardHeader>
-                                        <CardTitle className="text-base capitalize">{key.replace(/_/g, ' ')}</CardTitle>
-                                    </CardHeader>
-                                    <CardContent className="space-y-4">
-                                    <div className="grid grid-cols-3 gap-4 items-start">
-                                            <Label className="text-sm pt-2">Description</Label>
-                                            <Textarea
-                                                value={item.desc}
-                                                onChange={(e) => onUpdate(`${path}.${key}.desc`, e.target.value)}
-                                                className="text-xs bg-background col-span-2"
-                                                rows={4}
-                                            />
-                                        </div>
-                                        <div className="grid grid-cols-3 gap-4 items-center">
-                                            <Label className="text-sm">Unit</Label>
-                                            <Input
-                                                value={item.unit}
-                                                onChange={(e) => onUpdate(`${path}.${key}.unit`, e.target.value)}
-                                                className="bg-background col-span-2"
-                                            />
-                                        </div>
-                                        <div className="grid grid-cols-3 gap-4 items-start">
-                                            <Label className="text-sm pt-2">Value</Label>
-                                            <div className="col-span-2">
-                                                {renderValueInput(`${path}.${key}.value`, item.value, onUpdate)}
-                                            </div>
-                                        </div>
-                                        {item.min !== undefined && (
-                                            <div className="grid grid-cols-3 gap-4 items-start">
-                                                <Label className="text-sm pt-2">Min</Label>
-                                                <div className="col-span-2">
-                                                    {renderValueInput(`${path}.${key}.min`, item.min, onUpdate)}
+                            {(() => {
+                                if (!data) return null;
+                                const groupedData: Record<string, [string, any][]> = { "General": [] };
+                                Object.entries(data).forEach(([key, item]) => {
+                                    let assignedGroup = "General";
+                                    for (const [groupName, keys] of Object.entries(REGULATION_SUB_GROUPS)) {
+                                        if (keys.includes(key)) {
+                                            assignedGroup = groupName;
+                                            break;
+                                        }
+                                    }
+                                    if (!groupedData[assignedGroup]) groupedData[assignedGroup] = [];
+                                    groupedData[assignedGroup].push([key, item]);
+                                });
+
+                                return Object.entries(groupedData).map(([groupName, items]) => {
+                                    if (items.length === 0) return null;
+                                    return (
+                                        <div key={groupName} className="mb-8">
+                                            {groupName !== "General" && (
+                                                <div className="flex items-center gap-2 mb-4">
+                                                    <h3 className="text-sm font-semibold text-primary/80 uppercase tracking-wider">{groupName}</h3>
+                                                    <Separator className="flex-1" />
                                                 </div>
+                                            )}
+                                            <div className="space-y-4">
+                                                {items.map(([key, item]) => (
+                                                    <Card key={key} className="bg-background/50">
+                                                        <CardHeader>
+                                                            <CardTitle className="text-base capitalize">{key.replace(/_/g, ' ')}</CardTitle>
+                                                        </CardHeader>
+                                                        <CardContent className="space-y-4">
+                                                            <div className="grid grid-cols-3 gap-4 items-start">
+                                                                <Label className="text-sm pt-2">Description</Label>
+                                                                <Textarea
+                                                                    value={item.desc}
+                                                                    onChange={(e) => onUpdate(`${path}.${key}.desc`, e.target.value)}
+                                                                    className="text-xs bg-background col-span-2"
+                                                                    rows={4}
+                                                                />
+                                                            </div>
+                                                            <div className="grid grid-cols-3 gap-4 items-center">
+                                                                <Label className="text-sm">Unit</Label>
+                                                                <Input
+                                                                    value={item.unit}
+                                                                    onChange={(e) => onUpdate(`${path}.${key}.unit`, e.target.value)}
+                                                                    className="bg-background col-span-2"
+                                                                />
+                                                            </div>
+                                                            <div className="grid grid-cols-3 gap-4 items-start">
+                                                                <Label className="text-sm pt-2">Value</Label>
+                                                                <div className="col-span-2">
+                                                                    {renderValueInput(`${path}.${key}.value`, item.value, onUpdate, item.exampleStr)}
+                                                                </div>
+                                                            </div>
+                                                            {item.min !== undefined && (
+                                                                <div className="grid grid-cols-3 gap-4 items-start">
+                                                                    <Label className="text-sm pt-2">Min</Label>
+                                                                    <div className="col-span-2">
+                                                                        {renderValueInput(`${path}.${key}.min`, item.min, onUpdate, item.exampleStr ? `${item.exampleStr} (min)` : undefined)}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                            {item.max !== undefined && (
+                                                                <div className="grid grid-cols-3 gap-4 items-start">
+                                                                    <Label className="text-sm pt-2">Max</Label>
+                                                                    <div className="col-span-2">
+                                                                        {renderValueInput(`${path}.${key}.max`, item.max, onUpdate, item.exampleStr ? `${item.exampleStr} (max)` : undefined)}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </CardContent>
+                                                    </Card>
+                                                ))}
                                             </div>
-                                        )}
-                                        {item.max !== undefined && (
-                                            <div className="grid grid-cols-3 gap-4 items-start">
-                                                <Label className="text-sm pt-2">Max</Label>
-                                                <div className="col-span-2">
-                                                    {renderValueInput(`${path}.${key}.max`, item.max, onUpdate)}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </CardContent>
-                                </Card>
-                            ))}
+                                        </div>
+                                    );
+                                });
+                            })()}
                         </>
                     ) : (
                         <div className="space-y-4 px-1 h-full flex flex-col">

@@ -703,6 +703,7 @@ export interface RegulationValue {
   value: number | any;
   min?: number | any;
   max?: number | any;
+  exampleStr?: string;
 }
 
 export interface RegulationData {
@@ -715,6 +716,20 @@ export interface RegulationData {
   safety_and_services: { [key: string]: RegulationValue };
   administration: { [key: string]: RegulationValue };
 }
+
+export const REGULATION_SUB_GROUPS: Record<string, string[]> = {
+    "Zoning & Land": ["land_use_zoning", "minimum_plot_size", "minimum_frontage_width", "conversion_status", "land_use_category", "density_norms", "units_per_acre", "population_load", "tod_rules", "special_zones"],
+    "FAR & FSI": ["floor_area_ratio", "premium_fsi_tdr", "premium_far_purchasable", "fungible_fsi_incentive", "fungible_far_incentive", "excluded_areas_calc", "exclusions_basement_services"],
+    "Setbacks": ["setback", "front_setback", "rear_setback", "side_setback", "road_width", "road_setback_building_line", "highrise_setback_multiplier", "based_on_road_width", "based_on_building_height", "based_on_plot_size"],
+    "Building Height": ["max_height", "height_vs_road_width", "aviation_clearance", "shadow_skyline_control"],
+    "Parking & Traffic": ["parking", "entry_exit_width", "internal_road_width", "parking_ecs", "visitor_parking", "ramp_slope", "turning_radius"],
+    "Building Planning": ["staircase_width", "staircase_count", "lift_requirements", "refuge_areas", "corridor_widths", "unit_size_compliance"],
+    "Environment & Greens": ["open_space", "max_ground_coverage", "tree_plantation_green_cover", "leed_compliance", "igbc_compliance", "griha_compliance", "rainwater_harvesting", "solar_panels", "water_consumption_norm", "energy_efficiency"],
+    "Fire & Life Safety": ["fire_safety", "fire_tender_access", "staircases_by_height", "fire_exits_travel_distance", "refuge_floors", "fire_fighting_systems", "fire_command_center", "fire_tender_movement"],
+    "Utilities & MEP": ["water_supply_approval", "sewer_connection_stp", "stormwater_drainage", "electrical_load_sanction", "transformer_placement", "backup_power_norms", "gas_pipelines", "telecom_infrastructure", "sewage_treatment_plant", "solid_waste_management"],
+    "Structural Engineering": ["seismic_zone", "wind_load", "soil_bearing_capacity"],
+    "Financial & Legal": ["fee_rate", "saleable_vs_carpet_rera", "exit_compliance", "absorption_assumptions", "infra_load_vs_financial_viability"]
+};
 
 export interface DesignOption {
   id: string;

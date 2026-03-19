@@ -35,11 +35,6 @@ const ExtractedGreenRegulationSchema = z.object({
             requirements: z.array(z.string()).optional().describe('Detailed text requirements for this credit'),
         }))
     })).optional().describe('Comprehensive list of certification categories and credits'),
-    ratingBands: z.array(z.object({
-        label: z.string(),
-        minPoints: z.number(),
-        maxPoints: z.number().optional(),
-    })).optional().describe('Official certification rating bands such as Certified, Silver, Gold, Platinum'),
     confidence: z.number().min(0).max(1).describe('Confidence score for this extraction (0-1)'),
 });
 
@@ -128,10 +123,6 @@ Task:
    - Extract: "code", "name", "points", "type", "requirements" (for relevant credits only).
 
 4. Identify the Certification Standard (IGBC, GRIHA, LEED).
-5. Extract the official rating bands if present.
-   - Example LEED: Certified 40-49, Silver 50-59, Gold 60-79, Platinum 80+
-   - Example IGBC: Certified 50-59, Silver 60-69, Gold 70-79, Platinum 80+
-   - Example GRIHA: Star ranges based on total points
 
 **Structure**:
 {
@@ -168,10 +159,6 @@ Task:
       ]
     },
     ...
-  ],
-  "ratingBands": [
-    { "label": "Certified", "minPoints": 50, "maxPoints": 59 },
-    { "label": "Silver", "minPoints": 60, "maxPoints": 69 }
   ]
 }
 
@@ -219,26 +206,19 @@ Return ONLY the JSON object.`;
             const jsonString = text.substring(firstBracket, lastBracket + 1);
             const parsed = JSON.parse(jsonString);
 
-            // Sanitize numeric constraints (must be 0-1)
             if (parsed.constraints) {
                 const sanitize = (val: any) => {
                     if (val === null || val === undefined) return null;
 
                     let num = val;
                     if (typeof val === 'string') {
-                        // Clean string (e.g. "30%" -> 30)
                         num = parseFloat(val.replace(/[^0-9.]/g, ''));
                     }
 
                     if (typeof num !== 'number' || isNaN(num)) return null;
+                    if (num > 1 && num <= 100) return num / 100;
 
-                    // If value is between 1 and 100, assume percentage -> convert to decimal
-                    if (num > 1 && num <= 100) return num / 100; // e.g. 30 -> 0.3
-
-                    // If value is 0-1, it's already decimal
                     if (num >= 0 && num <= 1) return num;
-
-                    // If > 100 (e.g. 900), it's likely bad data or absolute value -> Reject
                     return null;
                 };
 
@@ -247,12 +227,10 @@ Return ONLY the JSON object.`;
                 parsed.constraints.minGreenCover = sanitize(parsed.constraints.minGreenCover);
             }
 
-            // Normailize 'confidence'
             if (typeof parsed.confidence !== 'number') {
-                parsed.confidence = 0.85; // Default confidence
+                parsed.confidence = 0.85;
             }
 
-            // Normalize 'categories'
             if (Array.isArray(parsed.categories)) {
                 parsed.categories = parsed.categories.map((cat: any) => {
                     // Fix 'category' vs 'name'
@@ -278,40 +256,6 @@ Return ONLY the JSON object.`;
             // Default fallback for mandatory fields if AI misses them to match schema roughly
             if (!parsed.certificationType) parsed.certificationType = 'Green Building';
             if (!parsed.name) parsed.name = input.fileName;
-
-            // Normalize analysisThresholds: ensure each threshold is either null or an object with numeric min and target
-            if (parsed.analysisThresholds) {
-                const normalize = (t: any) => {
-                    if (t === null || t === undefined) return null;
-                    // If t is an object, try to coerce min/target to numbers
-                    let min = t.min;
-                    let target = t.target;
-
-                    if (typeof min === 'string') {
-                        const n = parseFloat(min.replace(/[^0-9.-]/g, ''));
-                        min = isNaN(n) ? null : n;
-                    }
-                    if (typeof target === 'string') {
-                        const n = parseFloat(target.replace(/[^0-9.-]/g, ''));
-                        target = isNaN(n) ? null : n;
-                    }
-
-                    if (typeof min !== 'number' || typeof target !== 'number' || isNaN(min) || isNaN(target)) {
-                        return null;
-                    }
-
-                    return { min, target };
-                };
-
-                parsed.analysisThresholds.sunHours = normalize(parsed.analysisThresholds.sunHours);
-                parsed.analysisThresholds.daylightFactor = normalize(parsed.analysisThresholds.daylightFactor);
-                parsed.analysisThresholds.windSpeed = normalize(parsed.analysisThresholds.windSpeed);
-
-                // If all three are null, set analysisThresholds to null to match schema anyOf
-                if (!parsed.analysisThresholds.sunHours && !parsed.analysisThresholds.daylightFactor && !parsed.analysisThresholds.windSpeed) {
-                    parsed.analysisThresholds = null;
-                }
-            }
 
             return parsed as z.infer<typeof ExtractedGreenRegulationSchema>;
         } catch (e) {

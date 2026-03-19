@@ -1,45 +1,94 @@
 import { ai } from '@/ai/genkit';
 import { z } from 'genkit';
-import { generateWithFallback } from '@/ai/model-fallback';
 
-// Schema matching the RegulationData structure
-const RegulationValueSchema = z.object({
-  desc: z.string(),
-  unit: z.string(),
-  value: z.number(),
-  min: z.number().optional(),
-  max: z.number().optional(),
-});
+// Parse and sanitize the AI response
+function parseAndSanitize(rawText: string): any[] {
+  // Strip markdown code fences
+  let text = rawText.trim();
+  if (text.startsWith('```')) {
+    text = text.replace(/^```[a-zA-Z]*\n?/, '');
+    text = text.replace(/\n?```\s*$/, '');
+    text = text.trim();
+  }
 
-const ExtractedRegulationSchema = z.object({
-  location: z.string().describe('The geographic location this regulation applies to (e.g., "Kerala", "Mumbai", "Andhra Pradesh")'),
-  type: z.string().describe('The regulation type/category (e.g., "Residential", "Commercial", "Mixed-Use")'),
-  geometry: z.object({
-    setback: RegulationValueSchema.optional(),
-    front_setback: RegulationValueSchema.optional(),
-    rear_setback: RegulationValueSchema.optional(),
-    side_setback: RegulationValueSchema.optional(),
-    road_width: RegulationValueSchema.optional(),
-    max_ground_coverage: RegulationValueSchema.optional(),
-    floor_area_ratio: RegulationValueSchema.optional(),
-    max_height: RegulationValueSchema.optional(),
-  }).describe('Geometric constraints and spatial requirements'),
-  facilities: z.object({
-    parking: RegulationValueSchema.optional(),
-    open_space: RegulationValueSchema.optional(),
-  }).describe('Facility and amenity requirements'),
-  sustainability: z.object({
-    rainwater_harvesting: RegulationValueSchema.optional(),
-    solar_panels: RegulationValueSchema.optional(),
-  }).describe('Environmental and sustainability requirements'),
-  safety_and_services: z.object({
-    fire_safety: RegulationValueSchema.optional(),
-  }).describe('Safety standards and service requirements'),
-  administration: z.object({
-    fee_rate: RegulationValueSchema.optional(),
-  }).describe('Administrative fees and processing costs'),
-  confidence: z.number().min(0).max(1).describe('Confidence score for this extraction (0-1)'),
-});
+  const firstBracket = text.indexOf('[');
+  const lastBracket = text.lastIndexOf(']');
+
+  if (firstBracket === -1 || lastBracket === -1 || lastBracket <= firstBracket) {
+    // Try truncated recovery
+    return recoverTruncatedJson(text);
+  }
+
+  const jsonString = text.substring(firstBracket, lastBracket + 1);
+  let parsed: any;
+  
+  try {
+    parsed = JSON.parse(jsonString);
+  } catch {
+    return recoverTruncatedJson(text);
+  }
+
+  if (!Array.isArray(parsed)) {
+    parsed = [parsed];
+  }
+
+  // Sanitize string values to numbers
+  parsed = parsed.map((item: any) => {
+    for (const cat of ['geometry', 'facilities', 'sustainability', 'safety_and_services', 'administration']) {
+      if (item[cat] && typeof item[cat] === 'object') {
+        for (const key of Object.keys(item[cat])) {
+          const obj = item[cat][key];
+          if (obj && typeof obj === 'object') {
+            if ('value' in obj && typeof obj.value === 'string') {
+              const m = obj.value.match(/[\d.]+/);
+              obj.value = m ? parseFloat(m[0]) : null;
+            }
+          }
+        }
+      }
+    }
+    // FAR sanity
+    if (item.geometry?.floor_area_ratio?.value > 20) {
+      let f = item.geometry.floor_area_ratio.value;
+      item.geometry.floor_area_ratio.value = (f >= 100 && f <= 500) ? f / 100 : 1.5;
+    }
+    // Coverage sanity
+    if (item.geometry?.max_ground_coverage?.value > 100) {
+      item.geometry.max_ground_coverage.value = 100;
+    }
+    return item;
+  });
+
+  return parsed;
+}
+
+// Recover entries from truncated JSON
+function recoverTruncatedJson(rawText: string): any[] {
+  let text = rawText.trim();
+  if (text.startsWith('```')) {
+    text = text.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```\s*$/, '').trim();
+  }
+  const firstBracket = text.indexOf('[');
+  if (firstBracket === -1) return [];
+
+  let jsonStr = text.substring(firstBracket);
+  const lastComplete = jsonStr.lastIndexOf('},');
+  if (lastComplete > 0) {
+    jsonStr = jsonStr.substring(0, lastComplete + 1) + ']';
+  } else {
+    const lastBrace = jsonStr.lastIndexOf('}');
+    if (lastBrace > 0) jsonStr = jsonStr.substring(0, lastBrace + 1) + ']';
+  }
+
+  try {
+    const parsed = JSON.parse(jsonStr);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch (e) {
+    console.error('[Regulation Extractor] Recovery JSON.parse also failed:', (e as Error).message);
+    console.error('[Regulation Extractor] Attempted to parse:', jsonStr.substring(0, 300));
+    return [];
+  }
+}
 
 export const extractRegulationData = ai.defineFlow(
   {
@@ -47,133 +96,176 @@ export const extractRegulationData = ai.defineFlow(
     inputSchema: z.object({
       documentText: z.string().describe('The full text content of the regulation document'),
       fileName: z.string().describe('The name of the source file for context'),
-      overrideLocation: z.string().optional().describe('Force the AI to tag extracted rules with this precise location'),
+      overrideLocation: z.string().optional(),
+      pdfBase64: z.string().optional().describe('Base64-encoded raw PDF bytes for Gemini Vision'),
     }),
-    outputSchema: z.array(ExtractedRegulationSchema),
   },
   async (input) => {
-    const prompt = `You are an expert at extracting structured building regulation data from documents.
+    const prompt = `You are a building regulation data extractor. Extract structured data from this document.
 
 Document: ${input.fileName}
-Content:
-${input.documentText.slice(0, 80000)}${input.documentText.length > 80000 ? '\n\n[Document truncated for processing...]' : ''}
 
-Task:
-1. **EXTRACT ALL** land use types and subtypes mentioned. Do NOT limit to a few examples.
-   - Look for specific categories like "Residential Plotted", "Residential Group Housing", "Commercial Local Shopping", "Commercial General", "Industrial Light", etc.
-   - If there are 20 different table columns for different uses, create 20 separate entries.
-2. **SANITIZATION**:
-   - **FAR**: Must be a small decimal (e.g. 1.5, 2.0, 3.5). If you see "225" and it represents area, IGNORE it. If you see "225" and it means 2.25, use 2.25.
-   - **Coverage**: Must be Percentage (0-100).
-   - **Setback**: 
-     - Look for specific **Front**, **Rear**, and **Side** setbacks if mentioned.
-     - If only a general "Setback" is mentioned, use the 'setback' field.
-     - Values must be in meters.
+TASK:
+Extract regulation data for EXACTLY these 5 zone types (use these exact names as the "type" field):
+1. "Residential"
+2. "Commercial"
+3. "Industrial"
+4. "Public"
+5. "Mixed-Use"
 
-Andaman and Nicobar Islands, Andhra Pradesh, Arunachal Pradesh, Assam, Bihar, Chandigarh, Chhattisgarh, Dadra and Nagar Haveli and Daman and Diu, Delhi, Goa, Gujarat, Haryana, Himachal Pradesh, Jammu and Kashmir, Jharkhand, Karnataka, Kerala, Ladakh, Lakshadweep, Madhya Pradesh, Maharashtra, Manipur, Meghalaya, Mizoram, Nagaland, Odisha, Puducherry, Punjab, Rajasthan, Sikkim, Tamil Nadu, Telangana, Tripura, Uttar Pradesh, Uttarakhand, West Bengal, National (NBC)
+Do NOT create subtypes like "Residential (Plotted)" or "Commercial (Retail)". Merge all residential subtypes into one "Residential" entry, all commercial subtypes into one "Commercial" entry, etc.
+⚠️ DO NOT extract Hotels, Motels, Resorts, Service Apartments, or electrical/voltage data as zones.
 
-**CRITICAL LOCATION RULES**: 
 ${input.overrideLocation ? 
-`🔥 USER OVERRIDE ACTIVE 🔥
-You MUST set the \`location\` field to exactly "${input.overrideLocation}" for EVERY single extracted regulation in the JSON. Ignore the document's text/state if it contradicts this override.` 
+`LOCATION: Use exactly "${input.overrideLocation}" for all entries.` 
 : 
-`- Determine the \`location\` based EXACTLY on the state or city mentioned in the Document name or the Document text.
-- **DO NOT** lump "Telangana" and "Andhra Pradesh" together. If the document is for Telangana, the location MUST be "Telangana". If it is for Andhra Pradesh, it MUST be "Andhra Pradesh". Pay close attention to the file name.`}
+`LOCATION: Determine the state/city from the document name or content.`}
 
-**Type**: use the SPECIFIC ZONE NAME from the document (e.g. "Residential Plotted", "Residential Group Housing", "Commercial C-1").
-**CRITICAL**: Do NOT simplify to just "Residential" or "Commercial" if distinct subtypes exist. We need separate entries for each subtype.
+RULES:
+- Only extract data EXPLICITLY stated in the document. Do NOT guess or hallucinate.
+- FAR must be a decimal (e.g. 1.5, 2.0). If you see "225" it means 2.25.
+- Setbacks in meters. Coverage as percentage (0-100).
+- For EACH zone, search the ENTIRE document and fill ALL fields you can find.
+- ⚠️ NEVER set value to null. If multiple values exist (e.g. by plot size), pick the most typical/middle value.
+- ⚠️ ALWAYS extract the ACTUAL NUMBER from the document, not just 1 or 0. Examples:
+  • seismic_zone → extract the zone number (e.g. 4 or 5)
+  • wind_load → extract the speed in m/s (e.g. 39)
+  • soil_bearing_capacity → extract in kN/sqm (e.g. 200)
+  • electrical_load_sanction → extract in kVA (e.g. 500)
+  • sewage_treatment_plant → extract capacity in KLD (e.g. 50)
+  • fire_exits_travel_distance → extract distance in m (e.g. 22.5)
+  Only use 1/0 when the document ONLY says "required/not required" with NO specific number.
+- ⚠️ Keep "desc" fields SHORT — max 50 characters.
 
-Return a JSON array of objects.
+Return a JSON array. Each value = {"desc": "...", "unit": "...", "value": <number>}
+
+COMPLETE LIST OF FIELDS TO SEARCH FOR IN EACH ZONE:
+
+"geometry": {
+  "setback" (m), "front_setback" (m), "rear_setback" (m), "side_setback" (m),
+  "road_width" (m), "max_ground_coverage" (%), "floor_area_ratio" (),
+  "max_height" (m), "minimum_plot_size" (sqm), "minimum_frontage_width" (m),
+  "density_norms" (DU/acre), "units_per_acre" (units/acre), "population_load" (persons/hectare),
+  "premium_fsi_tdr" (), "premium_far_purchasable" (), "fungible_fsi_incentive" (),
+  "fungible_far_incentive" (), "excluded_areas_calc" (), "exclusions_basement_services" (),
+  "road_setback_building_line" (m), "highrise_setback_multiplier" (),
+  "based_on_road_width" (m), "based_on_building_height" (m), "based_on_plot_size" (sqm),
+  "height_vs_road_width" (), "aviation_clearance" (m), "shadow_skyline_control" ()
+}
+
+"facilities": {
+  "parking" (spaces/unit), "open_space" (%), "entry_exit_width" (m),
+  "internal_road_width" (m), "parking_ecs" (ECS), "visitor_parking" (%),
+  "ramp_slope" (%), "turning_radius" (m), "staircase_width" (m),
+  "staircase_count" (), "lift_requirements" (), "refuge_areas" (sqm),
+  "corridor_widths" (m), "unit_size_compliance" (sqm)
+}
+
+"sustainability": {
+  "rainwater_harvesting" (liters/sqm), "solar_panels" (% of roof),
+  "leed_compliance" (), "igbc_compliance" (), "griha_compliance" (),
+  "tree_plantation_green_cover" (%), "water_consumption_norm" (lpcd),
+  "energy_efficiency" ()
+}
+
+"safety_and_services": {
+  "fire_safety" (), "fire_tender_access" (m), "fire_tender_movement" (m),
+  "staircases_by_height" (), "fire_exits_travel_distance" (m), "refuge_floors" (),
+  "fire_fighting_systems" (), "fire_command_center" (),
+  "water_supply_approval" (), "sewer_connection_stp" (), "stormwater_drainage" (),
+  "electrical_load_sanction" (kVA), "transformer_placement" (),
+  "backup_power_norms" (kVA), "gas_pipelines" (), "telecom_infrastructure" (),
+  "sewage_treatment_plant" (KLD), "solid_waste_management" (),
+  "seismic_zone" (), "wind_load" (m/s), "soil_bearing_capacity" (kN/sqm)
+}
+
+"administration": {
+  "fee_rate" (% of cost), "land_use_zoning" (), "conversion_status" (),
+  "land_use_category" (), "tod_rules" (), "special_zones" (),
+  "saleable_vs_carpet_rera" (), "exit_compliance" (),
+  "absorption_assumptions" (%/year), "infra_load_vs_financial_viability" ()
+}
+
+EXAMPLE OUTPUT STRUCTURE:
 [
   {
-    "location": "Delhi",
-    "type": "Residential - Plotted",
-    "geometry": {
-      "front_setback": {"desc": "Min front setback", "unit": "m", "value": 3, "min": 2, "max": 6},
-      "rear_setback": {"desc": "Min rear setback", "unit": "m", "value": 2, "min": 1, "max": 4},
-      "side_setback": {"desc": "Min side setback", "unit": "m", "value": 2, "min": 1, "max": 4},
-      "setback": {"desc": "General setback", "unit": "m", "value": 3, "min": 2, "max": 6},
-      "road_width": {"desc": "Adjacent road width", "unit": "m", "value": 12, "min": 6, "max": 30},
-      "max_ground_coverage": {"desc": "Maximum ground coverage", "unit": "%", "value": 60, "min": 10, "max": 80},
-      "floor_area_ratio": {"desc": "FAR/FSI value", "unit": "", "value": 2.0, "min": 0.5, "max": 5},
-      "max_height": {"desc": "Maximum building height", "unit": "m", "value": 15, "min": 10, "max": 100}
-    },
-    "facilities": {
-      "parking": {"desc": "Parking spaces per unit", "unit": "spaces/unit", "value": 1, "min": 0.5, "max": 3},
-      "open_space": {"desc": "Required open space", "unit": "%", "value": 20, "min": 5, "max": 50}
-    },
-    "sustainability": {
-      "rainwater_harvesting": {"desc": "Capacity", "unit": "liters/sqm", "value": 50, "min": 10, "max": 100},
-      "solar_panels": {"desc": "Solar coverage", "unit": "% of roof", "value": 30, "min": 0, "max": 100}
-    },
-    "safety_and_services": {
-      "fire_safety": {"desc": "Compliance level", "unit": "", "value": 2, "min": 1, "max": 3}
-    },
-    "administration": {
-      "fee_rate": {"desc": "Processing fee", "unit": "% of cost", "value": 0.5, "min": 0.05, "max": 1}
-    },
+    "location": "<state>",
+    "type": "<zone name>",
+    "geometry": { "front_setback": {"desc": "Front setback (3m for plots <200sqm, 5m for >200sqm)", "unit": "m", "value": 3}, ... },
+    "facilities": { "parking": {"desc": "...", "unit": "spaces/unit", "value": 1}, ... },
+    "sustainability": { "rainwater_harvesting": {"desc": "Required for plots >200sqm", "unit": "", "value": 1}, ... },
+    "safety_and_services": { "fire_safety": {"desc": "...", "unit": "", "value": 1}, ... },
+    "administration": { "fee_rate": {"desc": "...", "unit": "% of cost", "value": 0.1}, ... },
     "confidence": 0.9
   }
 ]
-`;
 
-    // Use fallback mechanism with OpenAI as primary
-    const text = await generateWithFallback(prompt);
+Only include fields found in the document. Search thoroughly — data appears across different chapters/tables/annexures.
+Return ONLY the JSON array — no markdown fences, no explanation.`;
 
-    // Parse the JSON response
-    try {
-      const firstBracket = text.indexOf('[');
-      const lastBracket = text.lastIndexOf(']');
+    let responseText: string;
 
-      if (firstBracket === -1 || lastBracket === -1 || lastBracket <= firstBracket) {
-        throw new Error('No JSON array found in response');
-      }
+    if (input.pdfBase64) {
+      console.log(`[Regulation Extractor] Using Gemini Vision for PDF: ${input.fileName}`);
+      try {
+        let visionResponse = await ai.generate({
+          model: 'googleai/gemini-2.5-flash',
+          prompt: [
+            { media: { contentType: 'application/pdf', url: `data:application/pdf;base64,${input.pdfBase64}` } },
+            { text: prompt },
+          ],
+          config: { maxOutputTokens: 65536, temperature: 0.1 },
+        });
+        responseText = visionResponse.text;
+        console.log(`[Regulation Extractor] Gemini Vision response: ${responseText.length} chars`);
 
-      const jsonString = text.substring(firstBracket, lastBracket + 1);
-      let parsed = JSON.parse(jsonString);
-
-      // Ensure it's an array
-      if (!Array.isArray(parsed)) {
-        parsed = [parsed];
-      }
-
-      // SANITIZATION STEP
-      parsed = parsed.map((item: any) => {
-        // Sanitize Geometry
-        if (item.geometry) {
-          // FAR Sanity Check
-          if (item.geometry.floor_area_ratio) {
-            let far = item.geometry.floor_area_ratio.value;
-            // If FAR > 20, it's likely an error (e.g. 225) or percentage disguised as number
-            if (far > 20) {
-              if (far >= 100 && far <= 500) {
-                // Maybe it's missing decimal? 225 -> 2.25
-                far = far / 100;
-              } else {
-                // Reset to safe default or null
-                far = 1.5;
-              }
-              item.geometry.floor_area_ratio.value = far;
-            }
-          }
-          // Max Ground Coverage Check
-          if (item.geometry.max_ground_coverage) {
-            let cov = item.geometry.max_ground_coverage.value;
-            if (cov > 100) cov = 100;
-            item.geometry.max_ground_coverage.value = cov;
-          }
+        // If response is suspiciously short, retry once
+        if (responseText.length < 5000) {
+          console.warn(`[Regulation Extractor] Response too short (${responseText.length} chars), retrying...`);
+          visionResponse = await ai.generate({
+            model: 'googleai/gemini-2.5-flash',
+            prompt: [
+              { media: { contentType: 'application/pdf', url: `data:application/pdf;base64,${input.pdfBase64}` } },
+              { text: prompt },
+            ],
+            config: { maxOutputTokens: 65536, temperature: 0.2 },
+          });
+          responseText = visionResponse.text;
+          console.log(`[Regulation Extractor] Retry response: ${responseText.length} chars`);
         }
-
-        // Ensure Location matches valid list or fallback
-        // (Optional: Implement robust location mapping if needed)
-
-        return item;
-      });
-
-      return parsed as z.infer<typeof ExtractedRegulationSchema>[];
-    } catch (e) {
-      console.error('Failed to parse AI response:', text);
-      throw new Error('Failed to parse regulation data from AI response');
+      } catch (err: any) {
+        console.warn('[Regulation Extractor] Vision failed, falling back to text:', err.message);
+        responseText = await textFallback(prompt, input.documentText);
+      }
+    } else {
+      responseText = await textFallback(prompt, input.documentText);
     }
+
+    let result = parseAndSanitize(responseText);
+    if (result.length === 0) {
+      console.error('[Regulation Extractor] No entries parsed. Raw response (first 1000 chars):', responseText.substring(0, 1000));
+      // One more retry with text fallback before giving up
+      if (input.documentText && input.documentText.length > 50) {
+        console.log('[Regulation Extractor] Attempting text fallback...');
+        const fallbackText = await textFallback(prompt, input.documentText);
+        result = parseAndSanitize(fallbackText);
+      }
+      if (result.length === 0) {
+        throw new Error('Could not extract any regulation data from the document');
+      }
+    }
+    console.log(`[Regulation Extractor] Successfully extracted ${result.length} entries`);
+    return result;
   }
 );
+
+async function textFallback(prompt: string, documentText: string): Promise<string> {
+  console.log(`[Regulation Extractor] Using text-based extraction (${documentText.length} chars)`);
+  const fullPrompt = prompt + `\n\nDocument Content:\n${documentText.slice(0, 120000)}`;
+  const { text } = await ai.generate({
+    model: 'googleai/gemini-2.5-flash',
+    prompt: fullPrompt,
+    config: { maxOutputTokens: 65536, temperature: 0.1 },
+  });
+  return text;
+}

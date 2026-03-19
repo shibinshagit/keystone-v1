@@ -5,7 +5,7 @@ import { collection, doc, getDocs, setDoc, writeBatch, deleteDoc, getDoc } from 
 import type { RegulationData, GreenRegulationData, VastuRegulationData } from '@/lib/types';
 import { Button } from './ui/button';
 import { toast } from '@/hooks/use-toast';
-import { Loader2, Plus, Building, Scaling, Droplets, ShieldCheck, Banknote, Trash2, Upload, Leaf, Compass, Pencil } from 'lucide-react';
+import { Loader2, Plus, Building, Scaling, Droplets, ShieldCheck, Banknote, Trash2, Upload, Leaf, Compass, Pencil, MapPin, Landmark, Ruler, LayoutGrid, ArrowUpDown, Users, Car, DoorOpen, Flame, TreePine, Wrench, HardHat, CircleDollarSign } from 'lucide-react';
 import { AdminDetailsSidebar } from './admin-details-sidebar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { cn } from '@/lib/utils';
@@ -44,29 +44,107 @@ import ultimateVastuChecklist from '@/data/ultimate-vastu-checklist.json';
 
 const DEFAULT_REGULATION_DATA: Omit<RegulationData, 'location' | 'type'> = {
     geometry: {
-        setback: { desc: "General setback (if uniform)", unit: "m", value: 5, min: 0, max: 20 },
-        front_setback: { desc: "Front setback from road", unit: "m", value: 6, min: 0, max: 30 },
-        rear_setback: { desc: "Rear setback from boundary", unit: "m", value: 4, min: 0, max: 20 },
-        side_setback: { desc: "Side setback from boundary", unit: "m", value: 3, min: 0, max: 15 },
-        road_width: { desc: "Adjacent road width", unit: "m", value: 9, min: 6, max: 30 },
-        max_ground_coverage: { desc: "Maximum ground coverage", unit: "%", value: 40, min: 10, max: 80 },
-        floor_area_ratio: { desc: "Floor Area Ratio (FAR)", unit: "", value: 1.8, min: 0.5, max: 5 },
-        max_height: { desc: "Maximum building height", unit: "m", value: 30, min: 10, max: 100 },
+        setback: { desc: "General setback (if uniform)", unit: "m", value: "", exampleStr: "e.g. 5" },
+        front_setback: { desc: "Front setback from road", unit: "m", value: "", exampleStr: "e.g. 6" },
+        rear_setback: { desc: "Rear setback from boundary", unit: "m", value: "", exampleStr: "e.g. 4" },
+        side_setback: { desc: "Side setback from boundary", unit: "m", value: "", exampleStr: "e.g. 3" },
+        road_width: { desc: "Adjacent road width", unit: "m", value: "", exampleStr: "e.g. 9" },
+        max_ground_coverage: { desc: "Maximum ground coverage", unit: "%", value: "", exampleStr: "e.g. 40" },
+        floor_area_ratio: { desc: "Floor Area Ratio (FAR)", unit: "", value: "", exampleStr: "e.g. 1.8" },
+        max_height: { desc: "Maximum building height", unit: "m", value: "", exampleStr: "e.g. 30" },
+        // Land & Zoning
+        minimum_plot_size: { desc: "Minimum plot size required", unit: "sqm", value: "", exampleStr: "e.g. 500" },
+        minimum_frontage_width: { desc: "Minimum frontage / width of plot", unit: "m", value: "", exampleStr: "e.g. 12" },
+        density_norms: { desc: "Density norms (DU/acre or persons/hectare)", unit: "DU/acre", value: "", exampleStr: "e.g. 40" },
+        units_per_acre: { desc: "Units per acre", unit: "units/acre", value: "", exampleStr: "e.g. 40" },
+        population_load: { desc: "Population load", unit: "persons/hectare", value: "", exampleStr: "e.g. 500" },
+        // FAR / FSI
+        premium_fsi_tdr: { desc: "Premium FSI / TDR utilisation", unit: "", value: "", exampleStr: "e.g. 0" },
+        premium_far_purchasable: { desc: "Premium FAR / Purchasable FAR", unit: "", value: "", exampleStr: "e.g. 0" },
+        fungible_fsi_incentive: { desc: "Fungible FSI / Incentive FSI", unit: "", value: "", exampleStr: "e.g. 0" },
+        fungible_far_incentive: { desc: "Fungible FAR / Incentive FAR", unit: "", value: "", exampleStr: "e.g. 0" },
+        excluded_areas_calc: { desc: "Excluded areas calculation (exempted FAR computation)", unit: "", value: "", exampleStr: "e.g. 0" },
+        exclusions_basement_services: { desc: "Exclusions (basement, services, etc.)", unit: "", value: "", exampleStr: "e.g. 0" },
+        // Setbacks & Building Line
+        road_setback_building_line: { desc: "Road setback (building line)", unit: "m", value: "", exampleStr: "e.g. 6" },
+        highrise_setback_multiplier: { desc: "High-rise setback multiplier", unit: "", value: "", exampleStr: "e.g. 1" },
+        based_on_road_width: { desc: "Setback based on road width", unit: "m", value: "", exampleStr: "e.g. 9" },
+        based_on_building_height: { desc: "Setback based on building height", unit: "m", value: "", exampleStr: "e.g. 30" },
+        based_on_plot_size: { desc: "Setback based on plot size", unit: "sqm", value: "", exampleStr: "e.g. 500" },
+        // Building Height
+        height_vs_road_width: { desc: "Height vs road width relation", unit: "", value: "", exampleStr: "e.g. 1.5" },
+        aviation_clearance: { desc: "Aviation clearance (if required)", unit: "m", value: "", exampleStr: "e.g. 0" },
+        shadow_skyline_control: { desc: "Shadow / skyline control", unit: "", value: "", exampleStr: "e.g. 0" },
     },
     facilities: {
-        parking: { desc: "Parking requirements per unit", unit: "spaces/unit", value: 1, min: 0.5, max: 3 },
-        open_space: { desc: "Required open space per plot", unit: "%", value: 15, min: 5, max: 50 },
+        parking: { desc: "Parking requirements per unit", unit: "spaces/unit", value: "", exampleStr: "e.g. 1" },
+        open_space: { desc: "Required open space per plot", unit: "%", value: "", exampleStr: "e.g. 15" },
+        // Access, Parking & Traffic
+        entry_exit_width: { desc: "Entry/exit width and number", unit: "m", value: "", exampleStr: "e.g. 6" },
+        internal_road_width: { desc: "Internal road width hierarchy", unit: "m", value: "", exampleStr: "e.g. 7" },
+        parking_ecs: { desc: "Parking requirements (ECS)", unit: "ECS", value: "", exampleStr: "e.g. 1" },
+        visitor_parking: { desc: "Visitor parking (% of total)", unit: "%", value: "", exampleStr: "e.g. 10" },
+        ramp_slope: { desc: "Ramp slope", unit: "%", value: "", exampleStr: "e.g. 12" },
+        turning_radius: { desc: "Turning radius", unit: "m", value: "", exampleStr: "e.g. 6" },
+        // Building Planning
+        staircase_width: { desc: "Staircase width", unit: "m", value: "", exampleStr: "e.g. 1.2" },
+        staircase_count: { desc: "Number of staircases required", unit: "", value: "", exampleStr: "e.g. 2" },
+        lift_requirements: { desc: "Lift requirements (based on height/population)", unit: "", value: "", exampleStr: "e.g. 2" },
+        refuge_areas: { desc: "Refuge areas (high-rise)", unit: "sqm", value: "", exampleStr: "e.g. 15" },
+        corridor_widths: { desc: "Corridor widths", unit: "m", value: "", exampleStr: "e.g. 1.8" },
+        unit_size_compliance: { desc: "Unit size compliance (min carpet area)", unit: "sqm", value: "", exampleStr: "e.g. 30" },
     },
     sustainability: {
-        rainwater_harvesting: { desc: "Rainwater harvesting capacity", unit: "liters/sqm", value: 30, min: 10, max: 100 },
-        solar_panels: { desc: "Solar panel area requirement", unit: "% of roof", value: 20, min: 0, max: 100 },
+        rainwater_harvesting: { desc: "Rainwater harvesting capacity", unit: "liters/sqm", value: "", exampleStr: "e.g. 30" },
+        solar_panels: { desc: "Solar panel area requirement", unit: "% of roof", value: "", exampleStr: "e.g. 20" },
+        // Green Ratings
+        leed_compliance: { desc: "LEED compliance level", unit: "", value: "", exampleStr: "e.g. 0" },
+        igbc_compliance: { desc: "IGBC compliance level", unit: "", value: "", exampleStr: "e.g. 0" },
+        griha_compliance: { desc: "GRIHA compliance level", unit: "", value: "", exampleStr: "e.g. 0" },
+        tree_plantation_green_cover: { desc: "Tree plantation / green cover %", unit: "%", value: "", exampleStr: "e.g. 15" },
+        water_consumption_norm: { desc: "Water consumption norm", unit: "lpcd", value: "", exampleStr: "e.g. 135" },
+        energy_efficiency: { desc: "Energy efficiency (ECBC compliance)", unit: "", value: "", exampleStr: "e.g. 0" },
     },
     safety_and_services: {
-        fire_safety: { desc: "Fire safety compliance level", unit: "", value: 1, min: 1, max: 3 },
+        fire_safety: { desc: "Fire safety compliance level", unit: "", value: "", exampleStr: "e.g. 1" },
+        // Fire & Life Safety
+        fire_tender_access: { desc: "Fire tender access path width", unit: "m", value: "", exampleStr: "e.g. 6" },
+        fire_tender_movement: { desc: "Fire tender movement path width", unit: "m", value: "", exampleStr: "e.g. 6" },
+        staircases_by_height: { desc: "Number of staircases (based on height)", unit: "", value: "", exampleStr: "e.g. 2" },
+        fire_exits_travel_distance: { desc: "Fire exits and travel distance", unit: "m", value: "", exampleStr: "e.g. 30" },
+        refuge_floors: { desc: "Refuge floors / areas", unit: "", value: "", exampleStr: "e.g. 0" },
+        fire_fighting_systems: { desc: "Fire fighting systems (sprinkler, hydrant, etc.)", unit: "", value: "", exampleStr: "e.g. 1" },
+        fire_command_center: { desc: "Fire command center (high-rise)", unit: "", value: "", exampleStr: "e.g. 0" },
+        // Utilities & MEP
+        water_supply_approval: { desc: "Water supply source approval", unit: "", value: "", exampleStr: "e.g. 0" },
+        sewer_connection_stp: { desc: "Sewer connection / STP design", unit: "", value: "", exampleStr: "e.g. 0" },
+        stormwater_drainage: { desc: "Stormwater drainage plan", unit: "", value: "", exampleStr: "e.g. 0" },
+        electrical_load_sanction: { desc: "Electrical load sanction", unit: "kVA", value: "", exampleStr: "e.g. 500" },
+        transformer_placement: { desc: "Transformer placement", unit: "", value: "", exampleStr: "e.g. 0" },
+        backup_power_norms: { desc: "Backup power norms", unit: "kVA", value: "", exampleStr: "e.g. 200" },
+        gas_pipelines: { desc: "Gas pipelines (if applicable)", unit: "", value: "", exampleStr: "e.g. 0" },
+        telecom_infrastructure: { desc: "Telecom infrastructure", unit: "", value: "", exampleStr: "e.g. 0" },
+        sewage_treatment_plant: { desc: "Sewage Treatment Plant (STP)", unit: "KLD", value: "", exampleStr: "e.g. 50" },
+        solid_waste_management: { desc: "Solid waste management", unit: "", value: "", exampleStr: "e.g. 0" },
+        // Structural Engineering
+        seismic_zone: { desc: "Seismic zone classification", unit: "", value: "", exampleStr: "e.g. 3" },
+        wind_load: { desc: "Wind load design speed", unit: "m/s", value: "", exampleStr: "e.g. 39" },
+        soil_bearing_capacity: { desc: "Soil bearing capacity", unit: "kN/sqm", value: "", exampleStr: "e.g. 200" },
     },
     administration: {
-        fee_rate: { desc: "Processing fee rate", unit: "% of cost", value: 0.1, min: 0.05, max: 1 },
-    }
+        fee_rate: { desc: "Processing fee rate", unit: "% of cost", value: "", exampleStr: "e.g. 0.1" },
+        // Land & Legal
+        land_use_zoning: { desc: "Land use zoning classification", unit: "", value: "", exampleStr: "e.g. 0" },
+        conversion_status: { desc: "Agricultural to Non-agricultural conversion status", unit: "", value: "", exampleStr: "e.g. 0" },
+        land_use_category: { desc: "Land use category", unit: "", value: "", exampleStr: "e.g. 0" },
+        tod_rules: { desc: "Transit-oriented development (TOD) rules", unit: "", value: "", exampleStr: "e.g. 0" },
+        special_zones: { desc: "Special zones (heritage, coastal, eco-sensitive, etc.)", unit: "", value: "", exampleStr: "e.g. 0" },
+        // Financial Compliance
+        saleable_vs_carpet_rera: { desc: "Saleable vs carpet area (RERA)", unit: "", value: "", exampleStr: "e.g. 0" },
+        exit_compliance: { desc: "Exit compliance", unit: "", value: "", exampleStr: "e.g. 0" },
+        absorption_assumptions: { desc: "Absorption assumptions (for large projects)", unit: "%/year", value: "", exampleStr: "e.g. 20" },
+        infra_load_vs_financial_viability: { desc: "Infrastructure load vs financial viability", unit: "", value: "", exampleStr: "e.g. 0" },
+    },
 };
 
 export function AdminPanel() {
@@ -403,7 +481,7 @@ export function AdminPanel() {
         setSelectedCategory(null);
     };
 
-    const categories: { key: keyof Omit<RegulationData, 'location' | 'type'>, icon: React.ElementType }[] = [
+    const categories: { key: keyof Omit<RegulationData, 'location' | 'type' | 'id'>, icon: React.ElementType }[] = [
         { key: 'geometry', icon: Scaling },
         { key: 'facilities', icon: Building },
         { key: 'sustainability', icon: Droplets },
@@ -462,43 +540,46 @@ export function AdminPanel() {
                                     {regulations.length > 0 ? (
                                         <Accordion type="single" collapsible className="w-full space-y-4">
                                             {Object.entries(groupedRegulations).map(([location, locationRegulations]) => (
-                                                <AccordionItem value={location} key={location} className="relative border rounded-lg bg-card px-4 group/item">
-                                                    <div className="absolute right-14 top-1/2 -translate-y-1/2 z-10">
-                                                        <AlertDialog>
-                                                            <AlertDialogTrigger asChild>
-                                                                <Button 
-                                                                    variant="ghost" 
-                                                                    size="icon" 
-                                                                    className="h-8 w-8 text-destructive/50 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/item:opacity-100 transition-opacity"
-                                                                    disabled={deletingId === location}
-                                                                >
-                                                                    {deletingId === location ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                                                                </Button>
-                                                            </AlertDialogTrigger>
-                                                            <AlertDialogContent>
-                                                                <AlertDialogHeader>
-                                                                    <AlertDialogTitle>Delete all regulations for {location}?</AlertDialogTitle>
-                                                                    <AlertDialogDescription>
-                                                                        This will permanently delete all {locationRegulations.length} regulation types for this location. This action cannot be undone.
-                                                                    </AlertDialogDescription>
-                                                                </AlertDialogHeader>
-                                                                <AlertDialogFooter>
-                                                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                                    <AlertDialogAction 
-                                                                        className="bg-destructive hover:bg-destructive/90"
-                                                                        onClick={() => handleDeleteLocation(location)}
-                                                                    >
-                                                                        Delete All
-                                                                    </AlertDialogAction>
-                                                                </AlertDialogFooter>
-                                                            </AlertDialogContent>
-                                                        </AlertDialog>
-                                                    </div>
-                                                    <AccordionTrigger className="hover:no-underline py-4 group pr-8">
-                                                        <div className="flex items-center justify-between w-full">
+                                                <AccordionItem value={location} key={location} className="border rounded-lg bg-card px-4 group/item">
+                                                    <AccordionTrigger className="hover:no-underline py-4 group">
+                                                        <div className="flex items-center justify-between w-full pr-4">
                                                             <div className="flex items-center gap-4">
                                                                 <span className="text-xl font-semibold text-primary">{location}</span>
                                                                 <Badge variant="secondary" className="ml-2">{locationRegulations.length} Types</Badge>
+                                                            </div>
+                                                            <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
+                                                                <AlertDialog>
+                                                                    <AlertDialogTrigger asChild>
+                                                                        <div 
+                                                                            role="button"
+                                                                            className={cn(
+                                                                                "flex items-center justify-center h-8 w-8 rounded-md transition-opacity",
+                                                                                deletingId === location 
+                                                                                    ? "opacity-50 cursor-not-allowed text-destructive" 
+                                                                                    : "text-destructive/50 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/item:opacity-100 cursor-pointer"
+                                                                            )}
+                                                                        >
+                                                                            {deletingId === location ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                                                        </div>
+                                                                    </AlertDialogTrigger>
+                                                                    <AlertDialogContent>
+                                                                        <AlertDialogHeader>
+                                                                            <AlertDialogTitle>Delete all regulations for {location}?</AlertDialogTitle>
+                                                                            <AlertDialogDescription>
+                                                                                This will permanently delete all {locationRegulations.length} regulation types for this location. This action cannot be undone.
+                                                                            </AlertDialogDescription>
+                                                                        </AlertDialogHeader>
+                                                                        <AlertDialogFooter>
+                                                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                                            <AlertDialogAction 
+                                                                                className="bg-destructive hover:bg-destructive/90"
+                                                                                onClick={() => handleDeleteLocation(location)}
+                                                                            >
+                                                                                Delete All
+                                                                            </AlertDialogAction>
+                                                                        </AlertDialogFooter>
+                                                                    </AlertDialogContent>
+                                                                </AlertDialog>
                                                             </div>
                                                         </div>
                                                     </AccordionTrigger>
@@ -515,13 +596,14 @@ export function AdminPanel() {
                                                                     >
                                                                         <CardHeader>
                                                                             <div className="flex items-start justify-between">
-                                                                                <Badge variant="outline" className="mb-2">{reg.type}</Badge>
-                                                                                <AlertDialog>
-                                                                                    <AlertDialogTrigger asChild>
-                                                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive/50 hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity -mr-2 -mt-2" onClick={(e) => e.stopPropagation()} disabled={isDeleting}>
-                                                                                            {isDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                                                                                        </Button>
-                                                                                    </AlertDialogTrigger>
+                                                                                <Badge variant="outline" className="mb-2 truncate max-w-[85%]">{reg.type}</Badge>
+                                                                                <div onClick={(e) => e.stopPropagation()}>
+                                                                                    <AlertDialog>
+                                                                                        <AlertDialogTrigger asChild>
+                                                                                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive/50 hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity -mr-2 -mt-2" disabled={isDeleting}>
+                                                                                                {isDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                                                                                            </Button>
+                                                                                        </AlertDialogTrigger>
                                                                                     <AlertDialogContent>
                                                                                         <AlertDialogHeader>
                                                                                             <AlertDialogTitle>Delete {reg.type}?</AlertDialogTitle>
@@ -537,6 +619,7 @@ export function AdminPanel() {
                                                                                         </AlertDialogFooter>
                                                                                     </AlertDialogContent>
                                                                                 </AlertDialog>
+                                                                                </div>
                                                                             </div>
                                                                             <div className="space-y-1">
                                                                                 <div className="text-sm text-muted-foreground flex justify-between">

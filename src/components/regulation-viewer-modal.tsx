@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
-import { RegulationData, RegulationValue, Plot } from '@/lib/types';
+import { RegulationData, RegulationValue, Plot, REGULATION_SUB_GROUPS } from '@/lib/types';
 import { ScrollArea } from './ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
@@ -26,37 +26,65 @@ const renderValue = (value: any) => {
 };
 
 function RegulationCategory({ title, data, icon: Icon }: { title: string, data: { [key: string]: RegulationValue }, icon: React.ElementType }) {
+    const groupedData: Record<string, [string, RegulationValue][]> = { "General": [] };
+    Object.entries(data).forEach(([key, reg]) => {
+        let assignedGroup = "General";
+        for (const [groupName, keys] of Object.entries(REGULATION_SUB_GROUPS)) {
+            if (keys.includes(key)) {
+                assignedGroup = groupName;
+                break;
+            }
+        }
+        if (!groupedData[assignedGroup]) groupedData[assignedGroup] = [];
+        groupedData[assignedGroup].push([key, reg]);
+    });
+
     return (
-        <AccordionItem value={title}>
-            <AccordionTrigger className="text-lg font-semibold">
+        <AccordionItem value={title} className="border-b-0 mb-4">
+            <AccordionTrigger className="text-lg font-semibold bg-secondary/20 px-4 rounded-lg hover:bg-secondary/40 transition-colors">
                 <div className="flex items-center gap-3">
                     <Icon className="h-5 w-5 text-primary" />
                     <span>{title}</span>
                 </div>
             </AccordionTrigger>
-            <AccordionContent>
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead>Parameter</TableHead>
-                            <TableHead>Value</TableHead>
-                            <TableHead>Unit</TableHead>
-                            <TableHead>Min</TableHead>
-                            <TableHead>Max</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {Object.entries(data).map(([key, reg]) => (
-                            <TableRow key={key}>
-                                <TableCell className="font-medium capitalize">{key.replace(/_/g, ' ')}</TableCell>
-                                <TableCell>{renderValue(reg.value)}</TableCell>
-                                <TableCell className="text-muted-foreground">{reg.unit}</TableCell>
-                                <TableCell>{reg.min !== undefined ? renderValue(reg.min) : 'N/A'}</TableCell>
-                                <TableCell>{reg.max !== undefined ? renderValue(reg.max) : 'N/A'}</TableCell>
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
+            <AccordionContent className="pt-4 px-1">
+                {Object.entries(groupedData).map(([groupName, items]) => {
+                    if (items.length === 0) return null;
+                    return (
+                        <div key={groupName} className="mb-6 last:mb-0">
+                            {groupName !== "General" && (
+                                <h4 className="text-sm font-semibold text-primary/80 uppercase tracking-widest mb-3 pl-1">{groupName}</h4>
+                            )}
+                            <div className="border rounded-lg overflow-hidden">
+                                <Table>
+                                    <TableHeader className="bg-muted/50">
+                                        <TableRow>
+                                            <TableHead className="w-[35%]">Parameter</TableHead>
+                                            <TableHead>Value</TableHead>
+                                            <TableHead>Unit</TableHead>
+                                            <TableHead>Min</TableHead>
+                                            <TableHead>Max</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {items.map(([key, reg]) => (
+                                            <TableRow key={key}>
+                                                <TableCell>
+                                                    <div className="font-medium capitalize">{key.replace(/_/g, ' ')}</div>
+                                                    {reg.desc && <div className="text-xs text-muted-foreground mt-1">{reg.desc}</div>}
+                                                </TableCell>
+                                                <TableCell>{renderValue(reg.value)}</TableCell>
+                                                <TableCell className="text-muted-foreground">{reg.unit || '-'}</TableCell>
+                                                <TableCell>{reg.min !== undefined ? renderValue(reg.min) : '-'}</TableCell>
+                                                <TableCell>{reg.max !== undefined ? renderValue(reg.max) : '-'}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </div>
+                    );
+                })}
             </AccordionContent>
         </AccordionItem>
     );

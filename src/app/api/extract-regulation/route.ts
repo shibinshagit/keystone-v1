@@ -6,13 +6,6 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 
-// We need to define the type expected by the AI flow if it doesn't infer it correctly
-interface ExtractorInput {
-    documentText: string;
-    fileName: string;
-    overrideLocation?: string;
-}
-
 async function extractTextFromFile(file: File): Promise<string> {
     const buffer = Buffer.from(await file.arrayBuffer());
     const fileName = file.name.toLowerCase();
@@ -40,23 +33,43 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'No file provided' }, { status: 400 });
         }
 
-        // Extract text from document
-        const documentText = await extractTextFromFile(file);
+        const fileName = file.name.toLowerCase();
+        const isPdf = fileName.endsWith('.pdf');
 
-        if (!documentText || documentText.trim().length < 50) {
+        let pdfBase64: string | undefined;
+        let documentText: string | undefined;
+
+        if (isPdf) {
+            // For PDFs, send raw bytes to Gemini Vision for much better table extraction
+            const buffer = Buffer.from(await file.arrayBuffer());
+            pdfBase64 = buffer.toString('base64');
+            
+            // Also extract text as fallback
+            try {
+                const data = await pdf(buffer);
+                documentText = data.text;
+            } catch (e) {
+                console.warn('pdf-parse fallback text extraction failed:', e);
+            }
+        } else {
+            // For non-PDF files, extract text normally
+            documentText = await extractTextFromFile(file);
+        }
+
+        if (!pdfBase64 && (!documentText || documentText.trim().length < 50)) {
             return NextResponse.json(
-                { error: 'Could not extract sufficient text from document' },
+                { error: 'Could not extract sufficient content from document' },
                 { status: 400 }
             );
         }
 
         // Use AI to extract regulation data
-        const input: ExtractorInput = {
-            documentText,
+        const extractedData = await extractRegulationData({
+            documentText: documentText || '',
             fileName: file.name,
             overrideLocation: overrideLocation === 'none' ? undefined : overrideLocation || undefined,
-        };
-        const extractedData = await extractRegulationData(input);
+            pdfBase64,
+        });
 
         return NextResponse.json({
             success: true,
