@@ -73,96 +73,11 @@ import { FeasibilityReport } from "./feasibility-report";
 import { UnderwritingReport } from "./underwriting-report";
 import { ProjectUnderwritingForm } from "./project-underwriting-form";
 
-const getSelectedPlotMetricsSource = (plot: any | null | undefined) => {
-  if (!plot) {
-    return {
-      buildings: [],
-      utilityAreas: [],
-      parkingAreas: [],
-      greenAreas: [],
-      units: [],
-      cores: [],
-      parkingFloors: [],
-      unitBreakdown: {},
-      totalBuildings: 0,
-      totalUnits: 0,
-      totalPlotArea: 0,
-      totalBuiltUpArea: 0,
-      totalFootprint: 0,
-      totalGreenArea: 0,
-      totalRoadArea: 0,
-      achievedFAR: 0,
-      groundCoveragePct: 0,
-      openSpace: 0,
-    };
-  }
-
-  const buildings = (plot.buildings || []).filter((b: any) => b.visible !== false);
-  const utilityAreas = (plot.utilityAreas || []).filter((u: any) => u.visible !== false);
-  const parkingAreas = (plot.parkingAreas || []).filter((p: any) => p.visible !== false);
-  const greenAreas = (plot.greenAreas || []).filter((g: any) => g.visible !== false);
-  const units = buildings.flatMap((b: any) => b.units || []);
-  const cores = buildings.flatMap((b: any) => b.cores || []);
-  const parkingFloors = buildings.flatMap((b: any) =>
-    (b.floors || []).filter((f: any) => f.type === "Parking"),
-  );
-
-  const unitBreakdown = units.reduce(
-    (acc: Record<string, number>, unit: any) => {
-      const key = unit.type || unit.unitType || "Unit";
-      acc[key] = (acc[key] || 0) + 1;
-      return acc;
-    },
-    {},
-  );
-
-  const totalPlotArea = plot.area || 0;
-  const totalFootprint = buildings.reduce((sum: number, building: any) => sum + (building.area || 0), 0);
-  const totalBuiltUpArea =
-    plot.developmentStats?.totalBuiltUpArea ||
-    buildings.reduce((sum: number, building: any) => {
-      const floors =
-        building.numFloors ||
-        (building.floors || []).filter((floor: any) => (floor.level ?? 0) >= 0).length ||
-        1;
-      return sum + (building.area || 0) * Math.max(1, floors);
-    }, 0);
-  const totalGreenArea = greenAreas.reduce((sum: number, area: any) => sum + (area.area || 0), 0);
-  const totalRoadArea = utilityAreas.reduce((sum: number, area: any) => {
-    const type = String(area.type || area.name || "").toLowerCase();
-    return type.includes("road") ? sum + (area.targetArea || area.area || 0) : sum;
-  }, 0);
-  const achievedFAR = totalPlotArea > 0 ? totalBuiltUpArea / totalPlotArea : 0;
-  const groundCoveragePct = totalPlotArea > 0 ? (totalFootprint / totalPlotArea) * 100 : 0;
-  const openSpace = Math.max(totalPlotArea - totalFootprint, 0);
-
-  return {
-    buildings,
-    utilityAreas,
-    parkingAreas,
-    greenAreas,
-    units,
-    cores,
-    parkingFloors,
-    unitBreakdown,
-    totalBuildings: buildings.length,
-    totalUnits: units.length,
-    totalPlotArea,
-    totalBuiltUpArea,
-    totalFootprint,
-    totalGreenArea,
-    totalRoadArea,
-    achievedFAR,
-    groundCoveragePct,
-    openSpace,
-  };
-};
-
 function MetricsTab() {
   const activeProject = useProjectData();
   const metrics = useDevelopmentMetrics(activeProject || null);
   const plots = useBuildingStore((state) => state.plots);
-  const selectedPlot = useSelectedPlot() ?? plots?.[0] ?? null;
+  const selectedPlot = useSelectedPlot();
   const [expandedBuildings, setExpandedBuildings] = useState<
     Record<string, boolean>
   >({});
@@ -171,43 +86,126 @@ function MetricsTab() {
   const toggleBuilding = (id: string) =>
     setExpandedBuildings((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  const selectedPlotData = useMemo(
-    () => getSelectedPlotMetricsSource(selectedPlot),
-    [selectedPlot],
-  );
+  // If a plot is selected, show metrics for that plot only; otherwise aggregate across all plots
+  const buildingsForMetrics = useMemo(() => {
+    if (selectedPlot)
+      return (selectedPlot.buildings || []).filter((b) => b.visible !== false);
+    if (!plots || plots.length === 0) return [];
+    return plots.flatMap((p) => p.buildings.filter((b) => b.visible !== false));
+  }, [plots, selectedPlot]);
 
-  const buildingsForMetrics = selectedPlotData.buildings;
-  const allUtilityAreas = selectedPlotData.utilityAreas;
-  const allParkingAreas = selectedPlotData.parkingAreas;
-  const allGreenAreas = selectedPlotData.greenAreas;
-  const allUnits = selectedPlotData.units;
-  const allCores = selectedPlotData.cores;
-  const allParkingFloors = selectedPlotData.parkingFloors;
-  const unitBreakdown = selectedPlotData.unitBreakdown;
-  const totalBuildings = selectedPlotData.totalBuildings;
-  const totalUnitsCount = selectedPlotData.totalUnits;
+  const allUtilityAreas = useMemo(() => {
+    if (selectedPlot) return selectedPlot.utilityAreas || [];
+    if (!plots) return [];
+    return plots.flatMap((p) => p.utilityAreas || []);
+  }, [plots, selectedPlot]);
 
-  if (!activeProject || !metrics || !selectedPlot || buildingsForMetrics.length === 0)
+  const allParkingAreas = useMemo(() => {
+    if (selectedPlot) return selectedPlot.parkingAreas || [];
+    if (!plots) return [];
+    return plots.flatMap((p) => p.parkingAreas || []);
+  }, [plots, selectedPlot]);
+
+  const allGreenAreas = useMemo(() => {
+    if (selectedPlot) return selectedPlot.greenAreas || [];
+    if (!plots) return [];
+    return plots.flatMap((p) => p.greenAreas || []);
+  }, [plots, selectedPlot]);
+
+  if (!activeProject || !metrics || buildingsForMetrics.length === 0)
     return (
       <div className="p-6 text-center text-muted-foreground text-base">
         No metrics available — generate buildings first.
       </div>
     );
 
-  const totalPlotArea = selectedPlotData.totalPlotArea;
-  const gfa = selectedPlotData.totalBuiltUpArea || 1;
-  const totalFootprint = selectedPlotData.totalFootprint;
-  const totalGreenArea = selectedPlotData.totalGreenArea;
-  const achievedFAR = selectedPlotData.achievedFAR;
-  const groundCoveragePct = selectedPlotData.groundCoveragePct;
-  const openSpace = selectedPlotData.openSpace;
-  const greenAreaPct =
-    totalPlotArea > 0 ? (totalGreenArea / totalPlotArea) * 100 : 0;
-  const occupantsEstimate = Math.max(totalUnitsCount, 1) * 4;
-  const parkingRequired = Math.ceil(totalUnitsCount * 1.5);
+  const totalPlotArea =
+    activeProject.totalPlotArea || plots.reduce((s, p) => s + (p.area || 0), 0);
+  // Use consumedBuildableArea to exactly match the Project Constraints panel FAR calculation
+  const gfa =
+    activeProject.consumedBuildableArea || metrics.totalBuiltUpArea || 1;
+  const totalFootprint = buildingsForMetrics.reduce((s, b) => s + b.area, 0);
+  const totalGreenArea = allGreenAreas.reduce(
+    (s, g) => s + (g.visible ? g.area : 0),
+    0,
+  );
+
+  // Gather global unit/core/parking totals
+  const allUnits = buildingsForMetrics.flatMap((b) => b.units || []);
+  const allCores = buildingsForMetrics.flatMap((b) => b.cores || []);
+  const allParkingFloors = buildingsForMetrics.flatMap((b) =>
+    (b.floors || []).filter((f) => f.type === "Parking"),
+  );
   const totalParkingSpaces =
     allParkingAreas.reduce((s, p) => s + (p.capacity || 0), 0) +
     allParkingFloors.reduce((s, f) => s + (f.parkingCapacity || 0), 0);
+
+  // Building & Unit summaries
+  const totalBuildings = buildingsForMetrics.length;
+
+  // Aggregate unit types (e.g., '1BHK', '2BHK') across all buildings
+  const unitBreakdown = useMemo(() => {
+    const map: Record<string, number> = {};
+    allUnits.forEach((u: any) => {
+      // Try multiple fields for unit type: u.type, u.name, u.config, fallback to 'Unit'
+      const raw = (u.type || u.name || u.config || "Unit") as string;
+      // Normalize common patterns: '1BHK', '2 BHK', '2bhk' -> '2BHK'
+      const m = String(raw).toUpperCase().replace(/\s+/g, "");
+      const normalized = m
+        .replace(/(\d)BHK|BHK(\d)/, (s) => s)
+        .replace(/BHK\s*/, "BHK");
+      const key = normalized;
+      map[key] = (map[key] || 0) + 1;
+    });
+    // Sort keys numerically by leading digit when possible (1BHK,2BHK,3BHK)
+    const entries = Object.entries(map).sort((a, b) => {
+      const na = Number(a[0].match(/^\d+/)?.[0] || 0);
+      const nb = Number(b[0].match(/^\d+/)?.[0] || 0);
+      if (na === nb) return a[0].localeCompare(b[0]);
+      return na - nb;
+    });
+    return entries;
+  }, [allUnits]);
+  // Compute total units with robust fallbacks: prefer explicit units array, then unitCount fields, then project maps
+  const project = useProjectData();
+  const projectBuildings = (project?.plots || []).flatMap(
+    (p: any) => p.buildings || [],
+  );
+  const projectUnitsLookup: Record<string, number> = {};
+  projectBuildings.forEach((pb: any) => {
+    const id = pb.id || pb.buildingId || pb.building_id || null;
+    const names = [pb.name, pb.buildingName, pb.building_name]
+      .filter(Boolean)
+      .map((v: any) => String(v).toLowerCase().trim());
+    const units = pb.units?.length ?? pb.unitCount ?? pb.unit_count ?? 0;
+    if (id) projectUnitsLookup[id] = units;
+    names.forEach((n: string) => (projectUnitsLookup[n] = units));
+  });
+
+  let totalUnitsCount = 0;
+  if (allUnits.length > 0) {
+    totalUnitsCount = allUnits.length;
+  } else if (buildingsForMetrics.length > 0) {
+    // Sum per building using unitCount/units fields
+    totalUnitsCount = buildingsForMetrics.reduce((s: number, b: any) => {
+      const est =
+        b.units?.length ??
+        b.unitCount ??
+        b.unit_count ??
+        b.properties?.units?.length ??
+        null;
+      if (typeof est === "number") return s + est;
+      const bid = b.id || b.buildingId || b.building_id || null;
+      if (bid && projectUnitsLookup[bid] != null)
+        return s + projectUnitsLookup[bid];
+      const lname = (b.name || b.buildingName || b.buildingname || "")
+        .toString()
+        .toLowerCase();
+      if (lname && projectUnitsLookup[lname] != null)
+        return s + projectUnitsLookup[lname];
+      return s;
+    }, 0);
+  }
 
   // ─── Helper Components (bigger fonts) ───
   const Section = ({
@@ -370,72 +368,62 @@ function MetricsTab() {
         </div>
       </Section>
 
-      {/* ══════════ KPI SUMMARY ══════════ */}
-      <Section title="📈 KPI Summary">
-        <div className="rounded-lg border border-border/40 bg-secondary/10 px-3 py-3 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-md border border-white/5 bg-black/10 px-3 py-2.5">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                Total Buildings
-              </div>
-              <div className="mt-1 text-2xl font-bold tabular-nums text-slate-100">
-                {totalBuildings}
-              </div>
+      {/* ─── BUILDING & UNIT SUMMARY ───────────────────────────────── */}
+      <Section title="🏢 Buildings & Units">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <div className="text-xs text-muted-foreground uppercase">
+              Total Buildings
             </div>
-            <div className="rounded-md border border-white/5 bg-black/10 px-3 py-2.5">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                Total Units
-              </div>
-              <div className="mt-1 text-2xl font-bold tabular-nums text-slate-100">
-                {totalUnitsCount}
-              </div>
-            </div>
+            <div className="font-bold text-lg">{totalBuildings}</div>
           </div>
-
-          {Object.keys(unitBreakdown).length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {Object.entries(unitBreakdown)
-                .sort((a, b) => b[1] - a[1])
-                .map(([type, count]) => (
-                  <div
-                    key={type}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2.5 py-[2px] text-[11px]"
-                  >
-                    <span className="leading-none">🏠</span>
-                    <span className="font-medium text-slate-100">{type}</span>
-                    <span className="tabular-nums text-slate-300">
-                      {count}
-                    </span>
-                  </div>
-                ))}
+          <div>
+            <div className="text-xs text-muted-foreground uppercase">
+              Total Units
             </div>
-          )}
+            <div className="font-bold text-lg">{totalUnitsCount}</div>
+          </div>
         </div>
+
+        {unitBreakdown.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {unitBreakdown.map(([type, cnt]) => (
+              <div
+                key={type}
+                className="text-[13px] px-2 py-1 rounded-md bg-secondary/10 border border-border/20"
+              >
+                <span className="mr-2">🏠</span>
+                <span className="font-medium">{type}</span>
+                <span className="text-muted-foreground ml-2">{cnt}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </Section>
 
       {/* ══════════ SITE UTILIZATION ══════════ */}
       <Section title="📊 Site Utilization">
         <Row
           label="Achieved FAR"
-          value={achievedFAR.toFixed(2)}
-          accent={achievedFAR > 3 ? "text-red-400" : "text-blue-400"}
+          value={metrics.achievedFAR.toFixed(2)}
+          accent={metrics.achievedFAR > 3 ? "text-red-400" : "text-blue-400"}
           formula={`GFA ÷ Plot Area = ${Math.round(gfa)} ÷ ${Math.round(totalPlotArea)}`}
         />
         <Row
           label="Ground Coverage"
-          value={groundCoveragePct.toFixed(1)}
+          value={metrics.groundCoveragePct.toFixed(1)}
           unit="%"
           formula={`(Footprint ÷ Plot Area) × 100 = (${Math.round(totalFootprint)} ÷ ${Math.round(totalPlotArea)}) × 100`}
         />
         <Row
           label="Open Space"
-          value={Math.round(openSpace).toLocaleString()}
+          value={Math.round(metrics.openSpace).toLocaleString()}
           unit="m²"
           formula={`Plot Area − Footprint = ${Math.round(totalPlotArea)} − ${Math.round(totalFootprint)}`}
         />
         <Row
           label="Green Cover"
-          value={greenAreaPct.toFixed(1)}
+          value={metrics.greenArea.percentage.toFixed(1)}
           unit="%"
           accent="text-green-400"
           formula={`(Green Area ÷ Plot Area) × 100 = (${Math.round(totalGreenArea)} ÷ ${Math.round(totalPlotArea)}) × 100`}
@@ -454,32 +442,65 @@ function MetricsTab() {
       </Section>
 
       {/* ══════════ PER-BUILDING BREAKDOWN ══════════ */}
-      <Section title={`🏢 Buildings (${totalBuildings} total)`}>
+      <Section title={`🏢 Buildings (${buildingsForMetrics.length} total)`}>
         <div className="space-y-2">
-          {buildingsForMetrics.map((b, idx) => {
+          {buildingsForMetrics.map((b: any, idx: number) => {
             const bFloors = b.floors || [];
             const occFloors = bFloors.filter(
-              (f) => f.type !== "Parking" && f.type !== "Utility",
+              (f: any) => f.type !== "Parking" && f.type !== "Utility",
             );
-            const parkFloors = bFloors.filter((f) => f.type === "Parking");
-            const utilFloors = bFloors.filter((f) => f.type === "Utility");
+            const parkFloors = bFloors.filter((f: any) => f.type === "Parking");
+            const utilFloors = bFloors.filter((f: any) => f.type === "Utility");
             const bUnits = b.units || [];
             const bCores = b.cores || [];
             const bInternals = b.internalUtilities || [];
+            // Defensive normalization for display values (some sources return objects)
+            const displayBName =
+              typeof b.name === "string"
+                ? b.name
+                : typeof b.buildingName === "string"
+                  ? b.buildingName
+                  : String(b.id || `Building ${idx + 1}`);
+            const displayIntendedUse =
+              typeof b.intendedUse === "string"
+                ? b.intendedUse
+                : b.intendedUse && typeof b.intendedUse === "object"
+                  ? b.intendedUse.type ||
+                    b.intendedUse.name ||
+                    String(b.intendedUse.id)
+                  : String(b.intendedUse || "");
             const bHeight =
               b.height || b.numFloors * (b.typicalFloorHeight || 3.5);
             const isExpanded = expandedBuildings[b.id] ?? idx < 3;
 
-            // Unit breakdown
+            // Unit breakdown (normalize unit type/name to safe string)
             const unitBD: Record<string, number> = {};
-            bUnits.forEach((u) => {
-              unitBD[u.type] = (unitBD[u.type] || 0) + 1;
+            bUnits.forEach((u: any) => {
+              const rawType = u?.type ?? u?.name ?? u?.config ?? "Unit";
+              const unitType =
+                typeof rawType === "string"
+                  ? rawType
+                  : rawType && typeof rawType === "object"
+                    ? rawType.type ||
+                      rawType.name ||
+                      String(rawType.id || "Unit")
+                    : String(rawType);
+              unitBD[unitType] = (unitBD[unitType] || 0) + 1;
             });
 
-            // Core breakdown
+            // Core breakdown (normalize core type)
             const coreBD: Record<string, number> = {};
-            bCores.forEach((c) => {
-              coreBD[c.type] = (coreBD[c.type] || 0) + 1;
+            bCores.forEach((c: any) => {
+              const rawCoreType = c?.type ?? c?.name ?? "Core";
+              const coreType =
+                typeof rawCoreType === "string"
+                  ? rawCoreType
+                  : rawCoreType && typeof rawCoreType === "object"
+                    ? rawCoreType.type ||
+                      rawCoreType.name ||
+                      String(rawCoreType.id || "Core")
+                    : String(rawCoreType);
+              coreBD[coreType] = (coreBD[coreType] || 0) + 1;
             });
 
             return (
@@ -494,11 +515,9 @@ function MetricsTab() {
                 >
                   <div className="flex items-center gap-2">
                     <Building className="h-4 w-4 text-primary" />
-                    <span className="text-sm font-bold">
-                      {b.name || `Building ${idx + 1}`}
-                    </span>
+                    <span className="text-sm font-bold">{displayBName}</span>
                     <Badge variant="outline" className="text-xs">
-                      {b.intendedUse}
+                      {displayIntendedUse}
                     </Badge>
                   </div>
                   <div className="flex items-center gap-3">
@@ -575,7 +594,8 @@ function MetricsTab() {
                             −
                             {Math.round(
                               bCores.reduce(
-                                (s, c) => s + (turf.area(c.geometry) || 0),
+                                (s: number, c: any) =>
+                                  s + (turf.area(c.geometry) || 0),
                                 0,
                               ),
                             )}{" "}
@@ -590,7 +610,8 @@ function MetricsTab() {
                             {Math.round(
                               b.area -
                                 bCores.reduce(
-                                  (s, c) => s + (turf.area(c.geometry) || 0),
+                                  (s: number, c: any) =>
+                                    s + (turf.area(c.geometry) || 0),
                                   0,
                                 ),
                             )}{" "}
@@ -604,7 +625,7 @@ function MetricsTab() {
                           <span className="text-right text-emerald-400 mt-1">
                             {Math.round(
                               bUnits.reduce(
-                                (s, u) => s + (u.targetArea || 0),
+                                (s: number, u: any) => s + (u.targetArea || 0),
                                 0,
                               ),
                             )}{" "}
@@ -626,28 +647,60 @@ function MetricsTab() {
                         {utilFloors.length} utility)
                       </div>
                       <div className="flex flex-wrap gap-1">
-                        {bFloors.map((f, fi) => {
+                        {bFloors.map((f: any, fi: number) => {
+                          // Defensive normalization: some floor fields may be objects
+                          const rawFType = f?.type;
+                          const rawUtilType = f?.utilityType;
+                          const fType =
+                            typeof rawFType === "string"
+                              ? rawFType
+                              : rawFType && typeof rawFType === "object"
+                                ? (rawFType as any).type ||
+                                  (rawFType as any).name ||
+                                  String((rawFType as any).id)
+                                : String(rawFType || "");
+                          const utilType =
+                            typeof rawUtilType === "string"
+                              ? rawUtilType
+                              : rawUtilType && typeof rawUtilType === "object"
+                                ? (rawUtilType as any).utilityType ||
+                                  (rawUtilType as any).type ||
+                                  (rawUtilType as any).name ||
+                                  String((rawUtilType as any).id)
+                                : String(rawUtilType || "");
+
                           const bg =
-                            f.type === "Parking"
+                            fType === "Parking"
                               ? "bg-amber-500/30 border-amber-500/40"
-                              : f.type === "Utility"
+                              : fType === "Utility"
                                 ? "bg-orange-500/30 border-orange-500/40"
                                 : "bg-blue-500/20 border-blue-500/30";
                           const label =
-                            f.type === "Parking"
+                            fType === "Parking"
                               ? `P${f.level !== undefined ? f.level : fi}`
-                              : f.type === "Utility"
-                                ? f.utilityType || "Util"
+                              : fType === "Utility"
+                                ? utilType || "Util"
                                 : `F${f.level !== undefined ? f.level : fi}`;
+                          const heightStr =
+                            typeof f.height === "number" ||
+                            typeof f.height === "string"
+                              ? `${f.height}`
+                              : f.height && typeof f.height === "object"
+                                ? String(
+                                    f.height.value ??
+                                      f.height.height ??
+                                      JSON.stringify(f.height),
+                                  )
+                                : "";
                           return (
                             <span
                               key={f.id || fi}
                               className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-medium ${bg}`}
-                              title={`${f.type} | Height: ${f.height}m | Level: ${f.level}`}
+                              title={`${fType} | Height: ${heightStr}m | Level: ${f.level}`}
                             >
                               {label}
                               <span className="ml-1 text-muted-foreground text-[10px]">
-                                {f.height}m
+                                {heightStr}m
                               </span>
                             </span>
                           );
@@ -684,7 +737,7 @@ function MetricsTab() {
                                 > = {};
                                 let totalRealArea = 0;
 
-                                bUnits.forEach((u) => {
+                                bUnits.forEach((u: any) => {
                                   const typ = u.type || "Unit";
                                   if (!typeRealAreas[typ])
                                     typeRealAreas[typ] = { count: 0, area: 0 };
@@ -788,13 +841,13 @@ function MetricsTab() {
                                     targetSqm = mixEntry.area;
                                   } else {
                                     const matchingUnits = bUnits.filter(
-                                      (u) => u.type === type,
+                                      (u: any) => u.type === type,
                                     );
                                     targetSqm =
                                       matchingUnits.length > 0
                                         ? Math.round(
                                             matchingUnits.reduce(
-                                              (sum, u) =>
+                                              (sum: number, u: any) =>
                                                 sum + (u.targetArea || 0),
                                               0,
                                             ) / matchingUnits.length,
@@ -1183,9 +1236,25 @@ function MetricsTab() {
                               u.targetArea || u.area || 0,
                             );
                             const bFloorGfa = Math.round(b.area);
+                            // Normalize internal utility name/type to safe strings
+                            const rawIUType = u?.type;
+                            const rawIUName = u?.name;
+                            const displayIUType =
+                              typeof rawIUType === "string"
+                                ? rawIUType
+                                : rawIUType && typeof rawIUType === "object"
+                                  ? (rawIUType as any).utilityType ||
+                                    (rawIUType as any).type ||
+                                    (rawIUType as any).name ||
+                                    String((rawIUType as any).id)
+                                  : "";
+                            const displayIUName =
+                              typeof rawIUName === "string"
+                                ? rawIUName
+                                : displayIUType || String(u?.id || "Utility");
                             const iuType = (
-                              u.type ||
-                              u.name ||
+                              displayIUType ||
+                              displayIUName ||
                               ""
                             ).toLowerCase();
                             let iuNote = "";
@@ -1225,7 +1294,7 @@ function MetricsTab() {
                               >
                                 <div className="flex items-center justify-between text-sm">
                                   <span className="font-medium">
-                                    {u.name || u.type}
+                                    {displayIUName}
                                   </span>
                                   <span className="font-bold">
                                     {iuArea}{" "}
@@ -1251,7 +1320,7 @@ function MetricsTab() {
                           Parking Floors ({parkFloors.length})
                         </div>
                         <div className="space-y-1">
-                          {parkFloors.map((pf, pi) => (
+                          {parkFloors.map((pf: any, pi: number) => (
                             <div
                               key={pi}
                               className="flex items-center justify-between text-xs bg-amber-500/10 rounded px-2 py-1 border border-amber-500/20"
@@ -1290,12 +1359,35 @@ function MetricsTab() {
           <div className="space-y-2">
             {allUtilityAreas.map((u, i) => {
               // Determine formula/rationale per type — with actual values
-              const uType = (u.type || "").toLowerCase();
+              // u.type or u.name may sometimes be objects (from different data sources).
+              // Normalize to safe display strings to avoid rendering objects as React children.
+              const rawType = u?.type;
+              const rawName = u?.name;
+              const displayType =
+                typeof rawType === "string"
+                  ? rawType
+                  : rawType && typeof rawType === "object"
+                    ? (rawType as any).utilityType ||
+                      (rawType as any).type ||
+                      String(rawType)
+                    : "";
+              const displayName =
+                typeof rawName === "string"
+                  ? rawName
+                  : displayType || String(u?.id || "Utility");
+              const uType = (displayType || "").toLowerCase();
               const uArea = Math.round(u.targetArea || u.area || 0);
-              const totalOccupants = occupantsEstimate;
+              const totalOccupants = Math.round(
+                (allUnits.length || metrics.totalUnits) * 4,
+              ); // avg 4 per unit
               const totalGfa = Math.round(gfa);
               const totalFootprintVal = Math.round(totalFootprint);
-              const totalRooftop = Math.round(totalFootprint);
+              const totalRooftop = Math.round(
+                buildingsForMetrics.reduce(
+                  (s: number, b: any) => s + (b.area || 0),
+                  0,
+                ),
+              );
               const kva = Math.round((totalGfa * 10) / 1000); // 10 W/m²
               const dgKva = Math.round(kva * 0.375); // ~37.5% average of 25-50%
               const dailyWaterKL =
@@ -1346,7 +1438,7 @@ function MetricsTab() {
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
                       <Zap className="h-3.5 w-3.5 text-yellow-400 shrink-0" />
-                      <span className="font-medium">{u.name || u.type}</span>
+                      <span className="font-medium">{displayName}</span>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="font-bold">
@@ -1356,7 +1448,7 @@ function MetricsTab() {
                         </span>
                       </span>
                       <Badge variant="outline" className="text-xs">
-                        {u.type}
+                        {displayType || "—"}
                       </Badge>
                     </div>
                   </div>
@@ -1371,12 +1463,12 @@ function MetricsTab() {
                 label="Total Utility Area"
                 value={Math.round(
                   allUtilityAreas.reduce(
-                    (s, u) => s + (u.targetArea || u.area || 0),
+                    (s: number, u: any) => s + (u.targetArea || u.area || 0),
                     0,
                   ),
                 ).toLocaleString()}
                 unit="m²"
-                formula={`Σ all utility zones: ${allUtilityAreas.map((u) => Math.round(u.targetArea || u.area || 0) + "m²").join(" + ")}`}
+                formula={`Σ all utility zones: ${allUtilityAreas.map((u: any) => Math.round(u.targetArea || u.area || 0) + "m²").join(" + ")}`}
               />
             </div>
           </div>
@@ -1408,18 +1500,23 @@ function MetricsTab() {
             const activeGfaTotal = useMaxCapacity ? maxGFA : Math.round(gfa);
             const activeNumUnits = useMaxCapacity
               ? maxUnits
-              : totalUnitsCount || 1;
+              : allUnits.length || metrics.totalUnits || 1;
             const activeTotalOccupants = useMaxCapacity
               ? maxOccupants
-              : occupantsEstimate;
+              : Math.round((allUnits.length || metrics.totalUnits) * 4);
             const activeRoofArea = useMaxCapacity
               ? maxGroundCoverage
-              : Math.round(totalFootprint);
+              : Math.round(
+                  buildingsForMetrics.reduce(
+                    (s: number, b: any) => s + (b.area || 0),
+                    0,
+                  ),
+                );
             const avgFloors =
               buildingsForMetrics.length > 0
                 ? Math.round(
                     buildingsForMetrics.reduce(
-                      (s, b) => s + (b.numFloors || 1),
+                      (s: number, b: any) => s + (b.numFloors || 1),
                       0,
                     ) / buildingsForMetrics.length,
                   )
@@ -1739,38 +1836,25 @@ function MetricsTab() {
         />
         <Row
           label="Required"
-          value={parkingRequired}
-          formula={`Total Units (${totalUnitsCount}) × parking ratio`}
+          value={metrics.parking.required}
+          formula={`Total Units (${metrics.totalUnits}) × parking ratio`}
         />
         <Row
           label="Status"
           value={
-            totalParkingSpaces >= parkingRequired
+            totalParkingSpaces >= metrics.parking.required
               ? "✓ Compliant"
               : "✗ Deficit"
           }
           accent={
-            totalParkingSpaces >= parkingRequired
+            totalParkingSpaces >= metrics.parking.required
               ? "text-green-400"
               : "text-red-400"
           }
         />
-        <Row
-          label="Basement"
-          value={allParkingFloors
-            .filter((f) => (f.level || 0) < 0)
-            .reduce((s, f) => s + (f.parkingCapacity || 0), 0)}
-        />
-        <Row
-          label="Stilt"
-          value={allParkingFloors
-            .filter((f) => (f.level || 0) === 0)
-            .reduce((s, f) => s + (f.parkingCapacity || 0), 0)}
-        />
-        <Row
-          label="Surface"
-          value={allParkingAreas.reduce((s, p) => s + (p.capacity || 0), 0)}
-        />
+        <Row label="Basement" value={metrics.parking.breakdown.basement} />
+        <Row label="Stilt" value={metrics.parking.breakdown.stilt} />
+        <Row label="Surface" value={metrics.parking.breakdown.surface} />
         {allParkingFloors.reduce((s, f) => s + (f.evStations || 0), 0) > 0 && (
           <Row
             label="EV Charging Points"
@@ -1792,16 +1876,25 @@ function MetricsTab() {
           accent="text-blue-400"
           formula={`(GFA − Core − Circulation − Services − Amenities) ÷ GFA`}
         />
+        <Row
+          label="Total Units"
+          value={allUnits.length > 0 ? allUnits.length : metrics.totalUnits}
+          formula={
+            allUnits.length > 0
+              ? "Σ actual units from all buildings"
+              : `GFA ÷ 100 = ${Math.round(gfa)} ÷ 100`
+          }
+        />
         <Row label="Total Cores" value={allCores.length} />
         <Row
           label="Green Area / Capita"
-          value={(totalGreenArea / occupantsEstimate).toFixed(1)}
+          value={metrics.greenArea.perCapita.toFixed(1)}
           unit="m²/person"
         />
-        {selectedPlotData.totalRoadArea > 0 && (
+        {metrics.roadArea > 0 && (
           <Row
             label="Road Area"
-            value={Math.round(selectedPlotData.totalRoadArea).toLocaleString()}
+            value={Math.round(metrics.roadArea).toLocaleString()}
             unit="m²"
           />
         )}
@@ -2242,6 +2335,7 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
           <div className="space-y-1.5">
             {estimates.breakdown.map((b: any, i: number) => {
               const pct = (b.cost.total / totalCost) * 100;
+              const costDisplay = `${(b.cost.total / 10000000).toFixed(2)} Cr`;
               return (
                 <div key={i} className="text-[10px]">
                   <div className="flex justify-between mb-0.5">
@@ -2249,7 +2343,7 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
                       {b.buildingName}
                     </span>
                     <span className="font-semibold shrink-0">
-                      {(b.cost.total / 10000000).toFixed(2)} Cr
+                      {costDisplay}
                     </span>
                   </div>
                   <div className="h-1.5 rounded-full bg-secondary/50 overflow-hidden">
@@ -2587,9 +2681,6 @@ function MultiBuildingBudgetTab({
   estimates,
   isLoading,
 }: MultiBuildingTabProps) {
-  const plots = useBuildingStore((state) => state.plots);
-  const selectedPlot = useSelectedPlot() ?? plots?.[0] ?? null;
-
   if (isLoading)
     return (
       <div className="p-6 text-center text-sm text-muted-foreground animate-pulse">
@@ -2608,82 +2699,91 @@ function MultiBuildingBudgetTab({
         No buildings to display
       </div>
     );
-  if (!selectedPlot)
-    return (
-      <div className="p-6 text-center text-sm text-muted-foreground">
-        Select a plot to view building costs
-      </div>
-    );
 
   const fmtCr = (v: number) => `₹${(v / 10000000).toFixed(1)} Cr`;
-  const selectedPlotBuildingIds = new Set(
-    (selectedPlot.buildings || [])
-      .filter((building) => building.visible !== false)
-      .map((building) => building.id),
-  );
-  const buildings = (estimates.breakdown || []).filter((building) =>
-    selectedPlotBuildingIds.has(building.buildingId),
-  );
-  if (buildings.length === 0)
-    return (
-      <div className="p-6 text-center text-sm text-muted-foreground">
-        No buildings to display for the selected plot
-      </div>
-    );
-
-  const totalCost = buildings.reduce(
-    (sum, building) => sum + (building.cost?.total || 0),
-    0,
-  );
-  const totalUtilities = buildings.reduce(
-    (sum, building) => sum + (building.utilityCost || 0),
-    0,
-  );
+  const selectedPlot = useSelectedPlot();
+  // Prefer selected plot buildings when present (dynamic per-plot view like KPI)
+  const buildings =
+    selectedPlot?.buildings && selectedPlot.buildings.length > 0
+      ? selectedPlot.buildings
+      : estimates.breakdown || [];
+  const totalCost = estimates.total_construction_cost;
+  const totalRev = estimates.total_revenue;
+  const totalUtilities = estimates.simulation?.total_utility_cost || 0;
   const sim = estimates.simulation;
-  const costLo =
-    sim && estimates.total_construction_cost > 0
-      ? totalCost * (sim.cost_p10 / estimates.total_construction_cost)
-      : totalCost;
-  const costHi =
-    sim && estimates.total_construction_cost > 0
-      ? totalCost * (sim.cost_p90 / estimates.total_construction_cost)
-      : totalCost;
 
-  // Calculate budget metrics
-  const largestBuilding = buildings.reduce((max: any, b: any) =>
-    b.cost.total > max.cost.total ? b : max,
+  // Prefer authoritative unit counts from the project data (plots/buildings).
+  const project = useProjectData();
+  const projectBuildings = (project?.plots || []).flatMap(
+    (p: any) => p.buildings || [],
   );
-  const costVariance =
-    Math.max(...buildings.map((b: any) => b.cost.total)) -
-    Math.min(...buildings.map((b: any) => b.cost.total));
-  const avgCostPerBuilding = totalCost / buildings.length;
-  const visibleBuildings = (selectedPlot.buildings || []).filter(
-    (building) => building.visible !== false,
-  );
-  const totalUnits = visibleBuildings.reduce(
-    (sum, building) => sum + (building.units?.length || 0),
-    0,
-  );
-  const unitBreakdown = visibleBuildings.reduce(
-    (acc: Record<string, number>, building) => {
-      (building.units || []).forEach((unit) => {
-        const key = unit.type || unit.unitType || "Unit";
-        acc[key] = (acc[key] || 0) + 1;
-      });
-      return acc;
-    },
-    {},
-  );
-  const infrastructureShare =
-    totalUtilities > 0
-      ? (totalUtilities / (totalCost + totalUtilities)) * 100
-      : 0;
+  const projectUnitsMap: Record<string, number> = {};
+  const projectNameMap: Record<string, number> = {};
+  projectBuildings.forEach((pb: any) => {
+    const id = pb.id || pb.buildingId || pb.building_id || null;
+    const possibleNames = [
+      pb.name,
+      pb.buildingName,
+      pb.building_name,
+      pb.properties?.buildingName,
+      pb.properties?.buildingNameRaw,
+    ]
+      .filter(Boolean)
+      .map((v: any) => String(v).toLowerCase().trim());
+    const unitsCount =
+      (pb.units?.length ??
+        (pb.floors
+          ? pb.floors.reduce(
+              (s: number, f: any) => s + (f.units?.length || 0),
+              0,
+            )
+          : (pb.unitCount ?? pb.unit_count ?? 0))) ||
+      0;
+    if (id) projectUnitsMap[id] = unitsCount;
+    possibleNames.forEach((n: string) => {
+      if (n) projectNameMap[n] = unitsCount;
+    });
+  });
+
+  // Total units across project (prefer project data for accuracy)
+  const totalUnitsAcross =
+    projectBuildings.length > 0
+      ? projectBuildings.reduce(
+          (s: number, b: any) => s + (b.units?.length ?? 0),
+          0,
+        )
+      : buildings.reduce(
+          (sum: number, b: any) =>
+            sum + (b.unitCount ?? b.units?.length ?? b.unit_count ?? 0),
+          0,
+        );
+
+  // (fallback already handled above) — single totalUnitsAcross variable used
+
+  // Calculate budget metrics only when we are rendering estimate-derived buildings
+  const usingEstimates = buildings === (estimates.breakdown || []);
+  let largestBuilding: any = null;
+  let costVariance = 0;
+  let avgCostPerBuilding = 0;
+  let infrastructureShare = 0;
+  if (usingEstimates) {
+    largestBuilding = buildings.reduce((max: any, b: any) =>
+      b.cost.total > max.cost.total ? b : max,
+    );
+    costVariance =
+      Math.max(...buildings.map((b: any) => b.cost.total)) -
+      Math.min(...buildings.map((b: any) => b.cost.total));
+    avgCostPerBuilding = totalCost / buildings.length;
+    infrastructureShare =
+      totalUtilities > 0
+        ? (totalUtilities / (totalCost + totalUtilities)) * 100
+        : 0;
+  }
 
   return (
     <div className="space-y-4 pb-4">
       {/* Summary Overview */}
-      <div className="space-y-3">
-        <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         <div className="p-2.5 rounded-lg border bg-slate-500/10 border-slate-500/20 text-center">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">
             Total Buildings
@@ -2696,8 +2796,8 @@ function MultiBuildingBudgetTab({
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">
             Total Units
           </div>
-          <div className="text-xl font-bold text-emerald-400">
-            {totalUnits}
+          <div className="text-xl font-bold text-emerald-300">
+            {totalUnitsAcross}
           </div>
         </div>
         <div className="p-2.5 rounded-lg border bg-blue-500/10 border-blue-500/20 text-center">
@@ -2706,7 +2806,7 @@ function MultiBuildingBudgetTab({
           </div>
           <div className="text-base font-bold text-blue-400">
             {sim
-              ? `${fmtCr(costLo)} - ${fmtCr(costHi)}`
+              ? `${fmtCr(sim.cost_p10)} - ${fmtCr(sim.cost_p90)}`
               : `~${fmtCr(totalCost)} (est.)`}
           </div>
         </div>
@@ -2718,25 +2818,6 @@ function MultiBuildingBudgetTab({
             ~{fmtCr(totalUtilities)}
           </div>
         </div>
-        </div>
-        {Object.keys(unitBreakdown).length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(unitBreakdown)
-              .sort((a, b) => b[1] - a[1])
-              .map(([type, count]) => (
-                <div
-                  key={type}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2.5 py-[2px] text-[11px] shadow-sm"
-                >
-                  <span className="leading-none">🏠</span>
-                  <span className="font-medium text-slate-100">{type}</span>
-                  <span className="tabular-nums text-slate-300">
-                    {count}
-                  </span>
-                </div>
-              ))}
-          </div>
-        )}
       </div>
 
       {/* Building-wise Cost Breakdown */}
@@ -2747,20 +2828,23 @@ function MultiBuildingBudgetTab({
 
         {/* Grid Header */}
         <div className="grid gap-2">
-          <div className="grid grid-cols-6 gap-2 text-[11px] font-bold text-muted-foreground mb-2">
+          <div className="grid grid-cols-7 gap-2 text-[11px] font-bold text-muted-foreground mb-2">
             <div>Building</div>
             <div className="text-right">~Cost (₹ Cr)</div>
             <div className="text-right">~Utility (₹ Cr)</div>
             <div className="text-right">% of Total</div>
             <div className="text-right">GFA (sqm)</div>
             <div className="text-right">Floors</div>
+            <div className="text-right">Units</div>
           </div>
 
           {/* Building Rows */}
           {buildings.map((b: any, i: number) => {
-            const pct = (b.cost.total / totalCost) * 100;
-            const costCr = b.cost.total / 10000000;
-            const utilityCr = (b.utilityCost || 0) / 10000000;
+            const pct = usingEstimates ? (b.cost.total / totalCost) * 100 : 0;
+            const costCr = usingEstimates ? b.cost.total / 10000000 : 0;
+            const utilityCr = usingEstimates
+              ? (b.utilityCost || 0) / 10000000
+              : 0;
             return (
               <div
                 key={i}
@@ -2770,13 +2854,13 @@ function MultiBuildingBudgetTab({
                   {b.buildingName || `Building ${i + 1}`}
                 </div>
                 <div className="text-right font-bold text-emerald-400">
-                  ~{costCr.toFixed(1)}
+                  {usingEstimates ? `~${costCr.toFixed(1)}` : "N/A"}
                 </div>
                 <div className="text-right font-bold text-amber-400">
-                  ~{utilityCr.toFixed(2)}
+                  {usingEstimates ? `~${utilityCr.toFixed(2)}` : "N/A"}
                 </div>
                 <div className="text-right text-amber-400">
-                  {pct.toFixed(1)}%
+                  {usingEstimates ? `${pct.toFixed(1)}%` : "N/A"}
                 </div>
                 <div className="text-right text-blue-400">
                   {(b.gfa || 0).toFixed(0)}
@@ -2784,12 +2868,60 @@ function MultiBuildingBudgetTab({
                 <div className="text-right text-purple-400">
                   {b.floors || 0}
                 </div>
+                <div className="text-right text-slate-300">
+                  {(() => {
+                    // Robust matching helper to handle multiple estimate/project shapes
+                    const normalize = (v: any) =>
+                      v == null ? "" : String(v).toLowerCase().trim();
+
+                    const estVal =
+                      b.unitCount ??
+                      b.units?.length ??
+                      b.unit_count ??
+                      b.properties?.units?.length ??
+                      null;
+                    if (typeof estVal === "number" && estVal > 0) return estVal;
+
+                    const candidateIds = [
+                      b.buildingId,
+                      b.building_id,
+                      b.id,
+                      b.buildingRef,
+                    ].filter(Boolean);
+                    for (const cid of candidateIds) {
+                      if (cid && projectUnitsMap[cid] != null)
+                        return projectUnitsMap[cid];
+                    }
+
+                    const lname = normalize(
+                      b.buildingName ||
+                        b.buildingname ||
+                        b.name ||
+                        b.building_name ||
+                        b.properties?.buildingName,
+                    );
+                    if (lname && projectNameMap[lname] != null)
+                      return projectNameMap[lname];
+
+                    // Try fuzzy substring matching: find any project name key that is contained in lname or vice-versa
+                    if (lname) {
+                      for (const key of Object.keys(projectNameMap)) {
+                        if (!key) continue;
+                        if (lname.includes(key) || key.includes(lname))
+                          return projectNameMap[key];
+                      }
+                    }
+
+                    // As a last resort, try total units per building from projectBuildings by matching index-ish keys
+                    return 0;
+                  })()}
+                </div>
               </div>
             );
           })}
 
           {/* Total Row */}
-          <div className="grid grid-cols-6 gap-2 text-[10px] p-2 rounded bg-slate-600/20 border border-slate-500/30 font-bold mt-1">
+          <div className="grid grid-cols-7 gap-2 text-[10px] p-2 rounded bg-slate-600/20 border border-slate-500/30 font-bold mt-1">
             <div>TOTAL</div>
             <div className="text-right text-slate-300">~{fmtCr(totalCost)}</div>
             <div className="text-right text-slate-300">
@@ -2804,6 +2936,7 @@ function MultiBuildingBudgetTab({
             <div className="text-right text-slate-300">
               {buildings.reduce((s: number, b: any) => s + (b.floors || 0), 0)}
             </div>
+            <div className="text-right text-slate-300">{totalUnitsAcross}</div>
           </div>
         </div>
       </div>
@@ -2817,8 +2950,13 @@ function MultiBuildingBudgetTab({
           {(() => {
             const grandTotal = totalCost + totalUtilities;
             return buildings.map((b: any, i: number) => {
-              const bTotal = b.cost.total + (b.utilityCost || 0);
-              const pct = grandTotal > 0 ? (bTotal / grandTotal) * 100 : 0;
+              const bTotal = usingEstimates
+                ? b.cost.total + (b.utilityCost || 0)
+                : 0;
+              const pct =
+                usingEstimates && grandTotal > 0
+                  ? (bTotal / grandTotal) * 100
+                  : 0;
               const colors = [
                 "#3b82f6",
                 "#8b5cf6",
@@ -2836,7 +2974,7 @@ function MultiBuildingBudgetTab({
                       {b.buildingName || `Building ${i + 1}`}
                     </span>
                     <span className="font-semibold" style={{ color }}>
-                      {pct.toFixed(1)}%
+                      {usingEstimates ? `${pct.toFixed(1)}%` : "N/A"}
                     </span>
                   </div>
                   <div className="h-2 bg-secondary/40 rounded-full overflow-hidden">
@@ -2868,16 +3006,28 @@ function MultiBuildingBudgetTab({
           {estimates.simulation?.utility_costs &&
             estimates.simulation.utility_costs.length > 0 && (
               <div className="space-y-1 text-[10px] text-amber-200">
-                {estimates.simulation.utility_costs.map((u: any, i: number) => (
-                  <div key={i} className="flex justify-between">
-                    <span>
-                      {u.label} ({u.unit})
-                    </span>
-                    <span className="font-semibold">
-                      ~{(u.amount / 10000000).toFixed(2)} Cr
-                    </span>
-                  </div>
-                ))}
+                {estimates.simulation.utility_costs.map((u: any, i: number) => {
+                  const rawUnit = u.unit;
+                  const displayUnit =
+                    typeof rawUnit === "string"
+                      ? rawUnit
+                      : rawUnit && typeof rawUnit === "object"
+                        ? (rawUnit as any).utilityType ||
+                          (rawUnit as any).type ||
+                          (rawUnit as any).name ||
+                          String((rawUnit as any).id)
+                        : String(rawUnit || "");
+                  return (
+                    <div key={i} className="flex justify-between">
+                      <span>
+                        {u.label} {displayUnit ? `(${displayUnit})` : ""}
+                      </span>
+                      <span className="font-semibold">
+                        ~{(u.amount / 10000000).toFixed(2)} Cr
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
         </div>
@@ -2888,30 +3038,40 @@ function MultiBuildingBudgetTab({
         <div className="text-[10px] uppercase tracking-wider font-semibold text-cyan-400 mb-2">
           Budget Decision Tips
         </div>
-        <div className="space-y-1 text-[10px] text-cyan-200">
-          <div>
-            • Largest building:{" "}
-            <span className="font-bold">{largestBuilding.buildingName}</span> (~
-            {(largestBuilding.cost.total / 10000000).toFixed(1)} Cr)
+        {usingEstimates ? (
+          <div className="space-y-1 text-[10px] text-cyan-200">
+            <div>
+              • Largest building:{" "}
+              <span className="font-bold">{largestBuilding?.buildingName}</span>{" "}
+              (~
+              {(largestBuilding?.cost?.total ?? 0 / 10000000).toFixed(1)} Cr)
+            </div>
+            <div>
+              • Average per building:{" "}
+              <span className="font-bold">
+                ~{(avgCostPerBuilding / 10000000).toFixed(1)} Cr
+              </span>
+            </div>
+            <div>
+              • Cost variance:{" "}
+              <span className="font-bold">
+                ~{(costVariance / 10000000).toFixed(1)} Cr
+              </span>
+            </div>
+            <div>
+              • Infrastructure share:{" "}
+              <span className="font-bold">
+                {infrastructureShare.toFixed(1)}%
+              </span>{" "}
+              of total
+            </div>
           </div>
-          <div>
-            • Average per building:{" "}
-            <span className="font-bold">
-              ~{(avgCostPerBuilding / 10000000).toFixed(1)} Cr
-            </span>
+        ) : (
+          <div className="text-[12px] text-cyan-200">
+            Estimates unavailable for the selected plot — cost metrics shown
+            only when building estimates exist.
           </div>
-          <div>
-            • Cost variance:{" "}
-            <span className="font-bold">
-              ~{(costVariance / 10000000).toFixed(1)} Cr
-            </span>
-          </div>
-          <div>
-            • Infrastructure share:{" "}
-            <span className="font-bold">{infrastructureShare.toFixed(1)}%</span>{" "}
-            of total
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -2929,9 +3089,9 @@ function FeasibilityTab() {
     (state) => state.actions.toggleVastuCompass,
   );
   const plots = useBuildingStore((state) => state.plots);
-  const selectedPlot = useSelectedPlot() ?? plots?.[0] ?? null;
   const actions = useBuildingStore((state) => state.actions);
   const generationParams = useBuildingStore((state) => state.generationParams);
+  const selectedPlot = useSelectedPlot();
   const [isGeneratingGates, setIsGeneratingGates] = useState(false);
   const [gatesGenerated, setGatesGenerated] = useState(false);
   // Vastu incremental loading state (UI-only)
@@ -2972,10 +3132,44 @@ function FeasibilityTab() {
     activeProject,
     metrics,
   );
-  const selectedPlotData = useMemo(
-    () => getSelectedPlotMetricsSource(selectedPlot),
-    [selectedPlot],
+
+  // Totals for building breakdown used in headers (prefer selected plot)
+  const totalBuildings = selectedPlot
+    ? (selectedPlot.buildings || []).length
+    : (estimates?.breakdown?.length ?? 0);
+  // Robust total units: prefer explicit units arrays, then unitCount fields, then project building data
+  const project = useProjectData();
+  const projectBuildingList = (project?.plots || []).flatMap(
+    (p: any) => p.buildings || [],
   );
+  const projectUnitsById: Record<string, number> = {};
+  projectBuildingList.forEach((pb: any) => {
+    const id = pb.id || pb.buildingId || pb.building_id || null;
+    const units = pb.units?.length ?? pb.unitCount ?? pb.unit_count ?? 0;
+    if (id) projectUnitsById[id] = units;
+  });
+
+  const totalUnitsCount = selectedPlot
+    ? (selectedPlot.buildings || []).reduce(
+        (s: number, b: any) =>
+          s + (b.unitCount ?? b.units?.length ?? b.unit_count ?? 0),
+        0,
+      )
+    : estimates?.breakdown
+      ? estimates.breakdown.reduce((s: number, b: any) => {
+          const est =
+            b.unitCount ??
+            b.units?.length ??
+            b.unit_count ??
+            b.properties?.units?.length ??
+            null;
+          if (typeof est === "number") return s + est;
+          const bid = b.buildingId || b.id || b.building_id || null;
+          if (bid && projectUnitsById[bid] != null)
+            return s + projectUnitsById[bid];
+          return s;
+        }, 0)
+      : 0;
 
   if (!metrics)
     return (
@@ -3208,14 +3402,7 @@ function FeasibilityTab() {
             Green Cover
           </div>
           <div className="font-bold text-xl text-green-600">
-            {selectedPlotData.totalPlotArea > 0
-              ? (
-                  (selectedPlotData.totalGreenArea /
-                    selectedPlotData.totalPlotArea) *
-                  100
-                ).toFixed(1)
-              : "0.0"}
-            %
+            {metrics.greenArea.percentage.toFixed(1)}%
           </div>
         </div>
         <div className="p-3 bg-secondary/30 rounded border text-center">
@@ -3223,13 +3410,10 @@ function FeasibilityTab() {
             Road Area
           </div>
           <div className="font-bold text-xl text-slate-500">
-            {selectedPlotData.totalPlotArea > 0
-              ? (
-                  (selectedPlotData.totalRoadArea /
-                    selectedPlotData.totalPlotArea) *
-                  100
-                ).toFixed(1)
-              : "0.0"}
+            {(
+              (metrics.roadArea / Math.max(1, metrics.totalPlotArea)) *
+              100
+            ).toFixed(1)}
             %
           </div>
         </div>
@@ -3422,102 +3606,137 @@ function FeasibilityTab() {
                             <div className="text-sm text-right">
                               <div>
                                 {(() => {
-                                const isBylaw = card.label
-                                  .toLowerCase()
-                                  .includes("bylaw");
-                                const isVastu = card.label
-                                  .toLowerCase()
-                                  .includes("vastu");
+                                  const isBylaw = card.label
+                                    .toLowerCase()
+                                    .includes("bylaw");
+                                  const isVastu = card.label
+                                    .toLowerCase()
+                                    .includes("vastu");
 
-                                // CASE 1: Has score and maxScore (Vastu)
-                                if (
-                                  isVastu &&
-                                  item.score != null &&
-                                  item.maxScore != null
-                                ) {
-                                  return String(
-                                    `${item.score} / ${item.maxScore}`,
-                                  );
-                                }
+                                  // CASE 1: Has score and maxScore (Vastu)
+                                  if (
+                                    isVastu &&
+                                    item.score != null &&
+                                    item.maxScore != null
+                                  ) {
+                                    return String(
+                                      `${item.score} / ${item.maxScore}`,
+                                    );
+                                  }
 
-                                // CASE 2: Numeric comparison (Bylaw) — show value/limit only when both present
-                                if (
-                                  isBylaw &&
-                                  item.value != null &&
-                                  (item.limit != null ||
-                                    item.limitValue != null ||
-                                    item.threshold != null)
-                                ) {
-                                  const limit =
-                                    item.limit ??
-                                    item.limitValue ??
-                                    item.threshold;
-                                  return String(`${item.value} / ${limit}`);
-                                }
+                                  // CASE 2: Numeric comparison (Bylaw) — show value/limit only when both present
+                                  if (
+                                    isBylaw &&
+                                    item.value != null &&
+                                    (item.limit != null ||
+                                      item.limitValue != null ||
+                                      item.threshold != null)
+                                  ) {
+                                    const limit =
+                                      item.limit ??
+                                      item.limitValue ??
+                                      item.threshold;
+                                    return String(`${item.value} / ${limit}`);
+                                  }
 
-                                // CASE 3: Only status/text — show only explicit value text or statusText or compliance when explicitly provided as string/boolean
-                                if (
-                                  typeof item.value === "string" &&
-                                  item.value.trim().length > 0
-                                ) {
-                                  return item.value;
-                                }
+                                  // CASE 3: Only status/text — show only explicit value text or statusText or compliance when explicitly provided as string/boolean
+                                  if (
+                                    typeof item.value === "string" &&
+                                    item.value.trim().length > 0
+                                  ) {
+                                    return item.value;
+                                  }
 
-                                if (
-                                  typeof item.statusText === "string" &&
-                                  item.statusText.trim().length > 0
-                                ) {
-                                  return item.statusText;
-                                }
+                                  if (
+                                    typeof item.statusText === "string" &&
+                                    item.statusText.trim().length > 0
+                                  ) {
+                                    return item.statusText;
+                                  }
 
-                                if (typeof item.compliance === "boolean") {
-                                  return item.compliance
-                                    ? "Provided"
-                                    : "Not provided";
-                                }
+                                  if (typeof item.compliance === "boolean") {
+                                    return item.compliance
+                                      ? "Provided"
+                                      : "Not provided";
+                                  }
 
-                                // If none of the explicit data exists, render nothing (per strict rule)
-                                return null;
-                              })()}
+                                  // If none of the explicit data exists, render nothing (per strict rule)
+                                  return null;
+                                })()}
                               </div>
 
                               {/* Points / score subtext (clean, right-aligned) */}
                               {(() => {
-                                const achievedScore = (item as any).achievedScore ?? item.score ?? null;
-                                const achievedPoints = (item as any).achievedPoints ?? null; // normalized 0..1
-                                const itemMax = item.maxScore ?? (item as any).weight ?? null;
+                                const achievedScore =
+                                  (item as any).achievedScore ??
+                                  item.score ??
+                                  null;
+                                const achievedPoints =
+                                  (item as any).achievedPoints ?? null; // normalized 0..1
+                                const itemMax =
+                                  item.maxScore ?? (item as any).weight ?? null;
 
                                 // Determine total max for this card (preference: summary maxScore, else sum of item maxes)
-                                const cardSummaryMax = (card as any).summary?.maxScore ?? null;
+                                const cardSummaryMax =
+                                  (card as any).summary?.maxScore ?? null;
                                 let totalMax = cardSummaryMax;
                                 if (totalMax == null) {
                                   try {
-                                    totalMax = (card.items || []).reduce((s: number, it: any) => s + (it.maxScore ?? it.weight ?? 0), 0) || null;
-                                  } catch { totalMax = null; }
+                                    totalMax =
+                                      (card.items || []).reduce(
+                                        (s: number, it: any) =>
+                                          s + (it.maxScore ?? it.weight ?? 0),
+                                        0,
+                                      ) || null;
+                                  } catch {
+                                    totalMax = null;
+                                  }
                                 }
 
                                 // Compute a numeric achieved value when possible
                                 let numericAchieved: number | null = null;
-                                if (typeof achievedScore === 'number') numericAchieved = achievedScore;
-                                else if (typeof achievedPoints === 'number' && typeof itemMax === 'number') numericAchieved = Math.round(achievedPoints * itemMax * 100) / 100;
+                                if (typeof achievedScore === "number")
+                                  numericAchieved = achievedScore;
+                                else if (
+                                  typeof achievedPoints === "number" &&
+                                  typeof itemMax === "number"
+                                )
+                                  numericAchieved =
+                                    Math.round(achievedPoints * itemMax * 100) /
+                                    100;
 
                                 // Render achieved / max (percent)
-                                if (typeof numericAchieved === 'number' && typeof itemMax === 'number') {
-                                  const pct = itemMax > 0 ? (numericAchieved / itemMax) * 100 : 0;
+                                if (
+                                  typeof numericAchieved === "number" &&
+                                  typeof itemMax === "number"
+                                ) {
+                                  const pct =
+                                    itemMax > 0
+                                      ? (numericAchieved / itemMax) * 100
+                                      : 0;
                                   return (
                                     <div className="text-right">
-                                      <div className="text-xs font-medium text-muted-foreground">{`${Math.round(numericAchieved)} / ${Math.round(itemMax)}  (${pct.toFixed(0)}%)`}</div>
-                                      {typeof totalMax === 'number' && totalMax > 0 && (
-                                        <div className="text-[11px] text-muted-foreground mt-0.5">{`Contribution: +${((numericAchieved / totalMax) * 100).toFixed(1)}%`}</div>
-                                      )}
+                                      <div className="text-xs font-medium text-muted-foreground">{`${Math.round(numericAchieved)} / ${Math.round(itemMax)}`}</div>
+                                      {typeof totalMax === "number" &&
+                                        totalMax > 0 && (
+                                          <div className="text-[11px] text-muted-foreground mt-0.5">{`Contribution: +${((numericAchieved / totalMax) * 100).toFixed(1)}%`}</div>
+                                        )}
                                     </div>
                                   );
                                 }
 
                                 // If only achievedPoints present, show that and contribution
-                                if (typeof achievedPoints === 'number' && typeof totalMax === 'number' && totalMax > 0) {
-                                  const achievedValue = (typeof itemMax === 'number') ? (achievedPoints * itemMax) : (achievedPoints);
-                                  const contrib = (achievedValue / totalMax) * 100;
+                                if (
+                                  typeof achievedPoints === "number" &&
+                                  typeof totalMax === "number" &&
+                                  totalMax > 0
+                                ) {
+                                  const achievedValue =
+                                    typeof itemMax === "number"
+                                      ? achievedPoints * itemMax
+                                      : achievedPoints;
+                                  const contrib =
+                                    (achievedValue / totalMax) * 100;
                                   return (
                                     <div className="text-right">
                                       <div className="text-xs text-muted-foreground">{`${(achievedPoints * 100).toFixed(0)}%`}</div>
@@ -3529,8 +3748,14 @@ function FeasibilityTab() {
                                 // Fallback: any legacy points field
                                 const legacyPts = (item as any).points;
                                 if (legacyPts != null) {
-                                  const achievedValue = typeof legacyPts === 'number' ? legacyPts : parseFloat(String(legacyPts)) || 0;
-                                  if (typeof totalMax === 'number' && totalMax > 0) {
+                                  const achievedValue =
+                                    typeof legacyPts === "number"
+                                      ? legacyPts
+                                      : parseFloat(String(legacyPts)) || 0;
+                                  if (
+                                    typeof totalMax === "number" &&
+                                    totalMax > 0
+                                  ) {
                                     return (
                                       <div className="text-right">
                                         <div className="text-xs text-muted-foreground">{`${legacyPts} Pts`}</div>
@@ -3538,7 +3763,9 @@ function FeasibilityTab() {
                                       </div>
                                     );
                                   }
-                                  return <div className="text-xs text-muted-foreground">{`${legacyPts} Pts`}</div>;
+                                  return (
+                                    <div className="text-xs text-muted-foreground">{`${legacyPts} Pts`}</div>
+                                  );
                                 }
 
                                 return null;
@@ -3780,50 +4007,81 @@ function FeasibilityTab() {
             <div className="rounded-lg border p-3 bg-secondary/5 border-border/20">
               <div className="flex items-center gap-2 mb-2">
                 <Building className="h-4 w-4 text-primary" />
-                <span className="text-sm font-semibold">
-                  Building Breakdown
-                </span>
+                <div className="flex flex-col">
+                  <span className="text-sm font-semibold">
+                    Building Breakdown
+                  </span>
+                  <div className="text-[11px] text-muted-foreground">
+                    {(selectedPlot?.buildings || estimates.breakdown).length}{" "}
+                    buildings •{" "}
+                    {selectedPlot
+                      ? (selectedPlot.buildings || []).reduce(
+                          (s: any, bb: any) =>
+                            s +
+                            (bb.units?.length ??
+                              bb.unitCount ??
+                              bb.unit_count ??
+                              0),
+                          0,
+                        )
+                      : totalUnitsCount}{" "}
+                    units
+                  </div>
+                </div>
               </div>
               <div className="space-y-2 max-h-[150px] overflow-y-auto scrollbar-thin pr-1">
-                {estimates.breakdown.map((b: any, idx: number) => {
-                  const bCost = b.cost.total / 10000000;
-                  const costLo = sim
-                    ? (bCost * (sim.cost_p10 / sim.cost_p50)).toFixed(2)
-                    : null;
-                  const costHi = sim
-                    ? (bCost * (sim.cost_p90 / sim.cost_p50)).toFixed(2)
-                    : null;
-                  const bTime = b.timeline.total;
-                  const timeLo = sim
-                    ? (bTime * (sim.time_p10 / sim.time_p50)).toFixed(0)
-                    : null;
-                  const timeHi = sim
-                    ? (bTime * (sim.time_p90 / sim.time_p50)).toFixed(0)
-                    : null;
-                  return (
-                    <div
-                      key={idx}
-                      className="text-xs border-b border-border/10 pb-2 last:border-0 last:pb-0"
-                    >
-                      <div className="flex justify-between font-medium mb-1">
-                        <span>{b.buildingName}</span>
-                        <span className="text-emerald-500">
-                          {sim
-                            ? `₹${costLo} – ${costHi} Cr`
-                            : `~₹${bCost.toFixed(2)} Cr`}
-                        </span>
+                {(selectedPlot?.buildings || estimates.breakdown).map(
+                  (b: any, idx: number) => {
+                    // Some building objects (from selectedPlot) may not include estimate fields (cost/timeline).
+                    // Use safe defaults to avoid runtime errors.
+                    const rawCostTotal =
+                      b && b.cost && typeof b.cost.total === "number"
+                        ? b.cost.total
+                        : 0;
+                    const bCost = rawCostTotal / 10000000;
+                    const costLo = sim
+                      ? (bCost * (sim.cost_p10 / sim.cost_p50)).toFixed(2)
+                      : null;
+                    const costHi = sim
+                      ? (bCost * (sim.cost_p90 / sim.cost_p50)).toFixed(2)
+                      : null;
+                    const bTime =
+                      b && b.timeline && typeof b.timeline.total === "number"
+                        ? b.timeline.total
+                        : 0;
+                    const timeLo =
+                      sim && bTime > 0
+                        ? (bTime * (sim.time_p10 / sim.time_p50)).toFixed(0)
+                        : null;
+                    const timeHi =
+                      sim && bTime > 0
+                        ? (bTime * (sim.time_p90 / sim.time_p50)).toFixed(0)
+                        : null;
+                    return (
+                      <div
+                        key={idx}
+                        className="text-xs border-b border-border/10 pb-2 last:border-0 last:pb-0"
+                      >
+                        <div className="flex justify-between font-medium mb-1">
+                          <span>{b.buildingName}</span>
+                          <span className="text-emerald-500">
+                            {sim
+                              ? `₹${costLo} – ${costHi} Cr`
+                              : `~₹${bCost.toFixed(2)} Cr`}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-[10px] text-muted-foreground">
+                          <span>
+                            {sim
+                              ? `${timeLo} – ${timeHi} mo`
+                              : `~${bTime.toFixed(0)} mo`}
+                          </span>
+                          <span>{sim ? "" : "(est.)"}</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between text-[10px] text-muted-foreground">
-                        <span>
-                          {sim
-                            ? `${timeLo} – ${timeHi} mo`
-                            : `~${bTime.toFixed(0)} mo`}
-                        </span>
-                        <span>{sim ? "" : "(est.)"}</span>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  },
+                )}
               </div>
             </div>
           )}
