@@ -1,359 +1,548 @@
-
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import { VASTU_SCHEMA } from "@/lib/scoring/vastu.schema";
-import { useBuildingStore, useProjectData, useSelectedPlot } from '@/hooks/use-building-store';
-import { useGreenRegulations } from '@/hooks/use-green-regulations';
-import { useGreenStandardChecks } from '@/hooks/use-green-standard-checks';
-import { Project } from '@/lib/types';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import React, { useEffect, useMemo, useState } from 'react';
+
+import { useProjectData } from '@/hooks/use-building-store';
+import {
+  GreenCreditCheckResult,
+  useGreenStandardChecks,
+} from '@/hooks/use-green-standard-checks';
+import { GRIHA_SCHEMA } from '@/lib/scoring/griha.schema';
+import { IGBC_SCHEMA } from '@/lib/scoring/igbc.schema';
+import { LEED_SCHEMA } from '@/lib/scoring/leed.schema';
+import { cn } from '@/lib/utils';
+import { AlertTriangle, ChevronDown, Leaf } from 'lucide-react';
+
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
-import { CheckCircle2, Circle, XCircle, AlertCircle, Leaf, Wind, Sun, MapPin, Loader2, MousePointerClick, Hand } from 'lucide-react';
-import { GREEN_SCHEMA } from '@/lib/scoring/green.schema';
-import evaluateSchema, { ItemResult } from '@/lib/scoring/schema-engine';
-import { cn } from '@/lib/utils';
-import { Separator } from '@/components/ui/separator';
 
-const CREDIT_MATCH_RULES = [
-    { keywords: ['ventilation', 'wind', 'air quality', 'natural ventilation', 'cross ventilation'], checkKey: 'ventilation' },
-    { keywords: ['daylight', 'solar access', 'natural light'], checkKey: 'daylighting' },
-    { keywords: ['landscape', 'green cover', 'vegetation', 'planting', 'tree', 'habitat', 'biodivers', 'topography'], checkKey: 'green_cover' },
-    { keywords: ['open space', 'outdoor space'], checkKey: 'open_space' },
-    { keywords: ['heat island', 'urban heat', 'uhie'], checkKey: 'heat_island' },
-    { keywords: ['transit', 'transport', 'connectivity', 'bus', 'metro', 'bicycle', 'pedestrian', 'walkable'], checkKey: 'transit_access' },
-    { keywords: ['amenity', 'proximity', 'community', 'basic service', 'social infrastructure'], checkKey: 'amenity_proximity' },
-    { keywords: ['rainwater', 'rain water', 'water harvest', 'rwh', 'storm water'], checkKey: 'rainwater_harvesting' },
-    { keywords: ['solar', 'photovoltaic', 'solar pv', 'on-site renewable', 'off-site renewable', 'off-site green', 'green power', 'renewable energy'], checkKey: 'solar_energy' },
-    { keywords: ['stp', 'wtp', 'sewage', 'water recycl', 'water treatment', 'effluent', 'waste water', 'wastewater'], checkKey: 'water_recycling' },
-    { keywords: ['waste', 'owc', 'solid waste', 'organic waste', 'compost', 'recyclable waste'], checkKey: 'waste_management' },
-    { keywords: ['ev ', 'electric vehicle', 'ev charging', 'e-vehicle', 'low-emitting vehicle'], checkKey: 'ev_charging' },
-    { keywords: ['parking', 'vehicle parking'], checkKey: 'parking_compliance' },
-    { keywords: ['far', 'floor area ratio', 'fsi', 'fsr', 'capacity assessment', 'compact'], checkKey: 'far_compliance' },
-    { keywords: ['coverage', 'ground cover', 'plot coverage'], checkKey: 'ground_coverage' },
-    { keywords: ['orientation', 'building orient', 'passive architecture'], checkKey: 'building_orientation' },
-    { keywords: ['depth', 'floor plate'], checkKey: 'floor_plate_depth' },
-    { keywords: ['fire', 'fire safety', 'firefighting'], checkKey: 'fire_safety' },
-    { keywords: ['energy efficien', 'hvac', 'cooling', 'heating', 'mechanical', 'thermal load'], checkKey: 'energy_efficiency' },
-    { keywords: ['energy optimization', 'energy optim', 'energy performance', 'reduce peak'], checkKey: 'energy_optimization' },
-    { keywords: ['site', 'master plan', 'site plan', 'zoning', 'sustainable design'], checkKey: 'site_planning' },
-    { keywords: ['land use', 'mixed use', 'land utiliz', 'equitable development'], checkKey: 'land_use_planning' },
-    { keywords: ['water efficien', 'water conserv', 'water manage', 'water meter', 'plumbing fixture'], checkKey: 'water_recycling' },
-    { keywords: ['construction', 'material', 'embodied energy', 'fly ash', 'aac', 'indoor', 'iaq', 'low voc', 'tobacco', 'innovation', 'bonus', 'exceptional', 'leed ap', 'igbc accredited', 'housing typolog', 'employment', 'social', 'cultural', 'tenant', 'commissioning', 'process', 'operation and maintenance', 'green education', 'no smoking', 'refrigerant', 'odp', 'gwp', 'ozone', 'light pollution', 'soil erosion', 'topsoil', 'site disturbance', 'green building', 'decarbonization', 'health', 'wellbeing', 'universal design', 'differently abled', 'measurement', 'smart metering', 'local regulation', 'contaminated', 'fruit', 'vegetable', 'recycled content', 'local material', 'carbon footprint', 'carbon assessment', 'natural resource', 'non-motorized', 'community engagement', 'visual comfort', 'acoustic', 'air pollution', 'sanitation', 'accessibility', 'dedicated facilities', 'positive social', 'life cycle', 'green procurement', 'structural design', 'eco-friendly', 'wood', 'certified green', 'demolition', 'exterior', 'outdoor view', 'pollutant', 'low-emitting material', 'occupant', 'resilient', 'green lease', 'project priorities', 'electrification', 'grid interactive', 'road', 'street network'], checkKey: 'manual_tracking' },
+type CertificateType = 'LEED' | 'IGBC' | 'GRIHA';
+
+type RawSchemaItem = {
+  id: string;
+  name?: string;
+  maxScore?: number;
+  mandatory?: boolean;
+  mandatoryScore?: number;
+};
+
+type RawSchemaCategory = {
+  id: string;
+  name?: string;
+  maxScore?: number;
+  items: RawSchemaItem[];
+};
+
+type RawSchema = {
+  id: string;
+  name: string;
+  maxScore: number;
+  categories: RawSchemaCategory[];
+};
+
+type ScorecardItem = {
+  id: string;
+  name: string;
+  maxScore: number;
+  mandatory: boolean;
+  mandatoryScore?: number;
+  detectionKey?: string;
+};
+
+type ScorecardCategory = {
+  id: string;
+  name: string;
+  maxScore: number;
+  items: ScorecardItem[];
+};
+
+type ScorecardSchema = {
+  id: string;
+  name: string;
+  maxScore: number;
+  categories: ScorecardCategory[];
+};
+
+type MandatoryIssue = {
+  categoryId: string;
+  itemId: string;
+};
+
+type ItemEvaluation = {
+  isDetectedValid: boolean;
+  countedScore: number;
+};
+
+const schemaMap: Record<CertificateType, RawSchema> = {
+  LEED: LEED_SCHEMA,
+  IGBC: IGBC_SCHEMA,
+  GRIHA: GRIHA_SCHEMA,
+};
+
+const STORAGE_KEY_PREFIX = 'green-scorecard:toggle-state';
+
+const ITEM_CHECK_KEY_OVERRIDES: Record<string, string> = {
+  open_space: 'open_space',
+  rainwater: 'rainwater_harvesting',
+  outdoor_prereq: 'rainwater_harvesting',
+  metering_prereq: 'water_recycling',
+  water_use: 'water_recycling',
+  stp: 'water_recycling',
+  site_selection: 'site_planning',
+  topsoil: 'green_cover',
+  passive_design: 'building_orientation',
+  envelope: 'energy_efficiency',
+  energy: 'energy_optimization',
+  lighting: 'daylighting',
+  hvac: 'energy_efficiency',
+  iaq: 'ventilation',
+  organic: 'waste_management',
+  om: 'manual_tracking',
+  commissioning: 'manual_tracking',
+  min_energy: 'energy_optimization',
+  energy_meter: 'energy_efficiency',
+  refrigerant: 'energy_efficiency',
+  recycle_prereq: 'waste_management',
+  waste_plan: 'waste_management',
+  smoke: 'manual_tracking',
+  transit: 'transit_access',
+  bicycle: 'transit_access',
+  density: 'amenity_proximity',
+  parking: 'parking_compliance',
+  green_vehicle: 'ev_charging',
+  transit_access: 'transit_access',
+  daylight: 'daylighting',
+  renewable: 'solar_energy',
+  green_power: 'solar_energy',
+  metering: 'water_recycling',
+  wastewater: 'water_recycling',
+  harvesting: 'rainwater_harvesting',
+  landscape_water: 'green_cover',
+  landscape: 'green_cover',
+  heat_roof: 'heat_island',
+  heat_non_roof: 'heat_island',
+  ventilation: 'ventilation',
+  acoustic: 'manual_tracking',
+  thermal: 'manual_tracking',
+  accessiblity: 'manual_tracking',
+};
+
+const KEYWORD_CHECK_RULES: Array<{ checkKey: string; keywords: string[] }> = [
+  { checkKey: 'ventilation', keywords: ['ventilation', 'iaq', 'air quality', 'fresh air'] },
+  { checkKey: 'daylighting', keywords: ['daylight', 'lighting', 'visual'] },
+  { checkKey: 'green_cover', keywords: ['green', 'landscape', 'habitat', 'topsoil', 'vegetation'] },
+  { checkKey: 'open_space', keywords: ['open space'] },
+  { checkKey: 'heat_island', keywords: ['heat island', 'heat roof', 'heat non roof'] },
+  { checkKey: 'transit_access', keywords: ['transit', 'bicycle', 'transport'] },
+  { checkKey: 'amenity_proximity', keywords: ['density', 'proximity', 'amenity'] },
+  { checkKey: 'rainwater_harvesting', keywords: ['rainwater', 'outdoor water', 'harvesting'] },
+  { checkKey: 'solar_energy', keywords: ['solar', 'renewable', 'green power'] },
+  { checkKey: 'water_recycling', keywords: ['water', 'stp', 'wastewater', 'metering', 'fixtures'] },
+  { checkKey: 'waste_management', keywords: ['waste', 'organic', 'recycle', 'segregation'] },
+  { checkKey: 'ev_charging', keywords: ['ev', 'green vehicle'] },
+  { checkKey: 'parking_compliance', keywords: ['parking'] },
+  { checkKey: 'building_orientation', keywords: ['passive', 'orientation'] },
+  { checkKey: 'energy_efficiency', keywords: ['hvac', 'energy meter', 'refrigerant', 'envelope'] },
+  { checkKey: 'energy_optimization', keywords: ['energy', 'optimize', 'commissioning'] },
+  { checkKey: 'site_planning', keywords: ['site', 'planning'] },
+  { checkKey: 'manual_tracking', keywords: ['smoke', 'om', 'audit', 'accessibility'] },
 ];
 
-
-/** Extract a clean label like "GRIHA v6.0" from raw strings like "griha-griha-version-6.0" */
-function getStandardLabel(raw: string | undefined): string {
-    if (!raw) return 'Generic';
-    const lower = raw.toLowerCase();
-    const STANDARDS: Record<string, string> = {
-        'igbc': 'IGBC',
-        'griha': 'GRIHA',
-        'leed': 'LEED',
-        'well': 'WELL',
-        'breeam': 'BREEAM',
-        'edge': 'EDGE',
-    };
-    let label = 'Generic';
-    for (const [key, name] of Object.entries(STANDARDS)) {
-        if (lower.includes(key)) { label = name; break; }
-    }
-    // Extract version number if present e.g. "6.0", "2.0", "v4"
-    const vMatch = raw.match(/(\d+\.\d+|\d+)(?:[^a-zA-Z]|$)/);
-    if (vMatch) label += ` v${vMatch[1]}`;
-    return label;
+function formatLabel(value: string) {
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
-/** Return the canonical standard short name without version (used for UI display) */
-function getStandardName(raw: string | undefined): string {
-    if (!raw) return 'Generic';
-    const lower = raw.toLowerCase();
-    const STANDARDS: Record<string, string> = {
-        'igbc': 'IGBC',
-        'griha': 'GRIHA',
-        'leed': 'LEED',
-        'well': 'WELL',
-        'breeam': 'BREEAM',
-        'edge': 'EDGE',
-    };
-    for (const [key, name] of Object.entries(STANDARDS)) {
-        if (lower.includes(key)) return name;
-    }
-    // fallback: return the raw string (trimmed)
-    return String(raw).split(' ')[0];
+function resolveDetectionKey(item: RawSchemaItem) {
+  const direct = ITEM_CHECK_KEY_OVERRIDES[item.id];
+  if (direct) return direct;
+
+  const haystack = `${item.id} ${item.name ?? ''}`.toLowerCase();
+  const matchedRule = KEYWORD_CHECK_RULES.find((rule) =>
+    rule.keywords.some((keyword) => haystack.includes(keyword)),
+  );
+
+  return matchedRule?.checkKey;
 }
 
-/** Normalize certification IDs to short display labels (e.g. 'LEED', 'IGBC', 'GRIHA') */
-function getCertificationLabel(cert: string | string[] | undefined): string {
-    if (!cert) return '';
-    // support arrays (project stores greenCertification as an array)
-    const raw = Array.isArray(cert) ? cert[0] : cert;
-    if (!raw) return '';
-    const c = String(raw).toLowerCase();
-    if (c.includes('leed')) return 'LEED';
-    if (c.includes('igbc')) return 'IGBC';
-    if (c.includes('griha')) return 'GRIHA';
-    return String(raw).toUpperCase();
+function normalizeSchema(schema: RawSchema): ScorecardSchema {
+  return {
+    id: schema.id,
+    name: schema.name,
+    maxScore: schema.maxScore,
+    categories: schema.categories.map((category) => ({
+      id: category.id,
+      name: category.name ?? formatLabel(category.id),
+      maxScore: category.maxScore ?? 0,
+      items: category.items.map((item) => ({
+        id: item.id,
+        name: item.name ?? formatLabel(item.id),
+        maxScore: item.maxScore ?? 0,
+        mandatory: Boolean(item.mandatory || item.mandatoryScore),
+        mandatoryScore: item.mandatoryScore,
+        detectionKey: resolveDetectionKey(item),
+      })),
+    })),
+  };
+}
+
+function normalizeCertificateType(raw: string | undefined): CertificateType | null {
+  const value = raw?.toUpperCase();
+
+  if (!value) return null;
+  if (value.includes('LEED')) return 'LEED';
+  if (value.includes('IGBC')) return 'IGBC';
+  if (value.includes('GRIHA')) return 'GRIHA';
+
+  return null;
+}
+
+function getDefaultExpandedState(schema: ScorecardSchema) {
+  return schema.categories.reduce<Record<string, boolean>>((state, category) => {
+    state[category.id] = true;
+    return state;
+  }, {});
+}
+
+function getItemAutoDetectedValidity(
+  item: ScorecardItem,
+  checks: Record<string, GreenCreditCheckResult>,
+) {
+  if (!item.detectionKey) {
+    return false;
+  }
+
+  const result = checks[item.detectionKey];
+  if (!result || result.status !== 'achieved') {
+    return false;
+  }
+
+  if (typeof item.mandatoryScore === 'number') {
+    return result.score >= item.mandatoryScore;
+  }
+
+  return true;
+}
+
+function buildDetectedToggleState(
+  schema: ScorecardSchema,
+  checks: Record<string, GreenCreditCheckResult>,
+) {
+  return schema.categories.reduce<Record<string, boolean>>((state, category) => {
+    category.items.forEach((item) => {
+      state[item.id] = getItemAutoDetectedValidity(item, checks);
+    });
+    return state;
+  }, {});
+}
+
+function getStoredToggleState(certificateType: CertificateType) {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  const raw = window.localStorage.getItem(`${STORAGE_KEY_PREFIX}:${certificateType}`);
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(raw) as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+
+export interface GreenScorecardProps {
+  certificateType: CertificateType;
+}
+
+export function GreenScorecard({ certificateType }: GreenScorecardProps) {
+  const project = useProjectData();
+  const checks = useGreenStandardChecks(project, project?.simulationResults);
+
+  const activeSchema = useMemo(
+    () => normalizeSchema(schemaMap[certificateType]),
+    [certificateType],
+  );
+  const [toggleState, setToggleState] = useState<Record<string, boolean>>({});
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setExpandedCategories(getDefaultExpandedState(activeSchema));
+  }, [activeSchema]);
+
+  useEffect(() => {
+    const stored = getStoredToggleState(certificateType);
+    const detected = buildDetectedToggleState(activeSchema, checks);
+
+    setToggleState((current) => {
+      const next = { ...current };
+
+      activeSchema.categories.forEach((category) => {
+        category.items.forEach((item) => {
+          const detectedOn = detected[item.id];
+          const hasStored = Object.prototype.hasOwnProperty.call(stored, item.id);
+          const storedValue = hasStored ? stored[item.id] : undefined;
+
+          if (detectedOn) {
+            next[item.id] = true;
+            return;
+          }
+
+          if (hasStored) {
+            next[item.id] = Boolean(storedValue);
+            return;
+          }
+
+          if (!Object.prototype.hasOwnProperty.call(next, item.id)) {
+            next[item.id] = false;
+          }
+        });
+      });
+
+      return next;
+    });
+  }, [activeSchema, certificateType, checks]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(
+      `${STORAGE_KEY_PREFIX}:${certificateType}`,
+      JSON.stringify(toggleState),
+    );
+  }, [certificateType, toggleState]);
+
+  const evaluations = useMemo(() => {
+    return activeSchema.categories.reduce<Record<string, ItemEvaluation>>((map, category) => {
+      category.items.forEach((item) => {
+        const isDetectedValid = getItemAutoDetectedValidity(item, checks);
+        const isChecked = Boolean(toggleState[item.id]);
+        const countedScore =
+          isChecked && (!item.mandatory || isDetectedValid) ? item.maxScore : 0;
+
+        map[item.id] = {
+          isDetectedValid,
+          countedScore,
+        };
+      });
+
+      return map;
+    }, {});
+  }, [activeSchema, checks, toggleState]);
+
+  const selectedItems = useMemo(() => {
+    return Object.keys(evaluations).reduce<Record<string, number>>((map, itemId) => {
+      map[itemId] = evaluations[itemId]?.countedScore ?? 0;
+      return map;
+    }, {});
+  }, [evaluations]);
+
+  const categoryScores = useMemo(
+    () =>
+      activeSchema.categories.reduce<Record<string, number>>((scores, category) => {
+        scores[category.id] = category.items.reduce((sum, item) => {
+          return sum + (selectedItems[item.id] || 0);
+        }, 0);
+
+        return scores;
+      }, {}),
+    [activeSchema, selectedItems],
+  );
+
+  const totalScore = useMemo(() => {
+    return activeSchema.categories.reduce((sum, category) => {
+      return (
+        sum +
+        category.items.reduce((catSum, item) => {
+          return catSum + (selectedItems[item.id] || 0);
+        }, 0)
+      );
+    }, 0);
+  }, [activeSchema, selectedItems]);
+
+  const mandatoryIssues = useMemo(() => {
+    return activeSchema.categories.reduce<MandatoryIssue[]>((issues, category) => {
+      category.items.forEach((item) => {
+        if (!item.mandatory) {
+          return;
+        }
+
+        if (!toggleState[item.id] || !evaluations[item.id]?.isDetectedValid) {
+          issues.push({ categoryId: category.id, itemId: item.id });
+        }
+      });
+
+      return issues;
+    }, []);
+  }, [activeSchema, evaluations, toggleState]);
+
+  const hasMandatoryErrors =
+    (certificateType === 'LEED' || certificateType === 'GRIHA') &&
+    mandatoryIssues.length > 0;
+
+  const progress = activeSchema.maxScore
+    ? Math.min((totalScore / activeSchema.maxScore) * 100, 100)
+    : 0;
+
+  const handleToggle = (item: ScorecardItem, checked: boolean) => {
+    setToggleState((current) => ({
+      ...current,
+      [item.id]: checked,
+    }));
+  };
+
+  const toggleCategory = (categoryId: string) => {
+    setExpandedCategories((current) => ({
+      ...current,
+      [categoryId]: !current[categoryId],
+    }));
+  };
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b px-3 py-2">
+        {hasMandatoryErrors ? (
+          <div className="mb-2 flex items-start gap-2 rounded-md border border-red-200 px-2.5 py-2 text-sm text-red-700">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>Mandatory conditions are not met. Please check highlighted items.</span>
+          </div>
+        ) : null}
+
+        <div className="flex items-center gap-1.5 text-xs font-semibold">
+          <Leaf className="h-3.5 w-3.5 text-green-600" />
+          {certificateType}
+        </div>
+        <div className="mt-2 flex items-end justify-between gap-3">
+          <p className="text-lg font-semibold">
+            {totalScore} / {activeSchema.maxScore}
+          </p>
+          <p className="text-xs text-muted-foreground">Green Scorecard</p>
+        </div>
+        <Progress className="mt-2 h-2" value={progress} />
+      </div>
+
+      <ScrollArea className="flex-1">
+        <div className="space-y-2 p-3">
+          {activeSchema.categories.map((category) => {
+            const isExpanded = expandedCategories[category.id] !== false;
+
+            return (
+              <section
+                key={category.id}
+                className="overflow-hidden rounded-md border bg-background"
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleCategory(category.id)}
+                  className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-3 py-2 text-left"
+                >
+                  <div className="min-w-0">
+                    <p
+                      className="overflow-hidden text-sm font-medium [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]"
+                    >
+                      {category.name}
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-2 whitespace-nowrap text-right">
+                    <span className="text-xs text-muted-foreground">
+                      {categoryScores[category.id] || 0} / {category.maxScore}
+                    </span>
+                    <ChevronDown
+                      className={cn(
+                        'mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+                        isExpanded && 'rotate-180',
+                      )}
+                    />
+                  </div>
+                </button>
+
+                {isExpanded ? (
+                  <div className="space-y-2 border-t px-2 py-2">
+                    {category.items.map((item) => {
+                      const evaluation = evaluations[item.id];
+                      const isChecked = Boolean(toggleState[item.id]);
+                      const isInvalidMandatory = item.mandatory && !evaluation?.isDetectedValid;
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={cn(
+                            'rounded-md border px-3 py-2',
+                            isInvalidMandatory ? 'border-red-300' : 'border-border',
+                          )}
+                        >
+                          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                {isInvalidMandatory ? (
+                                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-500" />
+                                ) : null}
+                                <p className="overflow-hidden text-sm font-medium leading-5 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+                                  {item.name}
+                                </p>
+                                {item.mandatory ? (
+                                  <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                                    Mandatory
+                                  </Badge>
+                                ) : null}
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {selectedItems[item.id] || 0} / {item.maxScore}
+                              </p>
+                            </div>
+
+                            <div className="flex items-start gap-3 whitespace-nowrap text-right">
+                              <span className="min-w-[48px] shrink-0 text-right text-xs text-muted-foreground">
+                                {selectedItems[item.id] || 0} / {item.maxScore}
+                              </span>
+                              <Switch
+                                checked={isChecked}
+                                onCheckedChange={(checked) => handleToggle(item, checked)}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      </ScrollArea>
+    </div>
+  );
 }
 
 export function GreenScorecardPanel() {
-    const activeProject = useProjectData();
-    const { regulations, isLoading } = useGreenRegulations(activeProject as unknown as Project);
+  const activeProject = useProjectData();
+  const certificateType = normalizeCertificateType(activeProject?.greenCertification?.[0]);
 
-    const creditStatusMap = useGreenStandardChecks(activeProject, activeProject?.simulationResults);
-    const [results, setResults] = useState<Record<string, ItemResult | undefined>>({});
-    const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-    // Use project's certification only for label — schema is always GREEN_SCHEMA
-    // The project type stores certification under `greenCertification` (array). Use first entry if present.
-    const certification = activeProject?.greenCertification ? activeProject.greenCertification[0] : undefined;
-    const activeSchema = GREEN_SCHEMA;
-
-    // Initialize expanded state and mandatory results whenever the active schema changes
-    React.useEffect(() => {
-        const expInit: Record<string, boolean> = {};
-        (activeSchema.categories || []).forEach((cat: any) => {
-            expInit[cat.id || cat.name || String(Math.random())] = true;
-        });
-        setExpanded(expInit);
-
-        // Initialize mandatory items (including children) in results
-        const initial: Record<string, ItemResult> = {};
-        (activeSchema.categories || []).forEach((cat: any) => {
-            (cat.items || []).forEach((item: any) => {
-                if (item.mandatory) initial[item.id] = { status: 'pass' };
-                if (item.children && Array.isArray(item.children)) {
-                    item.children.forEach((child: any) => {
-                        if (child.mandatory) initial[child.id] = { status: 'pass' };
-                    });
-                }
-            });
-        });
-
-        setResults(initial);
-    }, [activeSchema]);
-
-    // Compute analysis from evaluateSchema using activeSchema and current results
-    const analysis = useMemo(() => {
-        try {
-            return evaluateSchema(activeSchema as any, results as Record<string, ItemResult | undefined>);
-        } catch (e) {
-            console.error('evaluateSchema failed', e);
-            return null as any;
-        }
-    }, [activeSchema, results]);
-
-    // Debug logs to validate data flow
-    React.useEffect(() => {
-        console.log('CERT:', certification);
-        console.log('SCHEMA:', activeSchema);
-        console.log('RESULTS', results);
-        console.log('ANALYSIS', analysis);
-    }, [certification, activeSchema, results, analysis]);
-
-    // Reset results when certification changes
-    React.useEffect(() => {
-        const initial: Record<string, ItemResult> = {};
-        (activeSchema.categories || []).forEach((cat: any) => {
-            (cat.items || []).forEach((item: any) => {
-                if (item.mandatory) initial[item.id] = { status: 'pass' };
-                if (item.children && Array.isArray(item.children)) {
-                    item.children.forEach((child: any) => {
-                        if (child.mandatory) initial[child.id] = { status: 'pass' };
-                    });
-                }
-            });
-        });
-        setResults(initial);
-    }, [certification]);
-
-    if (!activeProject) return <div className="p-4 text-center text-muted-foreground">Select a project to view scorecard</div>;
-
-    // If schema not available, show empty state (no fallback)
-    if (!activeSchema) {
-        return <div className="p-4 text-sm text-muted-foreground">No schema available for certification: {certification}</div>;
-    }
-
-    // We no longer require a created plot for schema-driven UI; render using `analysis` alone.
-    if (!analysis) {
-        return (
-            <div className="flex flex-col h-full">
-                <div className="px-3 py-2 border-b shrink-0">
-                    <h2 className="text-xs font-semibold flex items-center gap-1.5">
-                        <Leaf className="h-3.5 w-3.5 text-green-500" />
-                        Green Scorecard
-                    </h2>
-                </div>
-                <div className="flex-1 flex items-center justify-center p-6 text-center bg-muted/5">
-                    <div className="space-y-2 flex flex-col items-center">
-                        <div className="h-10 w-10 rounded-full bg-muted/20 flex items-center justify-center">
-                            <MousePointerClick className="h-6 w-6 text-muted-foreground/50" />
-                        </div>
-                        <p className="text-sm text-muted-foreground max-w-[200px]">
-                            Scorecard data is not yet available.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    // Per strict UI rule: rely only on engine output (evaluateSchema).
-    if (!analysis) return null;
-
+  if (!activeProject) {
     return (
-        <div className="h-full flex flex-col w-full max-h-[calc(100vh-200px)]">
-            {/* Header */}
-            <div className="px-3 py-2 border-b shrink-0">
-                    <div className="flex items-center justify-between">
-                    <h2 className="text-xs font-semibold flex items-center gap-1.5">
-                        <Leaf className="h-3.5 w-3.5 text-green-500" />
-                        Green Scorecard
-                        {isLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-                    </h2>
-                    <div className="flex gap-2 flex-wrap items-center justify-end">
-                        {/* Removed regulation-based badges per strict engine-only UI rule */}
-                    </div>
-                </div>
-                                <div className="mt-2">
-                                                        {/* Certification label from project */}
-                                                        <div className="text-sm text-muted-foreground mb-1"><strong>Certification:</strong> {getCertificationLabel(certification) || 'GRIHA'}</div>
-
-                                                        {/* Header: show only overallScore / totalPoints from analysis */}
-                                                        <div className="text-sm font-medium">{analysis.overallScore} / {analysis.maxScore || 100}</div>
-
-                                        {/* Progress bar driven strictly by analysis values */}
-                                        <div style={{ marginTop: 8 }}>
-                                            {(() => {
-                                                const percentage = analysis.maxScore > 0 ? (analysis.overallScore / analysis.maxScore) * 100 : 0;
-                                                return (
-                                                    <div style={{ height: '6px', width: '100%', background: '#eee', borderRadius: '4px' }}>
-                                                        <div style={{ height: '6px', width: `${percentage}%`, background: '#22c55e', borderRadius: '4px' }} />
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-                                </div>
-            </div>
-
-            {/* Scrollable List */}
-            <ScrollArea className="flex-1">
-                <div className="p-4">
-                    <div className="space-y-6">
-                        <div className="space-y-3">
-                            { (activeSchema.categories || []).map((category: any) => {
-                                const catId = category.id || category.name || category.title;
-                                const isExpanded = expanded[catId] !== false;
-                                const catAnalysis = (analysis.categories || []).find((c: any) => c.title === category.name || c.title === category.title);
-
-                                return (
-                                    <div key={catId} className="space-y-2">
-                                        <div
-                                            style={{
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                fontWeight: 600,
-                                                marginTop: 10,
-                                                cursor: 'pointer'
-                                            }}
-                                            onClick={() => setExpanded(prev => ({ ...prev, [catId]: !prev[catId] }))}
-                                        >
-                                            <span>{category.name || category.title}</span>
-                                            <span style={{ textAlign: 'right' }}>{catAnalysis ? `${catAnalysis.score} / ${category.maxScore || 0}` : `0 / ${category.maxScore || 0}`}</span>
-                                        </div>
-
-                                        {isExpanded ? (
-                                            <div className="rounded-lg border border-border/40 bg-secondary/10 p-3">
-                                                <div className="mt-1 text-xs text-muted-foreground">
-                                                    { (category.items || []).map((item: any) => {
-                                                        const itemRes = results[item.id];
-                                                        const isPass = !!itemRes && (itemRes.status === true || itemRes.status === 'pass');
-                                                        const itemAnalysis = (analysis.categories || []).flatMap((c: any) => c.items).find((i: any) => i.id === String(item.id));
-
-                                                        return (
-                                                            <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', marginBottom: 6 }}>
-                                                                {/* LEFT: TITLE */}
-                                                                <span style={{ flex: 1 }}>{item.name || item.title}</span>
-
-                                                                {/* CENTER-RIGHT: SCORE */}
-                                                                <span style={{ width: '60px', textAlign: 'right', marginRight: 10 }}>{itemAnalysis ? `${itemAnalysis.score} / ${item.maxScore || 0}` : `0 / ${item.maxScore || 0}`}</span>
-
-                                                                {/* RIGHT: TOGGLE */}
-                                                                <div
-                                                                    onClick={() => {
-                                                                        const isActive = results[item.id]?.status === 'pass';
-                                                                        setResults(prev => ({ ...prev, [item.id]: { status: isActive ? 'fail' : 'pass' } }));
-                                                                    }}
-                                                                    style={{ width: 34, height: 18, borderRadius: 20, background: results[item.id]?.status === 'pass' ? '#22c55e' : '#ccc', display: 'flex', alignItems: 'center', padding: 2, cursor: 'pointer' }}
-                                                                >
-                                                                    <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', transform: results[item.id]?.status === 'pass' ? 'translateX(16px)' : 'translateX(0px)', transition: '0.2s' }} />
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    })}
-
-                                                    {/* Child items (if any) */}
-                                                    { (category.items || []).map((item: any) => {
-                                                        if (!item.children || !Array.isArray(item.children) || item.children.length === 0) return null;
-                                                        return (
-                                                            <div key={`${item.id}-children`} style={{ paddingLeft: 12, marginBottom: 6 }}>
-                                                                {item.children.map((child: any) => {
-                                                                    const childRes = results[child.id];
-                                                                    const childPass = !!childRes && (childRes.status === true || childRes.status === 'pass');
-                                                                    const childAnalysis = (analysis.categories || []).flatMap((c: any) => c.items).find((i: any) => i.id === String(child.id));
-                                                                    return (
-                                                                        <div key={child.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
-                                                                            <span style={{ flex: 1 }}>{child.name || child.title}</span>
-                                                                            <span style={{ width: '60px', textAlign: 'right', marginRight: 10 }}>{childAnalysis ? `${childAnalysis.score} / ${child.maxScore || 0}` : `0 / ${child.maxScore || 0}`}</span>
-                                                                            <div
-                                                                                onClick={() => setResults(prev => ({ ...prev, [child.id]: { status: childPass ? 'fail' : 'pass' } }))}
-                                                                                style={{ width: 34, height: 18, borderRadius: 20, background: results[child.id]?.status === 'pass' ? '#22c55e' : '#ccc', display: 'flex', alignItems: 'center', padding: 2, cursor: 'pointer' }}
-                                                                            >
-                                                                                <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', transform: results[child.id]?.status === 'pass' ? 'translateX(16px)' : 'translateX(0px)', transition: '0.2s' }} />
-                                                                            </div>
-                                                                        </div>
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                </div>
-            </ScrollArea>
-        </div>
+      <div className="p-4 text-center text-sm text-muted-foreground">
+        Select a project to view scorecard
+      </div>
     );
-}
+  }
 
-function Sparkles4Icon(props: any) {
+  if (!certificateType) {
     return (
-        <svg
-            {...props}
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9-9 9-9-1.8-9-9 1.8-9 9-9" />
-            <path d="M10 14l2-2 2 2" />
-        </svg>
-    )
+      <div className="p-4 text-center text-sm text-muted-foreground">
+        Select a green certification to view the scorecard.
+      </div>
+    );
+  }
+
+  return <GreenScorecard certificateType={certificateType} />;
 }
-
-
-

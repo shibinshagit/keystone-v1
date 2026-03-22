@@ -1,47 +1,83 @@
 export const IGBC_SCHEMA = {
-  id: 'igbc',
-  name: 'IGBC Green Building',
-  maxScore: 120,
+  id: "igbc",
+  name: "IGBC Green Building",
+  maxScore: 100,
+
   categories: [
     {
-      id: 'site',
-      title: 'Site Selection & Planning',
+      id: "site",
+      name: "Sustainable Site Planning",
       maxScore: 20,
       items: [
-        { id: 'site_protection', title: 'Site protection', maxScore: 4 },
-        { id: 'stormwater', title: 'Stormwater management', maxScore: 4 },
-        { id: 'landscape', title: 'Landscape and biodiversity', maxScore: 6 },
-        { id: 'transport', title: 'Sustainable transport access', maxScore: 6 }
+        { id: "site_selection", maxScore: 4 },
+        { id: "proximity", maxScore: 3 },
+        { id: "worker_amenities", maxScore: 2 },
+        { id: "landscape", maxScore: 3 },
+        { id: "heat_non_roof", maxScore: 2 },
+        { id: "heat_roof", maxScore: 2 },
+        { id: "lighting", maxScore: 2 },
+        { id: "universal_design", maxScore: 2 }
       ]
     },
     {
-      id: 'water',
-      title: 'Water Management',
+      id: "water",
+      name: "Water Efficiency",
       maxScore: 20,
       items: [
-        { id: 'water_reduction', title: 'Water reduction', maxScore: 8 },
-        { id: 'recycling', title: 'Water recycling', maxScore: 6 },
-        { id: 'metering', title: 'Water metering', maxScore: 6 }
+        { id: "landscape_water", maxScore: 5 },
+        { id: "harvesting", maxScore: 5 },
+        { id: "wastewater", maxScore: 4 },
+        { id: "fixtures", maxScore: 4 },
+        { id: "metering", maxScore: 2 }
       ]
     },
     {
-      id: 'energy',
-      title: 'Energy & Emissions',
-      maxScore: 40,
+      id: "energy",
+      name: "Energy Efficiency",
+      maxScore: 30,
       items: [
-        { id: 'baseline', title: 'Baseline energy performance', maxScore: 10, mandatory: true },
-        { id: 'efficiency', title: 'Energy efficiency measures', maxScore: 18 },
-        { id: 'renewables', title: 'Renewable energy', maxScore: 12 }
+        { id: "optimize_energy", maxScore: 16 },
+        { id: "renewable", maxScore: 5 },
+        { id: "green_power", maxScore: 2 },
+        { id: "refrigerant", maxScore: 2 },
+        { id: "metering", maxScore: 2 },
+        { id: "heat_recovery", maxScore: 2 },
+        { id: "transport", maxScore: 1 }
       ]
     },
     {
-      id: 'materials',
-      title: 'Materials & Resources',
-      maxScore: 20,
+      id: "materials",
+      name: "Materials & Resources",
+      maxScore: 15,
       items: [
-        { id: 'recycled', title: 'Use of recycled materials', maxScore: 6 },
-        { id: 'local', title: 'Local sourcing', maxScore: 6 },
-        { id: 'waste', title: 'Construction waste management', maxScore: 8 }
+        { id: "recycled", maxScore: 4 },
+        { id: "regional", maxScore: 4 },
+        { id: "wood", maxScore: 2 },
+        { id: "waste", maxScore: 3 },
+        { id: "segregation", maxScore: 2 }
+      ]
+    },
+    {
+      id: "ieq",
+      name: "Indoor Environmental Quality",
+      maxScore: 10,
+      items: [
+        { id: "ventilation", maxScore: 2 },
+        { id: "co2", maxScore: 1 },
+        { id: "voc", maxScore: 2 },
+        { id: "daylight", maxScore: 2 },
+        { id: "acoustic", maxScore: 1 },
+        { id: "smoke", maxScore: 1 },
+        { id: "thermal", maxScore: 1 }
+      ]
+    },
+    {
+      id: "innovation",
+      name: "Innovation",
+      maxScore: 5,
+      items: [
+        { id: "innovation", maxScore: 4 },
+        { id: "ap", maxScore: 1 }
       ]
     }
   ]
