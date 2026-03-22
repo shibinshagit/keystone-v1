@@ -3203,7 +3203,8 @@ function FeasibilityTab() {
                           <div className="flex-shrink-0 w-[340px] flex flex-col items-end justify-center">
                             {/* Top: Value or primary display per item type */}
                             <div className="text-sm text-right">
-                              {(() => {
+                              <div>
+                                {(() => {
                                 const isBylaw = card.label
                                   .toLowerCase()
                                   .includes("bylaw");
@@ -3259,6 +3260,70 @@ function FeasibilityTab() {
                                 }
 
                                 // If none of the explicit data exists, render nothing (per strict rule)
+                                return null;
+                              })()}
+                              </div>
+
+                              {/* Points / score subtext (clean, right-aligned) */}
+                              {(() => {
+                                const achievedScore = (item as any).achievedScore ?? item.score ?? null;
+                                const achievedPoints = (item as any).achievedPoints ?? null; // normalized 0..1
+                                const itemMax = item.maxScore ?? (item as any).weight ?? null;
+
+                                // Determine total max for this card (preference: summary maxScore, else sum of item maxes)
+                                const cardSummaryMax = (card as any).summary?.maxScore ?? null;
+                                let totalMax = cardSummaryMax;
+                                if (totalMax == null) {
+                                  try {
+                                    totalMax = (card.items || []).reduce((s: number, it: any) => s + (it.maxScore ?? it.weight ?? 0), 0) || null;
+                                  } catch { totalMax = null; }
+                                }
+
+                                // Compute a numeric achieved value when possible
+                                let numericAchieved: number | null = null;
+                                if (typeof achievedScore === 'number') numericAchieved = achievedScore;
+                                else if (typeof achievedPoints === 'number' && typeof itemMax === 'number') numericAchieved = Math.round(achievedPoints * itemMax * 100) / 100;
+
+                                // Render achieved / max (percent)
+                                if (typeof numericAchieved === 'number' && typeof itemMax === 'number') {
+                                  const pct = itemMax > 0 ? (numericAchieved / itemMax) * 100 : 0;
+                                  return (
+                                    <div className="text-right">
+                                      <div className="text-xs font-medium text-muted-foreground">{`${Math.round(numericAchieved)} / ${Math.round(itemMax)}  (${pct.toFixed(0)}%)`}</div>
+                                      {typeof totalMax === 'number' && totalMax > 0 && (
+                                        <div className="text-[11px] text-muted-foreground mt-0.5">{`Contribution: +${((numericAchieved / totalMax) * 100).toFixed(1)}%`}</div>
+                                      )}
+                                    </div>
+                                  );
+                                }
+
+                                // If only achievedPoints present, show that and contribution
+                                if (typeof achievedPoints === 'number' && typeof totalMax === 'number' && totalMax > 0) {
+                                  const achievedValue = (typeof itemMax === 'number') ? (achievedPoints * itemMax) : (achievedPoints);
+                                  const contrib = (achievedValue / totalMax) * 100;
+                                  return (
+                                    <div className="text-right">
+                                      <div className="text-xs text-muted-foreground">{`${(achievedPoints * 100).toFixed(0)}%`}</div>
+                                      <div className="text-[11px] text-muted-foreground mt-0.5">{`Contribution: +${contrib.toFixed(1)}%`}</div>
+                                    </div>
+                                  );
+                                }
+
+                                // Fallback: any legacy points field
+                                const legacyPts = (item as any).points;
+                                if (legacyPts != null) {
+                                  const achievedValue = typeof legacyPts === 'number' ? legacyPts : parseFloat(String(legacyPts)) || 0;
+                                  if (typeof totalMax === 'number' && totalMax > 0) {
+                                    return (
+                                      <div className="text-right">
+                                        <div className="text-xs text-muted-foreground">{`${legacyPts} Pts`}</div>
+                                        <div className="text-[11px] text-muted-foreground mt-0.5">{`Contribution: +${((achievedValue / totalMax) * 100).toFixed(1)}%`}</div>
+                                      </div>
+                                    );
+                                  }
+                                  return <div className="text-xs text-muted-foreground">{`${legacyPts} Pts`}</div>;
+                                }
+
                                 return null;
                               })()}
                             </div>
