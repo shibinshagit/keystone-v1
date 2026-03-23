@@ -444,7 +444,7 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
             return (
               <section
                 key={category.id}
-                className="overflow-hidden rounded-md border bg-background"
+                className="overflow-hidden rounded-md border bg-transparent"
               >
                 <button
                   type="button"
