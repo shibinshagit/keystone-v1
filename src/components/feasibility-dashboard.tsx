@@ -2712,15 +2712,13 @@ function MultiBuildingBudgetTab({
 
   const fmtCr = (v: number) => `₹${(v / 10000000).toFixed(1)} Cr`;
   const selectedPlot = useSelectedPlot();
-  // Prefer selected plot buildings when present (dynamic per-plot view like KPI)
-  const buildings =
-    selectedPlot?.buildings && selectedPlot.buildings.length > 0
-      ? selectedPlot.buildings
-      : estimates.breakdown || [];
+  const estimateBreakdown = estimates.breakdown || [];
   const totalCost = estimates.total_construction_cost;
   const totalRev = estimates.total_revenue;
   const totalUtilities = estimates.simulation?.total_utility_cost || 0;
   const sim = estimates.simulation;
+  const normalizeLookup = (value: any) =>
+    value == null ? "" : String(value).toLowerCase().trim();
   const getBuildingDisplayName = (building: any, index: number) => {
     const rawName =
       building?.buildingName ??
@@ -2744,6 +2742,24 @@ function MultiBuildingBudgetTab({
 
     return `Building ${index + 1}`;
   };
+  const getBuildingLookupKeys = (building: any, index = 0) => {
+    const displayName = getBuildingDisplayName(building, index);
+
+    return [
+      building?.id,
+      building?.buildingId,
+      building?.building_id,
+      building?.buildingRef,
+      displayName,
+      building?.name,
+      building?.buildingName,
+      building?.building_name,
+      building?.properties?.buildingName,
+    ]
+      .filter(Boolean)
+      .map(normalizeLookup)
+      .filter(Boolean);
+  };
 
   const getBuildingFloorCount = (building: any) => {
     if (Array.isArray(building?.floors)) {
@@ -2756,6 +2772,26 @@ function MultiBuildingBudgetTab({
 
     if (typeof building?.numFloors === "number") {
       return building.numFloors;
+    }
+
+    return 0;
+  };
+  const getBuildingUnitCount = (building: any) => {
+    const directCount =
+      building?.unitCount ??
+      building?.units?.length ??
+      building?.unit_count ??
+      building?.properties?.units?.length;
+
+    if (typeof directCount === "number" && directCount > 0) {
+      return directCount;
+    }
+
+    if (Array.isArray(building?.floors)) {
+      return building.floors.reduce(
+        (sum: number, floor: any) => sum + (floor?.units?.length || 0),
+        0,
+      );
     }
 
     return 0;
@@ -2794,23 +2830,78 @@ function MultiBuildingBudgetTab({
     });
   });
 
-  // Total units across project (prefer project data for accuracy)
-  const totalUnitsAcross =
-    projectBuildings.length > 0
+  const selectedPlotBuildings = selectedPlot?.buildings || [];
+  const estimateBreakdownByKey = new Map<string, any>();
+  estimateBreakdown.forEach((building: any, index: number) => {
+    getBuildingLookupKeys(building, index).forEach((key) => {
+      if (key && !estimateBreakdownByKey.has(key)) {
+        estimateBreakdownByKey.set(key, building);
+      }
+    });
+  });
+
+  const matchedPlotEstimates =
+    selectedPlotBuildings.length > 0
+      ? selectedPlotBuildings
+          .map((building: any, index: number) => {
+            const keys = getBuildingLookupKeys(building, index);
+            return keys
+              .map((key) => estimateBreakdownByKey.get(key))
+              .find(Boolean);
+          })
+          .filter(Boolean)
+      : [];
+
+  const usingPlotScope = selectedPlotBuildings.length > 0;
+  const usingEstimateRows = !usingPlotScope || matchedPlotEstimates.length > 0;
+  const buildings = usingPlotScope
+    ? usingEstimateRows
+      ? matchedPlotEstimates
+      : selectedPlotBuildings
+    : estimateBreakdown;
+
+  const scopedConstructionCost = usingPlotScope
+    ? matchedPlotEstimates.reduce(
+        (sum: number, building: any) => sum + (building?.cost?.total || 0),
+        0,
+      )
+    : totalCost;
+  const scopedUtilityCost = usingPlotScope
+    ? matchedPlotEstimates.reduce(
+        (sum: number, building: any) => sum + (building?.utilityCost || 0),
+        0,
+      )
+    : totalUtilities;
+  const scopedCostShare =
+    totalCost > 0 ? scopedConstructionCost / totalCost : 0;
+  const scopedCostP10 =
+    sim && usingPlotScope && usingEstimateRows
+      ? sim.cost_p10 * scopedCostShare
+      : sim?.cost_p10 || 0;
+  const scopedCostP90 =
+    sim && usingPlotScope && usingEstimateRows
+      ? sim.cost_p90 * scopedCostShare
+      : sim?.cost_p90 || 0;
+
+  const totalUnitsAcross = usingPlotScope
+    ? selectedPlotBuildings.reduce(
+        (sum: number, building: any) => sum + getBuildingUnitCount(building),
+        0,
+      )
+    : projectBuildings.length > 0
       ? projectBuildings.reduce(
-          (s: number, b: any) => s + (b.units?.length ?? 0),
+          (s: number, b: any) => s + getBuildingUnitCount(b),
           0,
         )
       : buildings.reduce(
-          (sum: number, b: any) =>
-            sum + (b.unitCount ?? b.units?.length ?? b.unit_count ?? 0),
+          (sum: number, b: any) => sum + getBuildingUnitCount(b),
           0,
         );
 
   // (fallback already handled above) — single totalUnitsAcross variable used
 
   // Calculate budget metrics only when we are rendering estimate-derived buildings
-  const usingEstimates = buildings === (estimates.breakdown || []);
+  const usingEstimates = usingEstimateRows;
   let largestBuilding: any = null;
   let costVariance = 0;
   let avgCostPerBuilding = 0;
@@ -2822,10 +2913,10 @@ function MultiBuildingBudgetTab({
     costVariance =
       Math.max(...buildings.map((b: any) => b.cost.total)) -
       Math.min(...buildings.map((b: any) => b.cost.total));
-    avgCostPerBuilding = totalCost / buildings.length;
+    avgCostPerBuilding = scopedConstructionCost / buildings.length;
     infrastructureShare =
-      totalUtilities > 0
-        ? (totalUtilities / (totalCost + totalUtilities)) * 100
+      scopedUtilityCost > 0
+        ? (scopedUtilityCost / (scopedConstructionCost + scopedUtilityCost)) * 100
         : 0;
   }
 
@@ -2855,8 +2946,8 @@ function MultiBuildingBudgetTab({
           </div>
           <div className="text-base font-bold text-blue-400">
             {sim
-              ? `${fmtCr(sim.cost_p10)} - ${fmtCr(sim.cost_p90)}`
-              : `~${fmtCr(totalCost)} (est.)`}
+              ? `${fmtCr(scopedCostP10)} - ${fmtCr(scopedCostP90)}`
+              : `~${fmtCr(scopedConstructionCost)} (est.)`}
           </div>
         </div>
         <div className="p-2.5 rounded-lg border bg-purple-500/10 border-purple-500/20 text-center">
@@ -2864,7 +2955,7 @@ function MultiBuildingBudgetTab({
             Utility Cost (est.)
           </div>
           <div className="text-base font-bold text-purple-400">
-            ~{fmtCr(totalUtilities)}
+            ~{fmtCr(scopedUtilityCost)}
           </div>
         </div>
       </div>
@@ -2889,7 +2980,10 @@ function MultiBuildingBudgetTab({
 
           {/* Building Rows */}
           {buildings.map((b: any, i: number) => {
-            const pct = usingEstimates ? (b.cost.total / totalCost) * 100 : 0;
+            const pct =
+              usingEstimates && scopedConstructionCost > 0
+                ? (b.cost.total / scopedConstructionCost) * 100
+                : 0;
             const costCr = usingEstimates ? b.cost.total / 10000000 : 0;
             const utilityCr = usingEstimates
               ? (b.utilityCost || 0) / 10000000
@@ -2974,9 +3068,11 @@ function MultiBuildingBudgetTab({
           {/* Total Row */}
           <div className="grid grid-cols-7 gap-2 text-[10px] p-2 rounded bg-slate-600/20 border border-slate-500/30 font-bold mt-1">
             <div>TOTAL</div>
-            <div className="text-right text-slate-300">~{fmtCr(totalCost)}</div>
             <div className="text-right text-slate-300">
-              ~{fmtCr(totalUtilities)}
+              ~{fmtCr(scopedConstructionCost)}
+            </div>
+            <div className="text-right text-slate-300">
+              ~{fmtCr(scopedUtilityCost)}
             </div>
             <div className="text-right text-slate-300">100%</div>
             <div className="text-right text-slate-300">
@@ -3002,7 +3098,7 @@ function MultiBuildingBudgetTab({
         </div>
         <div className="space-y-2">
           {(() => {
-            const grandTotal = totalCost + totalUtilities;
+            const grandTotal = scopedConstructionCost + scopedUtilityCost;
             return buildings.map((b: any, i: number) => {
               const bTotal = usingEstimates
                 ? b.cost.total + (b.utilityCost || 0)
@@ -3055,7 +3151,7 @@ function MultiBuildingBudgetTab({
             Utilities Included
           </div>
           <div className="text-sm font-bold text-amber-300 mb-2">
-            ~{fmtCr(totalUtilities)}
+            ~{fmtCr(scopedUtilityCost)}
           </div>
           {estimates.simulation?.utility_costs &&
             estimates.simulation.utility_costs.length > 0 && (
