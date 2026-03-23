@@ -1,24 +1,24 @@
-'use client';
+"use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
 
-import { useProjectData } from '@/hooks/use-building-store';
+import { useProjectData } from "@/hooks/use-building-store";
 import {
   GreenCreditCheckResult,
   useGreenStandardChecks,
-} from '@/hooks/use-green-standard-checks';
-import { GRIHA_SCHEMA } from '@/lib/scoring/griha.schema';
-import { IGBC_SCHEMA } from '@/lib/scoring/igbc.schema';
-import { LEED_SCHEMA } from '@/lib/scoring/leed.schema';
-import { cn } from '@/lib/utils';
-import { AlertTriangle, ChevronDown, Leaf } from 'lucide-react';
+} from "@/hooks/use-green-standard-checks";
+import { GRIHA_SCHEMA } from "@/lib/scoring/griha.schema";
+import { IGBC_SCHEMA } from "@/lib/scoring/igbc.schema";
+import { LEED_SCHEMA } from "@/lib/scoring/leed.schema";
+import { cn } from "@/lib/utils";
+import { AlertTriangle, ChevronDown, Leaf } from "lucide-react";
 
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Switch } from '@/components/ui/switch';
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 
-type CertificateType = 'LEED' | 'IGBC' | 'GRIHA';
+type CertificateType = "LEED" | "IGBC" | "GRIHA";
 
 type RawSchemaItem = {
   id: string;
@@ -81,88 +81,118 @@ const schemaMap: Record<CertificateType, RawSchema> = {
   GRIHA: GRIHA_SCHEMA,
 };
 
-const STORAGE_KEY_PREFIX = 'green-scorecard:toggle-state';
+const STORAGE_KEY_PREFIX = "green-scorecard:toggle-state";
 
 const ITEM_CHECK_KEY_OVERRIDES: Record<string, string> = {
-  open_space: 'open_space',
-  rainwater: 'rainwater_harvesting',
-  outdoor_prereq: 'rainwater_harvesting',
-  metering_prereq: 'water_recycling',
-  water_use: 'water_recycling',
-  stp: 'water_recycling',
-  site_selection: 'site_planning',
-  topsoil: 'green_cover',
-  passive_design: 'building_orientation',
-  envelope: 'energy_efficiency',
-  energy: 'energy_optimization',
-  lighting: 'daylighting',
-  hvac: 'energy_efficiency',
-  iaq: 'ventilation',
-  organic: 'waste_management',
-  om: 'manual_tracking',
-  commissioning: 'manual_tracking',
-  min_energy: 'energy_optimization',
-  energy_meter: 'energy_efficiency',
-  refrigerant: 'energy_efficiency',
-  recycle_prereq: 'waste_management',
-  waste_plan: 'waste_management',
-  smoke: 'manual_tracking',
-  transit: 'transit_access',
-  bicycle: 'transit_access',
-  density: 'amenity_proximity',
-  parking: 'parking_compliance',
-  green_vehicle: 'ev_charging',
-  transit_access: 'transit_access',
-  daylight: 'daylighting',
-  renewable: 'solar_energy',
-  green_power: 'solar_energy',
-  metering: 'water_recycling',
-  wastewater: 'water_recycling',
-  harvesting: 'rainwater_harvesting',
-  landscape_water: 'green_cover',
-  landscape: 'green_cover',
-  heat_roof: 'heat_island',
-  heat_non_roof: 'heat_island',
-  ventilation: 'ventilation',
-  acoustic: 'manual_tracking',
-  thermal: 'manual_tracking',
-  accessiblity: 'manual_tracking',
+  open_space: "open_space",
+  rainwater: "rainwater_harvesting",
+  outdoor_prereq: "rainwater_harvesting",
+  metering_prereq: "water_recycling",
+  water_use: "water_recycling",
+  stp: "water_recycling",
+  site_selection: "site_planning",
+  topsoil: "green_cover",
+  passive_design: "building_orientation",
+  envelope: "energy_efficiency",
+  energy: "energy_optimization",
+  lighting: "daylighting",
+  hvac: "energy_efficiency",
+  iaq: "ventilation",
+  organic: "waste_management",
+  om: "manual_tracking",
+  commissioning: "manual_tracking",
+  min_energy: "energy_optimization",
+  energy_meter: "energy_efficiency",
+  refrigerant: "energy_efficiency",
+  recycle_prereq: "waste_management",
+  waste_plan: "waste_management",
+  smoke: "manual_tracking",
+  transit: "transit_access",
+  bicycle: "transit_access",
+  density: "amenity_proximity",
+  parking: "parking_compliance",
+  green_vehicle: "ev_charging",
+  transit_access: "transit_access",
+  daylight: "daylighting",
+  renewable: "solar_energy",
+  green_power: "solar_energy",
+  metering: "water_recycling",
+  wastewater: "water_recycling",
+  harvesting: "rainwater_harvesting",
+  landscape_water: "green_cover",
+  landscape: "green_cover",
+  heat_roof: "heat_island",
+  heat_non_roof: "heat_island",
+  ventilation: "ventilation",
+  acoustic: "manual_tracking",
+  thermal: "manual_tracking",
+  accessiblity: "manual_tracking",
 };
 
 const KEYWORD_CHECK_RULES: Array<{ checkKey: string; keywords: string[] }> = [
-  { checkKey: 'ventilation', keywords: ['ventilation', 'iaq', 'air quality', 'fresh air'] },
-  { checkKey: 'daylighting', keywords: ['daylight', 'lighting', 'visual'] },
-  { checkKey: 'green_cover', keywords: ['green', 'landscape', 'habitat', 'topsoil', 'vegetation'] },
-  { checkKey: 'open_space', keywords: ['open space'] },
-  { checkKey: 'heat_island', keywords: ['heat island', 'heat roof', 'heat non roof'] },
-  { checkKey: 'transit_access', keywords: ['transit', 'bicycle', 'transport'] },
-  { checkKey: 'amenity_proximity', keywords: ['density', 'proximity', 'amenity'] },
-  { checkKey: 'rainwater_harvesting', keywords: ['rainwater', 'outdoor water', 'harvesting'] },
-  { checkKey: 'solar_energy', keywords: ['solar', 'renewable', 'green power'] },
-  { checkKey: 'water_recycling', keywords: ['water', 'stp', 'wastewater', 'metering', 'fixtures'] },
-  { checkKey: 'waste_management', keywords: ['waste', 'organic', 'recycle', 'segregation'] },
-  { checkKey: 'ev_charging', keywords: ['ev', 'green vehicle'] },
-  { checkKey: 'parking_compliance', keywords: ['parking'] },
-  { checkKey: 'building_orientation', keywords: ['passive', 'orientation'] },
-  { checkKey: 'energy_efficiency', keywords: ['hvac', 'energy meter', 'refrigerant', 'envelope'] },
-  { checkKey: 'energy_optimization', keywords: ['energy', 'optimize', 'commissioning'] },
-  { checkKey: 'site_planning', keywords: ['site', 'planning'] },
-  { checkKey: 'manual_tracking', keywords: ['smoke', 'om', 'audit', 'accessibility'] },
+  {
+    checkKey: "ventilation",
+    keywords: ["ventilation", "iaq", "air quality", "fresh air"],
+  },
+  { checkKey: "daylighting", keywords: ["daylight", "lighting", "visual"] },
+  {
+    checkKey: "green_cover",
+    keywords: ["green", "landscape", "habitat", "topsoil", "vegetation"],
+  },
+  { checkKey: "open_space", keywords: ["open space"] },
+  {
+    checkKey: "heat_island",
+    keywords: ["heat island", "heat roof", "heat non roof"],
+  },
+  { checkKey: "transit_access", keywords: ["transit", "bicycle", "transport"] },
+  {
+    checkKey: "amenity_proximity",
+    keywords: ["density", "proximity", "amenity"],
+  },
+  {
+    checkKey: "rainwater_harvesting",
+    keywords: ["rainwater", "outdoor water", "harvesting"],
+  },
+  { checkKey: "solar_energy", keywords: ["solar", "renewable", "green power"] },
+  {
+    checkKey: "water_recycling",
+    keywords: ["water", "stp", "wastewater", "metering", "fixtures"],
+  },
+  {
+    checkKey: "waste_management",
+    keywords: ["waste", "organic", "recycle", "segregation"],
+  },
+  { checkKey: "ev_charging", keywords: ["ev", "green vehicle"] },
+  { checkKey: "parking_compliance", keywords: ["parking"] },
+  { checkKey: "building_orientation", keywords: ["passive", "orientation"] },
+  {
+    checkKey: "energy_efficiency",
+    keywords: ["hvac", "energy meter", "refrigerant", "envelope"],
+  },
+  {
+    checkKey: "energy_optimization",
+    keywords: ["energy", "optimize", "commissioning"],
+  },
+  { checkKey: "site_planning", keywords: ["site", "planning"] },
+  {
+    checkKey: "manual_tracking",
+    keywords: ["smoke", "om", "audit", "accessibility"],
+  },
 ];
 
 function formatLabel(value: string) {
   return value
-    .split('_')
+    .split("_")
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+    .join(" ");
 }
 
 function resolveDetectionKey(item: RawSchemaItem) {
   const direct = ITEM_CHECK_KEY_OVERRIDES[item.id];
   if (direct) return direct;
 
-  const haystack = `${item.id} ${item.name ?? ''}`.toLowerCase();
+  const haystack = `${item.id} ${item.name ?? ""}`.toLowerCase();
   const matchedRule = KEYWORD_CHECK_RULES.find((rule) =>
     rule.keywords.some((keyword) => haystack.includes(keyword)),
   );
@@ -191,22 +221,27 @@ function normalizeSchema(schema: RawSchema): ScorecardSchema {
   };
 }
 
-function normalizeCertificateType(raw: string | undefined): CertificateType | null {
+function normalizeCertificateType(
+  raw: string | undefined,
+): CertificateType | null {
   const value = raw?.toUpperCase();
 
   if (!value) return null;
-  if (value.includes('LEED')) return 'LEED';
-  if (value.includes('IGBC')) return 'IGBC';
-  if (value.includes('GRIHA')) return 'GRIHA';
+  if (value.includes("LEED")) return "LEED";
+  if (value.includes("IGBC")) return "IGBC";
+  if (value.includes("GRIHA")) return "GRIHA";
 
   return null;
 }
 
 function getDefaultExpandedState(schema: ScorecardSchema) {
-  return schema.categories.reduce<Record<string, boolean>>((state, category) => {
-    state[category.id] = true;
-    return state;
-  }, {});
+  return schema.categories.reduce<Record<string, boolean>>(
+    (state, category) => {
+      state[category.id] = true;
+      return state;
+    },
+    {},
+  );
 }
 
 function getItemAutoDetectedValidity(
@@ -218,11 +253,11 @@ function getItemAutoDetectedValidity(
   }
 
   const result = checks[item.detectionKey];
-  if (!result || result.status !== 'achieved') {
+  if (!result || result.status !== "achieved") {
     return false;
   }
 
-  if (typeof item.mandatoryScore === 'number') {
+  if (typeof item.mandatoryScore === "number") {
     return result.score >= item.mandatoryScore;
   }
 
@@ -233,22 +268,27 @@ function buildDetectedToggleState(
   schema: ScorecardSchema,
   checks: Record<string, GreenCreditCheckResult>,
 ) {
-  return schema.categories.reduce<Record<string, boolean>>((state, category) => {
-    category.items.forEach((item) => {
-      state[item.id] = item.mandatory
-        ? true
-        : getItemAutoDetectedValidity(item, checks);
-    });
-    return state;
-  }, {});
+  return schema.categories.reduce<Record<string, boolean>>(
+    (state, category) => {
+      category.items.forEach((item) => {
+        state[item.id] = item.mandatory
+          ? true
+          : getItemAutoDetectedValidity(item, checks);
+      });
+      return state;
+    },
+    {},
+  );
 }
 
 function getStoredToggleState(certificateType: CertificateType) {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return {};
   }
 
-  const raw = window.localStorage.getItem(`${STORAGE_KEY_PREFIX}:${certificateType}`);
+  const raw = window.localStorage.getItem(
+    `${STORAGE_KEY_PREFIX}:${certificateType}`,
+  );
   if (!raw) {
     return {};
   }
@@ -273,7 +313,9 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
     [certificateType],
   );
   const [toggleState, setToggleState] = useState<Record<string, boolean>>({});
-  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
+  const [expandedCategories, setExpandedCategories] = useState<
+    Record<string, boolean>
+  >({});
 
   useEffect(() => {
     setExpandedCategories(getDefaultExpandedState(activeSchema));
@@ -289,7 +331,10 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
       activeSchema.categories.forEach((category) => {
         category.items.forEach((item) => {
           const detectedOn = detected[item.id];
-          const hasStored = Object.prototype.hasOwnProperty.call(stored, item.id);
+          const hasStored = Object.prototype.hasOwnProperty.call(
+            stored,
+            item.id,
+          );
           const storedValue = hasStored ? stored[item.id] : undefined;
 
           if (item.mandatory) {
@@ -318,7 +363,7 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
   }, [activeSchema, certificateType, checks]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
+    if (typeof window === "undefined") {
       return;
     }
 
@@ -329,38 +374,47 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
   }, [certificateType, toggleState]);
 
   const evaluations = useMemo(() => {
-    return activeSchema.categories.reduce<Record<string, ItemEvaluation>>((map, category) => {
-      category.items.forEach((item) => {
-        const isDetectedValid = getItemAutoDetectedValidity(item, checks);
-        const isChecked = Boolean(toggleState[item.id]);
-        const countedScore = isChecked ? item.maxScore : 0;
+    return activeSchema.categories.reduce<Record<string, ItemEvaluation>>(
+      (map, category) => {
+        category.items.forEach((item) => {
+          const isDetectedValid = getItemAutoDetectedValidity(item, checks);
+          const isChecked = Boolean(toggleState[item.id]);
+          const countedScore = isChecked ? item.maxScore : 0;
 
-        map[item.id] = {
-          isDetectedValid,
-          countedScore,
-        };
-      });
+          map[item.id] = {
+            isDetectedValid,
+            countedScore,
+          };
+        });
 
-      return map;
-    }, {});
+        return map;
+      },
+      {},
+    );
   }, [activeSchema, checks, toggleState]);
 
   const selectedItems = useMemo(() => {
-    return Object.keys(evaluations).reduce<Record<string, number>>((map, itemId) => {
-      map[itemId] = evaluations[itemId]?.countedScore ?? 0;
-      return map;
-    }, {});
+    return Object.keys(evaluations).reduce<Record<string, number>>(
+      (map, itemId) => {
+        map[itemId] = evaluations[itemId]?.countedScore ?? 0;
+        return map;
+      },
+      {},
+    );
   }, [evaluations]);
 
   const categoryScores = useMemo(
     () =>
-      activeSchema.categories.reduce<Record<string, number>>((scores, category) => {
-        scores[category.id] = category.items.reduce((sum, item) => {
-          return sum + (selectedItems[item.id] || 0);
-        }, 0);
+      activeSchema.categories.reduce<Record<string, number>>(
+        (scores, category) => {
+          scores[category.id] = category.items.reduce((sum, item) => {
+            return sum + (selectedItems[item.id] || 0);
+          }, 0);
 
-        return scores;
-      }, {}),
+          return scores;
+        },
+        {},
+      ),
     [activeSchema, selectedItems],
   );
 
@@ -376,23 +430,26 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
   }, [activeSchema, selectedItems]);
 
   const mandatoryIssues = useMemo(() => {
-    return activeSchema.categories.reduce<MandatoryIssue[]>((issues, category) => {
-      category.items.forEach((item) => {
-        if (!item.mandatory) {
-          return;
-        }
+    return activeSchema.categories.reduce<MandatoryIssue[]>(
+      (issues, category) => {
+        category.items.forEach((item) => {
+          if (!item.mandatory) {
+            return;
+          }
 
-        if (!toggleState[item.id]) {
-          issues.push({ categoryId: category.id, itemId: item.id });
-        }
-      });
+          if (!toggleState[item.id]) {
+            issues.push({ categoryId: category.id, itemId: item.id });
+          }
+        });
 
-      return issues;
-    }, []);
+        return issues;
+      },
+      [],
+    );
   }, [activeSchema, evaluations, toggleState]);
 
   const hasMandatoryErrors =
-    (certificateType === 'LEED' || certificateType === 'GRIHA') &&
+    (certificateType === "LEED" || certificateType === "GRIHA") &&
     mandatoryIssues.length > 0;
 
   const progress = activeSchema.maxScore
@@ -419,7 +476,9 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
         {hasMandatoryErrors ? (
           <div className="mb-2 flex items-start gap-2 rounded-md border border-red-200 px-2.5 py-2 text-sm text-red-700">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>Mandatory conditions are not met. Please check highlighted items.</span>
+            <span>
+              Mandatory conditions are not met. Please check highlighted items.
+            </span>
           </div>
         ) : null}
 
@@ -452,9 +511,7 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
                   className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-3 py-2 text-left"
                 >
                   <div className="min-w-0">
-                    <p
-                      className="overflow-hidden text-sm font-medium [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]"
-                    >
+                    <p className="overflow-hidden text-sm font-medium [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
                       {category.name}
                     </p>
                   </div>
@@ -464,8 +521,8 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
                     </span>
                     <ChevronDown
                       className={cn(
-                        'mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform',
-                        isExpanded && 'rotate-180',
+                        "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                        isExpanded && "rotate-180",
                       )}
                     />
                   </div>
@@ -482,8 +539,10 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
                         <div
                           key={item.id}
                           className={cn(
-                            'rounded-md border px-3 py-2',
-                            isInvalidMandatory ? 'border-red-300' : 'border-border',
+                            "rounded-md border px-3 py-2",
+                            isInvalidMandatory
+                              ? "border-red-300"
+                              : "border-border",
                           )}
                         >
                           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
@@ -496,7 +555,10 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
                                   {item.name}
                                 </p>
                                 {item.mandatory ? (
-                                  <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                                  <Badge
+                                    variant="secondary"
+                                    className="h-5 px-1.5 text-[10px]"
+                                  >
                                     Mandatory
                                   </Badge>
                                 ) : null}
@@ -512,7 +574,9 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
                               </span>
                               <Switch
                                 checked={isChecked}
-                                onCheckedChange={(checked) => handleToggle(item, checked)}
+                                onCheckedChange={(checked) =>
+                                  handleToggle(item, checked)
+                                }
                               />
                             </div>
                           </div>
@@ -532,7 +596,9 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
 
 export function GreenScorecardPanel() {
   const activeProject = useProjectData();
-  const certificateType = normalizeCertificateType(activeProject?.greenCertification?.[0]);
+  const certificateType = normalizeCertificateType(
+    activeProject?.greenCertification?.[0],
+  );
 
   if (!activeProject) {
     return (
