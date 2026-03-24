@@ -128,6 +128,11 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
         hospitality: 0
     });
 
+    const [commercialMix, setCommercialMix] = useState({
+        retail: 40,
+        office: 60
+    });
+
     const [unitAreaConfig, setUnitAreaConfig] = useState({
         '2BHK': 140,
         '3BHK': 185,
@@ -382,6 +387,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
             floorHeight,
             landUse,
             programMix,
+            commercialMix,
             allocationMode,
             selectedUtilities,
             setback,
@@ -727,6 +733,79 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                 </div>
                             )}
 
+                            {/* Commercial Use Breakdown */}
+                            {landUse === 'commercial' && (
+                                <div className="p-3 bg-muted/20 border rounded-lg space-y-3">
+                                    <div className="space-y-3 pt-1">
+                                        <div className="flex justify-between items-center">
+                                            <Label className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">Commercial Typology</Label>
+                                            <Badge
+                                                variant="outline"
+                                                className={cn("text-[9px] h-4",
+                                                    commercialMix.retail + commercialMix.office !== 100
+                                                        ? "text-red-500 border-red-200"
+                                                        : "text-green-600 border-green-200"
+                                                )}
+                                            >
+                                                Total: {commercialMix.retail + commercialMix.office}%
+                                            </Badge>
+                                        </div>
+
+                                        {/* Allocation Mode Toggle */}
+                                        <div className="grid grid-cols-2 gap-1 bg-muted/30 p-1 rounded-md">
+                                            <button
+                                                onClick={() => setAllocationMode('floor')}
+                                                className={cn(
+                                                    "text-[10px] py-1 rounded-sm transition-all",
+                                                    allocationMode === 'floor' ? "bg-background shadow-sm text-primary font-medium" : "text-muted-foreground hover:text-foreground"
+                                                )}
+                                            >
+                                                Floor-wise (Vertical)
+                                            </button>
+                                            <button
+                                                onClick={() => setAllocationMode('plot')}
+                                                className={cn(
+                                                    "text-[10px] py-1 rounded-sm transition-all",
+                                                    allocationMode === 'plot' ? "bg-background shadow-sm text-primary font-medium" : "text-muted-foreground hover:text-foreground"
+                                                )}
+                                            >
+                                                Plot-wise (Horizontal)
+                                            </button>
+                                        </div>
+
+                                        {/* Retail / Office Sliders */}
+                                        <div className="space-y-3 pl-1">
+                                            <div className="space-y-1">
+                                                <div className="flex justify-between text-[10px]">
+                                                    <span className="text-muted-foreground">Retail</span>
+                                                    <span>{commercialMix.retail}%</span>
+                                                </div>
+                                                <Slider
+                                                    value={[commercialMix.retail]}
+                                                    max={100}
+                                                    step={5}
+                                                    onValueChange={([v]) => setCommercialMix({ retail: v, office: 100 - v })}
+                                                    className="[&_.relative]:h-1.5 [&_.absolute]:bg-pink-500 [&_span]:h-3 [&_span]:w-3"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <div className="flex justify-between text-[10px]">
+                                                    <span className="text-muted-foreground">Office</span>
+                                                    <span>{commercialMix.office}%</span>
+                                                </div>
+                                                <Slider
+                                                    value={[commercialMix.office]}
+                                                    max={100}
+                                                    step={5}
+                                                    onValueChange={([v]) => setCommercialMix({ retail: 100 - v, office: v })}
+                                                    className="[&_.relative]:h-1.5 [&_.absolute]:bg-blue-500 [&_span]:h-3 [&_span]:w-3"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Program Allocations (Hidden for single use unless mixed) */}
 
                             {landUse === 'mixed' && (
@@ -801,6 +880,38 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                                         className="[&_.relative]:h-1.5 [&_.absolute]:bg-blue-500 [&_span]:h-3 [&_span]:w-3"
                                                     />
                                                 </div>
+
+                                                {/* Sub-split for retail/office when commercial exists */}
+                                                {programMix.commercial > 0 && (
+                                                    <div className="pl-3 border-l-2 border-border/50 space-y-3 ml-1 py-1">
+                                                        <div className="space-y-1">
+                                                            <div className="flex justify-between text-[9px]">
+                                                                <span className="text-muted-foreground">Retail (within Commercial)</span>
+                                                                <span>{commercialMix.retail}%</span>
+                                                            </div>
+                                                            <Slider
+                                                                value={[commercialMix.retail]}
+                                                                max={100}
+                                                                step={5}
+                                                                onValueChange={([v]) => setCommercialMix({ retail: v, office: 100 - v })}
+                                                                className="[&_.relative]:h-1 [&_.absolute]:bg-pink-500 [&_span]:h-2.5 [&_span]:w-2.5"
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            <div className="flex justify-between text-[9px]">
+                                                                <span className="text-muted-foreground">Office (within Commercial)</span>
+                                                                <span>{commercialMix.office}%</span>
+                                                            </div>
+                                                            <Slider
+                                                                value={[commercialMix.office]}
+                                                                max={100}
+                                                                step={5}
+                                                                onValueChange={([v]) => setCommercialMix({ retail: 100 - v, office: v })}
+                                                                className="[&_.relative]:h-1 [&_.absolute]:bg-blue-400 [&_span]:h-2.5 [&_span]:w-2.5"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
 
                                                 {/* Hospitality*/}
                                                 <div className="space-y-1">
@@ -946,7 +1057,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                             </Tooltip>
                                         ))}
                                     </div>
-                                    <div className="space-y-1">
+                                    {/* <div className="space-y-1">
                                         <div className="flex justify-between text-[10px]">
                                             <span className="text-muted-foreground">Ratio</span>
                                             <span>{parkingRatio.toFixed(2)}</span>
@@ -959,7 +1070,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                             onValueChange={(val) => setParkingRatio(val[0])}
                                             className="[&_.relative]:h-1.5 [&_.absolute]:bg-primary/20 [&_span]:h-3 [&_span]:w-3"
                                         />
-                                    </div>
+                                    </div> */}
                                 </div>
                             </div>
 

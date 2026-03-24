@@ -936,6 +936,7 @@ export function generateHShapes(
                                                 const unionForLayout = turf.union(wing1, wing2, crossTrimmed || cross);
 
                                                 const layout = generateBuildingLayout(unionForLayout as unknown as Feature<Polygon>, {
+                                                    ...params,
                                                     subtype: 'hshaped',
                                                     unitMix: params.unitMix,
                                                     alignmentRotation: 0,
@@ -1233,6 +1234,7 @@ export function generateSlabShapes(
                     if (validPoly) {
                         const area = planarArea(validPoly);
                         const layout = generateBuildingLayout(validPoly, {
+                            ...params,
                             subtype: 'slab', unitMix: params.unitMix, alignmentRotation: edgeData.bearing, selectedUtilities: params.selectedUtilities
                         });
 
@@ -1354,6 +1356,7 @@ export function generatePointShapes(
                     if (intersect && turf.area(intersect) >= polyArea * 0.95) {
                         if (!checkCollision(poly, usedAreas)) {
                             const layout = generateBuildingLayout(poly, {
+                                ...params,
                                 subtype: 'point',
                                 unitMix: params.unitMix,
                                 alignmentRotation: bearingNext
@@ -1419,6 +1422,7 @@ export function generatePointShapes(
                     if (validPoly) {
                         const area = planarArea(validPoly);
                         const layout = generateBuildingLayout(validPoly, {
+                            ...params,
                             subtype: 'point', unitMix: params.unitMix, alignmentRotation: bearing, selectedUtilities: params.selectedUtilities
                         });
 
@@ -1863,36 +1867,20 @@ export function generateLargeFootprint(
 
             const currentArea = turf.area(poly);
             if (currentArea > perBuildingTarget * 1.05) {
-                let lo = 0, hi = Math.min(widthM, heightM) / 2;
-                let bestBuf: any = poly;
-
-                for (let iter = 0; iter < 20; iter++) {
-                    const mid = (lo + hi) / 2;
+                const scaleFactor = Math.sqrt(perBuildingTarget / currentArea);
+                try {
                     // @ts-ignore
-                    const buffered = turf.buffer(poly, -mid, { units: 'meters' });
-                    if (!buffered) { hi = mid; continue; }
-                    
-                    const bArea = turf.area(buffered);
-                    if (bArea < perBuildingTarget * 0.1) { hi = mid; continue; } // Too small
-                    
-                    bestBuf = buffered as Feature<Polygon>;
-                    
-                    if (Math.abs(bArea - perBuildingTarget) < perBuildingTarget * 0.03) break;
-                    
-                    if (bArea > perBuildingTarget) lo = mid; else hi = mid;
+                    const scaledPoly = turf.transformScale(poly, scaleFactor);
+                    if (scaledPoly) {
+                        scaledBuildings.push(scaledPoly as Feature<Polygon>);
+                        console.log(`[LargeFootprint] Piece ${idx} scaled: ${currentArea.toFixed(0)}m² -> ${turf.area(scaledPoly).toFixed(0)}m² (target ${perBuildingTarget.toFixed(0)}m², factor ${scaleFactor.toFixed(2)})`);
+                    } else {
+                        scaledBuildings.push(poly);
+                    }
+                } catch (e) {
+                    console.warn(`[LargeFootprint] Failed to transformScale piece ${idx}`, e);
+                    scaledBuildings.push(poly);
                 }
-
-                let finalPoly: Feature<Polygon>;
-                if (bestBuf.geometry.type === 'MultiPolygon') {
-                    // @ts-ignore
-                    const parts = turf.flatten(bestBuf);
-                    finalPoly = parts.features.sort((a: any, b: any) => turf.area(b) - turf.area(a))[0];
-                } else {
-                    finalPoly = bestBuf as Feature<Polygon>;
-                }
-
-                scaledBuildings.push(finalPoly);
-                console.log(`[LargeFootprint] Piece ${idx} buffer-shrunk: ${currentArea.toFixed(0)}m² -> ${turf.area(finalPoly).toFixed(0)}m² (target ${perBuildingTarget.toFixed(0)}m²)`);
             } else {
                 scaledBuildings.push(poly);
                 console.log(`[LargeFootprint] Piece ${idx} kept at ${currentArea.toFixed(0)}m² (target was ${perBuildingTarget.toFixed(0)}m²)`);
@@ -1935,6 +1923,7 @@ export function generateLargeFootprint(
             // Try layout generation
             try {
                 const layout = generateBuildingLayout(poly, {
+                    ...params,
                     subtype: 'large-footprint',
                     unitMix: params.unitMix,
                     alignmentRotation: alignBearing

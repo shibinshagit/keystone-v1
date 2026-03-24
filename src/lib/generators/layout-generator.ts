@@ -54,7 +54,8 @@ function getColorForUnitType(unitName: string): string {
   if (name.includes("2bhk") || name.includes("2 bhk")) return "#1E90FF"; // Blue
   if (name.includes("3bhk") || name.includes("3 bhk")) return "#DA70D6"; // Orchid
   if (name.includes("4bhk") || name.includes("4 bhk")) return "#FFD700"; // Gold
-  if (name.includes("office")) return "#A9A9A9"; // Dark Gray
+  if (name.includes("retail") || name.includes("shop")) return "#D94D8B"; // Pink/Magenta (matches Retail hue 340)
+  if (name.includes("office")) return "#5B8FB9"; // Steel Blue (matches Office hue 200)
   if (name.includes("guest room") || name.includes("suite")) return "#70c8daff";
   if (name.includes("hall") || name.includes("public")) return "#F0E68C"; // Khaki
   return "#414141";
@@ -186,6 +187,16 @@ export function generateBuildingLayout(
   const minUnitSize = params.minUnitSize || 60;
   const targetUnitSize = params.avgUnitSize || 120;
   const intendedUse = params.intendedUse || "Residential";
+
+  // ── COMMERCIAL LAYOUT BRANCHING ──
+  // Retail and Office have fundamentally different spatial layouts.
+  // Branch early to dedicated layout generators.
+  if (intendedUse === BuildingIntendedUse.Retail || intendedUse === 'Retail') {
+    return generateRetailLayout(buildingPoly, workingPoly, params, rotationAngle, center);
+  }
+  if (intendedUse === BuildingIntendedUse.Office || intendedUse === 'Office') {
+    return generateOfficeLayout(buildingPoly, workingPoly, params, rotationAngle, center);
+  }
 
   // ---CORE CALCULATION LOGIC ---
   const floorArea = turf.area(workingPoly); // Area per floor (BUA)
@@ -912,7 +923,11 @@ export function generateBuildingLayout(
   }
 
   let useUnitMix = params.unitMix;
-  if (params.intendedUse === BuildingIntendedUse.Commercial) {
+  if (params.intendedUse === BuildingIntendedUse.Retail) {
+    useUnitMix = [{ name: "Retail Unit", mixRatio: 1, area: 100 }];
+  } else if (params.intendedUse === BuildingIntendedUse.Office) {
+    useUnitMix = [{ name: "Office", mixRatio: 1, area: 80 }];
+  } else if (params.intendedUse === BuildingIntendedUse.Commercial) {
     useUnitMix = [{ name: "Office", mixRatio: 1, area: 150 }];
   } else if (params.intendedUse === BuildingIntendedUse.Hospitality) {
     useUnitMix = [{ name: "Guest Room", mixRatio: 1, area: 35 }];
@@ -1654,6 +1669,647 @@ export function generateBuildingLayout(
     efficiency: parseFloat(efficiencyPercent),
   };
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COMMERCIAL LAYOUT GENERATORS — Retail & Office
+// Based on Logic & Methodology document benchmarks:
+//   Retail: Core+Circ = 35-50%, corner core, central corridor, retail units
+//   Office: Core+Circ = 25-35%, center core, circulation ring, offices on all sides
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generates a RETAIL floor layout:
+ *   ┌──────────────────┬──────┐
+ *   │   R   R   R   R  │      │
+ *   ├──────────────────┤ CORE │
+ *   │   CIRCULATION    │      │
+ *   ├──────────────────┤      │
+ *   │   R   R   R   R  │      │
+ *   └──────────────────┴──────┘
+ * Core at corner, circulation strip in the middle, retail units on both sides.
+ */
+function generateRetailLayout(
+  buildingPoly: Feature<Polygon | MultiPolygon>,
+  workingPoly: Feature<Polygon | MultiPolygon>,
+  params: LayoutParams,
+  rotationAngle: number,
+  center: Feature<Point>,
+): {
+  cores: Core[];
+  units: Unit[];
+  groundFloorUnits: Unit[];
+  entrances: any[];
+  utilities: UtilityArea[];
+  efficiency?: number;
+} {
+  console.log("[Layout Generator] Generating RETAIL layout");
+
+  const cores: Core[] = [];
+  const units: Unit[] = [];
+  const entrances: any[] = [];
+  const utilities: UtilityArea[] = [];
+
+  const floorArea = turf.area(workingPoly);
+  const floors = params.numFloors || 5;
+
+  // Population: Commercial = A / 10 sqm per person (NBC)
+  const popPerFloor = floorArea / 10;
+
+  // --- CORE SIZING (from methodology doc) ---
+  // Lifts: 1 per 250-300 occupants OR 1 per 800-1000 sqm
+  let passengerLifts = Math.max(1, Math.ceil(popPerFloor / 275));
+  const areaBasedLifts = Math.max(1, Math.ceil(floorArea / 900));
+  passengerLifts = Math.max(passengerLifts, areaBasedLifts);
+  let serviceLifts = 0;
+  let fireLift = 0;
+  if (floors > 10) fireLift = 1;
+  if (floors > 20) serviceLifts = 1;
+  const totalLifts = passengerLifts + serviceLifts + fireLift;
+  const liftArea = passengerLifts * 2.5 + serviceLifts * 5.0 + fireLift * 4.5;
+
+  // Stairs: 18-25 sqm per stair (commercial)
+  let stairCount = 2;
+  if (popPerFloor > 500) stairCount = 3;
+  const stairArea = stairCount * 22;
+
+  // Lobby: 5-7 sqm per lift
+  const lobbyArea = totalLifts * 6;
+
+  // Corridor: Retail gets 8-10% (higher for customer flow)
+  const corridorArea = floorArea * 0.09;
+
+  // Shafts
+  const plumbingShafts = Math.max(1, Math.ceil(floorArea / 750));
+  const shaftArea = plumbingShafts * 0.85 + 0.6 + 0.5 + Math.ceil(floorArea / 1000) * 3;
+
+  // Fire check lobby if building > 24m
+  const height = floors * (params.floorHeight || 3.5);
+  const fireLobbyArea = height > 24 ? 10 : 0;
+
+  const totalCoreArea = liftArea + stairArea + lobbyArea + shaftArea + fireLobbyArea;
+
+  // Benchmark Enforcement: Commercial Core should be 16-22% of BUA (Methodology Doc)
+  let enforcedCoreArea = totalCoreArea;
+  if ((totalCoreArea / floorArea) < 0.16) {
+     console.log(`[Retail Layout] Calculated physical core (${totalCoreArea.toFixed(0)}m²) is below 16% benchmark. Enforcing minimum 16%.`);
+     enforcedCoreArea = floorArea * 0.16;
+  }
+
+  // Target: Core+Circulation should be 35-50% of floor area for retail
+  const coreCircTarget = Math.max(enforcedCoreArea + corridorArea, floorArea * 0.35);
+
+  console.log(
+    `[Retail Layout] Floor=${floorArea.toFixed(0)}m², Enforced Core=${enforcedCoreArea.toFixed(0)}m², Corridor=${corridorArea.toFixed(0)}m², Total=${coreCircTarget.toFixed(0)}m² (${((coreCircTarget / floorArea) * 100).toFixed(1)}%)`,
+  );
+
+  // --- GEOMETRY ---
+  const bbox = turf.bbox(workingPoly);
+  const [minX, minY, maxX, maxY] = bbox;
+  const bboxWidth = turf.distance([minX, minY], [maxX, minY], { units: "meters" });
+  const bboxDepth = turf.distance([minX, minY], [minX, maxY], { units: "meters" });
+  const isHorizontal = bboxWidth > bboxDepth;
+  const longAxis = isHorizontal ? bboxWidth : bboxDepth;
+  const shortAxis = isHorizontal ? bboxDepth : bboxWidth;
+
+  const degPerMeterX = (maxX - minX) / bboxWidth;
+  const degPerMeterY = (maxY - minY) / bboxDepth;
+
+  // --- CORE PLACEMENT: CORNER ---
+  // Slice the building from the edge to get exactly totalCoreArea
+  let clippedCore: Feature<Polygon> | null = null;
+  
+  let lo = isHorizontal ? minX : minY;
+  let hi = isHorizontal ? maxX : maxY;
+  
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2;
+    let testPoly: Feature<Polygon>;
+    if (isHorizontal) {
+      testPoly = turf.bboxPolygon([mid, minY, maxX, maxY]);
+    } else {
+      testPoly = turf.bboxPolygon([minX, mid, maxX, maxY]);
+    }
+    
+    try {
+      // @ts-ignore
+      const intersect = turf.intersect(testPoly, workingPoly);
+      if (!intersect) {
+        hi = mid;
+        continue;
+      }
+      
+      let resPoly = intersect as Feature<Polygon>;
+      if (intersect.geometry.type === 'MultiPolygon') {
+          // @ts-ignore
+          const parts = turf.flatten(intersect);
+          resPoly = parts.features.sort((x: any, y: any) => turf.area(y) - turf.area(x))[0];
+      }
+      
+      const a = turf.area(resPoly);
+      clippedCore = resPoly;
+      
+      if (Math.abs(a - enforcedCoreArea) < enforcedCoreArea * 0.05) {
+        break;
+      }
+      
+      if (a > enforcedCoreArea) {
+        // Sliced too much area, move cut line closer to the edge (maxX / maxY)
+        lo = mid;
+      } else {
+        // Sliced too little area, move cut line deeper into the building (minX / minY)
+        hi = mid;
+      }
+    } catch(e) {
+      break;
+    }
+  }
+
+  if (clippedCore && turf.area(clippedCore) > 10) {
+    cores.push({
+      id: "core-retail-corner",
+      type: "Lobby",
+      geometry: clippedCore as Feature<Polygon>,
+    });
+    console.log(`[Retail Layout] Core placed at corner: ${turf.area(clippedCore).toFixed(0)}m² (Target: ${enforcedCoreArea.toFixed(0)}m²)`);
+  }
+
+  // --- LEASABLE AREA (building minus core) ---
+  let leasablePoly = workingPoly;
+  if (clippedCore) {
+    try {
+      // @ts-ignore
+      leasablePoly = turf.difference(workingPoly, clippedCore) || workingPoly;
+    } catch (e) {
+      console.warn("[Retail Layout] Core subtraction failed, using full building");
+    }
+  }
+
+  // --- CIRCULATION: HORIZONTAL STRIP IN THE MIDDLE ---
+  const leasableBbox = turf.bbox(leasablePoly!);
+  const [lMinX, lMinY, lMaxX, lMaxY] = leasableBbox;
+  const leasableWidth = turf.distance([lMinX, lMinY], [lMaxX, lMinY], { units: "meters" });
+  const leasableDepth = turf.distance([lMinX, lMinY], [lMinX, lMaxY], { units: "meters" });
+
+  // Circulation strip: width mathematically derived to hit the remaining coreCircTarget
+  const targetCircArea = Math.max(0, coreCircTarget - enforcedCoreArea);
+  let circWidthM = 3.5; // fallback minimum
+  if (isHorizontal && leasableWidth > 0) {
+    circWidthM = Math.max(3.5, targetCircArea / leasableWidth);
+  } else if (!isHorizontal && leasableDepth > 0) {
+    circWidthM = Math.max(3.5, targetCircArea / leasableDepth);
+  }
+  console.log(`[Retail Layout] Corridor strip generated at ${circWidthM.toFixed(1)}m wide to fulfill ${targetCircArea.toFixed(0)}m² benchmark target.`);
+
+  let circPoly: Feature<Polygon>;
+  let stripA_bounds: { minX: number; maxX: number; minY: number; maxY: number };
+  let stripB_bounds: { minX: number; maxX: number; minY: number; maxY: number };
+
+  if (isHorizontal) {
+    // Horizontal building: circulation runs E-W in the middle of depth
+    const midY = (lMinY + lMaxY) / 2;
+    const halfCircDeg = (circWidthM / 2) * degPerMeterY;
+    circPoly = turf.bboxPolygon([lMinX, midY - halfCircDeg, lMaxX, midY + halfCircDeg]);
+
+    // Strip A: above circulation
+    stripA_bounds = { minX: lMinX, maxX: lMaxX, minY: midY + halfCircDeg, maxY: lMaxY };
+    // Strip B: below circulation
+    stripB_bounds = { minX: lMinX, maxX: lMaxX, minY: lMinY, maxY: midY - halfCircDeg };
+  } else {
+    // Vertical building: circulation runs N-S in the middle of width
+    const midX = (lMinX + lMaxX) / 2;
+    const halfCircDeg = (circWidthM / 2) * degPerMeterX;
+    circPoly = turf.bboxPolygon([midX - halfCircDeg, lMinY, midX + halfCircDeg, lMaxY]);
+
+    // Strip A: right of circulation
+    stripA_bounds = { minX: midX + halfCircDeg, maxX: lMaxX, minY: lMinY, maxY: lMaxY };
+    // Strip B: left of circulation
+    stripB_bounds = { minX: lMinX, maxX: midX - halfCircDeg, minY: lMinY, maxY: lMaxY };
+  }
+
+  // Clip circulation to leasable area
+  let clippedCirc = turf.intersect(circPoly, leasablePoly!);
+
+  // --- UNIT SUBDIVISION ---
+  // Calculate leasable area after core and circulation
+  let unitAreaPoly = leasablePoly!;
+  if (clippedCirc) {
+    try {
+      // @ts-ignore
+      unitAreaPoly = turf.difference(leasablePoly!, clippedCirc) || leasablePoly!;
+    } catch (e) {
+      console.warn("[Retail Layout] Circulation subtraction failed");
+    }
+  }
+
+  // Unit defaults: Force Retail Unit (ignore residential unit mixes from UI)
+  const unitMix = [{ name: "Retail Unit", mixRatio: 1, area: 100 }];
+  const avgUnitArea = unitMix.reduce((s, u) => s + u.area * u.mixRatio, 0);
+
+  // Place units in each strip
+  const placeUnitsInStrip = (
+    bounds: typeof stripA_bounds,
+    stripLabel: string,
+    startIdx: number,
+  ): number => {
+    let stripWidth: number, stripLength: number;
+    if (isHorizontal) {
+      stripWidth = turf.distance([bounds.minX, bounds.minY], [bounds.maxX, bounds.minY], { units: "meters" });
+      stripLength = turf.distance([bounds.minX, bounds.minY], [bounds.minX, bounds.maxY], { units: "meters" });
+    } else {
+      stripWidth = turf.distance([bounds.minX, bounds.minY], [bounds.maxX, bounds.minY], { units: "meters" });
+      stripLength = turf.distance([bounds.minX, bounds.minY], [bounds.minX, bounds.maxY], { units: "meters" });
+    }
+
+    if (stripWidth < 3 || stripLength < 3) return startIdx;
+
+    // Determine unit depth = strip's short dimension, unit width = area / depth
+    const unitDepth = isHorizontal ? stripLength : stripWidth;
+    const unitWidthM = avgUnitArea / unitDepth;
+
+    // Number of units that fit along the long dimension
+    const stripLongAxis = isHorizontal ? stripWidth : stripLength;
+    const numUnits = Math.max(1, Math.floor(stripLongAxis / unitWidthM));
+    const actualUnitWidth = stripLongAxis / numUnits;
+
+    console.log(
+      `[Retail Layout] ${stripLabel}: ${numUnits} units, ${actualUnitWidth.toFixed(1)}m × ${unitDepth.toFixed(1)}m`,
+    );
+
+    for (let u = 0; u < numUnits; u++) {
+      let unitPoly: Feature<Polygon>;
+      if (isHorizontal) {
+        const x1 = bounds.minX + u * (actualUnitWidth * degPerMeterX);
+        const x2 = bounds.minX + (u + 1) * (actualUnitWidth * degPerMeterX);
+        unitPoly = turf.bboxPolygon([x1, bounds.minY, x2, bounds.maxY]);
+      } else {
+        const y1 = bounds.minY + u * (actualUnitWidth * degPerMeterY);
+        const y2 = bounds.minY + (u + 1) * (actualUnitWidth * degPerMeterY);
+        unitPoly = turf.bboxPolygon([bounds.minX, y1, bounds.maxX, y2]);
+      }
+
+      // Clip to leasable area
+      try {
+        const clipped = turf.intersect(unitPoly, unitAreaPoly);
+        if (clipped && turf.area(clipped) > 5) {
+          const mixType = unitMix[u % unitMix.length];
+          const baseColor = getColorForUnitType(mixType.name);
+          const shade = u % 3 === 0 ? baseColor : u % 3 === 1 ? adjustBrightness(baseColor, -20) : adjustBrightness(baseColor, 30);
+
+          units.push({
+            id: `unit-retail-${startIdx + u}`,
+            type: mixType.name,
+            geometry: clipped as Feature<Polygon>,
+            color: shade,
+            targetArea: mixType.area,
+          });
+        }
+      } catch (e) {
+        // Use raw poly if clipping fails
+        const mixType = unitMix[u % unitMix.length];
+        units.push({
+          id: `unit-retail-${startIdx + u}`,
+          type: mixType.name,
+          geometry: unitPoly,
+          color: getColorForUnitType(mixType.name),
+          targetArea: mixType.area,
+        });
+      }
+    }
+
+    return startIdx + numUnits;
+  };
+
+  let unitIdx = 0;
+  unitIdx = placeUnitsInStrip(stripA_bounds, "Strip A (top/right)", unitIdx);
+  unitIdx = placeUnitsInStrip(stripB_bounds, "Strip B (bottom/left)", unitIdx);
+
+  console.log(`[Retail Layout] Total: ${units.length} retail units placed`);
+
+  // --- ROTATION BACK ---
+  if (rotationAngle !== 0) {
+    cores.forEach((c) => {
+      if (c.geometry) {
+        // @ts-ignore
+        c.geometry = turf.transformRotate(c.geometry, rotationAngle, { pivot: center });
+      }
+    });
+    units.forEach((u) => {
+      if (u.geometry) {
+        // @ts-ignore
+        u.geometry = turf.transformRotate(u.geometry, rotationAngle, { pivot: center });
+      }
+    });
+  }
+
+  // Efficiency
+  const totalArea = turf.area(buildingPoly);
+  let totalUnitArea = 0;
+  units.forEach((u) => {
+    if (u.geometry) totalUnitArea += turf.area(u.geometry);
+  });
+  const efficiency = ((totalUnitArea / totalArea) * 100);
+
+  return {
+    cores,
+    units,
+    groundFloorUnits: units, // Retail: all units available on ground floor
+    entrances,
+    utilities,
+    efficiency: parseFloat(efficiency.toFixed(1)),
+  };
+}
+
+
+/**
+ * Generates an OFFICE floor layout:
+ *   ┌──────┬──────┬──────┬──────┐
+ *   │  OF  │  OF  │  OF  │  OF  │
+ *   ├──────┼──────┴──────┼──────┤
+ *   │  OF  │ CIRCULATION │  OF  │
+ *   │      │    CORE     │      │
+ *   │  OF  │ CIRCULATION │  OF  │
+ *   ├──────┼──────┬──────┼──────┤
+ *   │  OF  │  OF  │  OF  │  OF  │
+ *   └──────┴──────┴──────┴──────┘
+ * Core at center, circulation ring wrapping core, offices on all 4 sides.
+ */
+function generateOfficeLayout(
+  buildingPoly: Feature<Polygon | MultiPolygon>,
+  workingPoly: Feature<Polygon | MultiPolygon>,
+  params: LayoutParams,
+  rotationAngle: number,
+  center: Feature<Point>,
+): {
+  cores: Core[];
+  units: Unit[];
+  groundFloorUnits: Unit[];
+  entrances: any[];
+  utilities: UtilityArea[];
+  efficiency?: number;
+} {
+  console.log("[Layout Generator] Generating OFFICE layout");
+
+  const cores: Core[] = [];
+  const units: Unit[] = [];
+  const entrances: any[] = [];
+  const utilities: UtilityArea[] = [];
+
+  const floorArea = turf.area(workingPoly);
+  const floors = params.numFloors || 5;
+
+  // Population: Commercial = A / 10 sqm per person (NBC)
+  const popPerFloor = floorArea / 10;
+
+  // --- CORE SIZING ---
+  let passengerLifts = Math.max(1, Math.ceil(popPerFloor / 275));
+  const areaBasedLifts = Math.max(1, Math.ceil(floorArea / 900));
+  passengerLifts = Math.max(passengerLifts, areaBasedLifts);
+  let serviceLifts = 0;
+  let fireLift = 0;
+  if (floors > 10) fireLift = 1;
+  if (floors > 20) serviceLifts = 1;
+  const totalLifts = passengerLifts + serviceLifts + fireLift;
+  const liftArea = passengerLifts * 2.5 + serviceLifts * 5.0 + fireLift * 4.5;
+
+  // Stairs: 18-25 sqm commercial
+  let stairCount = 2;
+  if (popPerFloor > 500) stairCount = 3;
+  const stairArea = stairCount * 22;
+
+  // Lobby: 5-7 sqm per lift
+  const lobbyArea = totalLifts * 6;
+
+  // Shafts
+  const plumbingShafts = Math.max(1, Math.ceil(floorArea / 750));
+  const shaftArea = plumbingShafts * 0.85 + 0.6 + 0.5 + Math.ceil(floorArea / 1000) * 3;
+
+  // Fire check lobby if building > 24m
+  const height = floors * (params.floorHeight || 3.5);
+  const fireLobbyArea = height > 24 ? 10 : 0;
+
+  const totalCoreArea = liftArea + stairArea + lobbyArea + shaftArea + fireLobbyArea;
+
+  // Benchmark Enforcement: Commercial Core should be 16-22% of BUA (Methodology Doc)
+  let enforcedCoreArea = totalCoreArea;
+  if ((totalCoreArea / floorArea) < 0.16) {
+     console.log(`[Office Layout] Calculated physical core (${totalCoreArea.toFixed(0)}m²) is below 16% benchmark. Enforcing minimum 16%.`);
+     enforcedCoreArea = floorArea * 0.16;
+  }
+
+  // Target: Core+Circulation = 25-35% for office
+  const corridorArea = floorArea * 0.07; // 6-8%
+  const coreCircTarget = Math.max(enforcedCoreArea + corridorArea, floorArea * 0.25);
+
+  console.log(
+    `[Office Layout] Floor=${floorArea.toFixed(0)}m², Enforced Core=${enforcedCoreArea.toFixed(0)}m², Corridor=${corridorArea.toFixed(0)}m², Total=${coreCircTarget.toFixed(0)}m² (${((coreCircTarget / floorArea) * 100).toFixed(1)}%)`,
+  );
+
+  // --- GEOMETRY ---
+  const bbox = turf.bbox(workingPoly);
+  const [minX, minY, maxX, maxY] = bbox;
+  const bboxWidth = turf.distance([minX, minY], [maxX, minY], { units: "meters" });
+  const bboxDepth = turf.distance([minX, minY], [minX, maxY], { units: "meters" });
+
+  const degPerMeterX = (maxX - minX) / bboxWidth;
+  const degPerMeterY = (maxY - minY) / bboxDepth;
+
+  // --- CORE PLACEMENT: CENTER ---
+  // Core occupies center ~20% of the footprint
+  const coreRatio = Math.min(0.25, Math.max(0.15, enforcedCoreArea / floorArea));
+  const coreSide = Math.sqrt(enforcedCoreArea);
+  const coreW = Math.min(coreSide, bboxWidth * 0.35);
+  const coreH = Math.min(enforcedCoreArea / coreW, bboxDepth * 0.35);
+
+  const midX = (minX + maxX) / 2;
+  const midY = (minY + maxY) / 2;
+  const halfCoreWDeg = (coreW / 2) * degPerMeterX;
+  const halfCoreHDeg = (coreH / 2) * degPerMeterY;
+
+  const corePoly = turf.bboxPolygon([
+    midX - halfCoreWDeg,
+    midY - halfCoreHDeg,
+    midX + halfCoreWDeg,
+    midY + halfCoreHDeg,
+  ]);
+
+  // Clip core to building
+  let clippedCore = turf.intersect(corePoly, workingPoly);
+  if (clippedCore && turf.area(clippedCore) > 10) {
+    cores.push({
+      id: "core-office-center",
+      type: "Lobby",
+      geometry: clippedCore as Feature<Polygon>,
+    });
+    console.log(`[Office Layout] Core placed at center: ${turf.area(clippedCore).toFixed(0)}m²`);
+  } else {
+    // Fallback: use centroid
+    const centerPt = turf.centroid(workingPoly);
+    const fallbackCore = turf.bboxPolygon([
+      centerPt.geometry.coordinates[0] - halfCoreWDeg,
+      centerPt.geometry.coordinates[1] - halfCoreHDeg,
+      centerPt.geometry.coordinates[0] + halfCoreWDeg,
+      centerPt.geometry.coordinates[1] + halfCoreHDeg,
+    ]);
+    clippedCore = turf.intersect(fallbackCore, workingPoly);
+    if (clippedCore) {
+      cores.push({
+        id: "core-office-center",
+        type: "Lobby",
+        geometry: clippedCore as Feature<Polygon>,
+      });
+    }
+  }
+
+  // Corridor width mathematically derived to hit the remaining coreCircTarget
+  const targetCircArea = Math.max(0, coreCircTarget - enforcedCoreArea);
+  // Area of buffer ~ perimeter * width
+  const perimeter = 2 * (coreW + coreH);
+  let corridorWidthM = 2.5; // fallback minimum
+  if (perimeter > 0) {
+      corridorWidthM = Math.max(2.5, targetCircArea / perimeter);
+  }
+  console.log(`[Office Layout] Corridor ring generated at ${corridorWidthM.toFixed(1)}m wide to fulfill ${targetCircArea.toFixed(0)}m² benchmark target.`);
+
+  let coreWithCirc: Feature<Polygon | MultiPolygon> | null = null;
+  if (clippedCore) {
+    try {
+      coreWithCirc = turf.buffer(clippedCore, corridorWidthM / 1000, { units: "kilometers" }) as Feature<Polygon>;
+    } catch (e) {
+      console.warn("[Office Layout] Core buffer failed");
+    }
+  }
+
+  // --- LEASABLE AREA: building minus (core + circulation ring) ---
+  let leasablePoly = workingPoly;
+  const obstacle = coreWithCirc || clippedCore;
+  if (obstacle) {
+    try {
+      // @ts-ignore
+      leasablePoly = turf.difference(workingPoly, obstacle) || workingPoly;
+    } catch (e) {
+      console.warn("[Office Layout] Core+circ subtraction failed, using full building");
+    }
+  }
+
+  // --- UNIT SUBDIVISION: 4 SIDES ---
+  // Split the leasable area into 4 strips: Top, Bottom, Left, Right
+  // Unit defaults: Force Office (ignore residential unit mixes from UI)
+  const unitMix = [{ name: "Office", mixRatio: 1, area: 80 }];
+  const avgUnitArea = unitMix.reduce((s, u) => s + u.area * u.mixRatio, 0);
+
+  // Define the 4 quadrant strips around the core+circulation zone
+  const coreZoneBbox = obstacle ? turf.bbox(obstacle) : [midX - halfCoreWDeg, midY - halfCoreHDeg, midX + halfCoreWDeg, midY + halfCoreHDeg];
+  const [czMinX, czMinY, czMaxX, czMaxY] = coreZoneBbox;
+
+  // 4 strips: Top (above core zone), Bottom (below), Left (beside core, between top/bottom), Right (beside core, between top/bottom)
+  const strips = [
+    { label: "Top", minX: minX, maxX: maxX, minY: czMaxY, maxY: maxY, dir: "horizontal" as const },
+    { label: "Bottom", minX: minX, maxX: maxX, minY: minY, maxY: czMinY, dir: "horizontal" as const },
+    { label: "Left", minX: minX, maxX: czMinX, minY: czMinY, maxY: czMaxY, dir: "vertical" as const },
+    { label: "Right", minX: czMaxX, maxX: maxX, minY: czMinY, maxY: czMaxY, dir: "vertical" as const },
+  ];
+
+  let unitIdx = 0;
+
+  for (const strip of strips) {
+    const stripW = turf.distance([strip.minX, strip.minY], [strip.maxX, strip.minY], { units: "meters" });
+    const stripH = turf.distance([strip.minX, strip.minY], [strip.minX, strip.maxY], { units: "meters" });
+
+    if (stripW < 3 || stripH < 3) continue;
+
+    // For horizontal strips (top/bottom): subdivide along X axis
+    // For vertical strips (left/right): subdivide along Y axis
+    const isHorizStrip = strip.dir === "horizontal";
+    const unitDepthM = isHorizStrip ? stripH : stripW;
+    const unitWidthM = avgUnitArea / unitDepthM;
+    const stripLengthM = isHorizStrip ? stripW : stripH;
+    const numUnits = Math.max(1, Math.floor(stripLengthM / unitWidthM));
+    const actualUnitWidthM = stripLengthM / numUnits;
+
+    console.log(
+      `[Office Layout] ${strip.label}: ${numUnits} units, ${actualUnitWidthM.toFixed(1)}m × ${unitDepthM.toFixed(1)}m`,
+    );
+
+    for (let u = 0; u < numUnits; u++) {
+      let unitPoly: Feature<Polygon>;
+
+      if (isHorizStrip) {
+        const x1 = strip.minX + u * (actualUnitWidthM * degPerMeterX);
+        const x2 = strip.minX + (u + 1) * (actualUnitWidthM * degPerMeterX);
+        unitPoly = turf.bboxPolygon([x1, strip.minY, x2, strip.maxY]);
+      } else {
+        const y1 = strip.minY + u * (actualUnitWidthM * degPerMeterY);
+        const y2 = strip.minY + (u + 1) * (actualUnitWidthM * degPerMeterY);
+        unitPoly = turf.bboxPolygon([strip.minX, y1, strip.maxX, y2]);
+      }
+
+      // Clip to leasable area
+      try {
+        const clipped = turf.intersect(unitPoly, leasablePoly!);
+        if (clipped && turf.area(clipped) > 5) {
+          const mixType = unitMix[u % unitMix.length];
+          const baseColor = getColorForUnitType(mixType.name);
+          const shade = u % 3 === 0 ? baseColor : u % 3 === 1 ? adjustBrightness(baseColor, -20) : adjustBrightness(baseColor, 30);
+
+          units.push({
+            id: `unit-office-${unitIdx}`,
+            type: mixType.name,
+            geometry: clipped as Feature<Polygon>,
+            color: shade,
+            targetArea: mixType.area,
+          });
+          unitIdx++;
+        }
+      } catch (e) {
+        const mixType = unitMix[u % unitMix.length];
+        units.push({
+          id: `unit-office-${unitIdx}`,
+          type: mixType.name,
+          geometry: unitPoly,
+          color: getColorForUnitType(mixType.name),
+          targetArea: mixType.area,
+        });
+        unitIdx++;
+      }
+    }
+  }
+
+  console.log(`[Office Layout] Total: ${units.length} office units placed`);
+
+  // --- ROTATION BACK ---
+  if (rotationAngle !== 0) {
+    cores.forEach((c) => {
+      if (c.geometry) {
+        // @ts-ignore
+        c.geometry = turf.transformRotate(c.geometry, rotationAngle, { pivot: center });
+      }
+    });
+    units.forEach((u) => {
+      if (u.geometry) {
+        // @ts-ignore
+        u.geometry = turf.transformRotate(u.geometry, rotationAngle, { pivot: center });
+      }
+    });
+  }
+
+  // Efficiency
+  const totalArea = turf.area(buildingPoly);
+  let totalUnitArea = 0;
+  units.forEach((u) => {
+    if (u.geometry) totalUnitArea += turf.area(u.geometry);
+  });
+  const efficiency = ((totalUnitArea / totalArea) * 100);
+
+  return {
+    cores,
+    units,
+    groundFloorUnits: units,
+    entrances,
+    utilities,
+    efficiency: parseFloat(efficiency.toFixed(1)),
+  };
+}
+
 
 /**
  * Determines Utility Size and Placement based on Vastu or User Logic

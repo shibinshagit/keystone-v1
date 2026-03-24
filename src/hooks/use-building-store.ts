@@ -1889,12 +1889,19 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         const effectiveLandUse = (p as any).landUse || params.landUse || 'residential';
                         if (['commercial', 'institutional', 'industrial'].includes(effectiveLandUse)) {
                             const buildingCount = (p as any).buildingCount ?? (params as any).buildingCount ?? 2;
+                            console.log(`[DEBUG-COMM] ========== COMMERCIAL GENERATION START ==========`);
+                            console.log(`[DEBUG-COMM] buildingCount=${buildingCount}, landUse=${effectiveLandUse}`);
+                            console.log(`[DEBUG-COMM] effectiveMaxFootprint=${effectiveMaxFootprint.toFixed(0)}m², chunk area=${turf.area(chunk).toFixed(0)}m²`);
+                            console.log(`[DEBUG-COMM] genParams.maxFootprint=${(genParams as any).maxFootprint?.toFixed(0) ?? 'undefined'}`);
                             chunkGenerated = generateLargeFootprint(chunk, {
                                 ...genParams,
                                 buildingCount,
                                 mainSetback  // Pass through so generator can calculate extra directional setbacks
                             } as any);
-                            console.log(`[generateScenarios] Large-Footprint mode: ${buildingCount} buildings, landUse=${effectiveLandUse}`);
+                            console.log(`[DEBUG-COMM] generateLargeFootprint returned ${chunkGenerated.length} buildings`);
+                            chunkGenerated.forEach((b, i) => {
+                                console.log(`[DEBUG-COMM]   Building ${i}: area=${turf.area(b).toFixed(0)}m², coords=${b.geometry.coordinates[0].length} vertices`);
+                            });
                         } else {
                         // --- STANDARD TYPOLOGY MODE (Residential / Mixed) ---
                         // Apply directional front/rear/side setback EXTRA beyond mainSetback
@@ -2034,26 +2041,55 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         // Handle segments and collisions
                         const isLargeFootprint = ['commercial', 'institutional', 'industrial'].includes(effectiveLandUse);
                         
-                        for (const g of chunkGenerated) {
-                            if (primaryCoverageMet) break;
-                            
-                            const currentFp = geomFeatures.reduce((sum, f) => sum + turf.area(f), 0);
-                            if (currentFp + turf.area(g) > effectiveMaxFootprint) {
-                                console.log(`[Primary Generation] Coverage limit reached (${currentFp.toFixed(0)}m²). Stopping primary buildings.`);
-                                primaryCoverageMet = true;
+                        for (let gIdx = 0; gIdx < chunkGenerated.length; gIdx++) {
+                            const g = chunkGenerated[gIdx];
+                            if (primaryCoverageMet) {
+                                console.log(`[DEBUG-COMM] Building ${gIdx}: SKIPPED (primaryCoverageMet=true)`);
                                 break;
                             }
                             
-                            if (isLargeFootprint) {
-                                builtObstacles.push(g);
-                                geomFeatures.push(g);
+                            const currentFp = geomFeatures.reduce((sum, f) => sum + turf.area(f), 0);
+                            const remainingBudget = effectiveMaxFootprint - currentFp;
+                            const buildingArea = turf.area(g);
+                            
+                            console.log(`[DEBUG-COMM] Building ${gIdx}: area=${buildingArea.toFixed(0)}m², currentFp=${currentFp.toFixed(0)}m², remainingBudget=${remainingBudget.toFixed(0)}m², effectiveMaxFootprint=${effectiveMaxFootprint.toFixed(0)}m²`);
+                            
+                            if (isLargeFootprint && buildingArea > remainingBudget && remainingBudget > 50) {
+                                // SHRINK to fit remaining budget instead of discarding
+                                const scaleFactor = Math.sqrt(remainingBudget / buildingArea);
+                                console.log(`[DEBUG-COMM] Building ${gIdx}: SHRINKING (${buildingArea.toFixed(0)} > ${remainingBudget.toFixed(0)}), scaleFactor=${scaleFactor.toFixed(3)}`);
+                                try {
+                                    // @ts-ignore
+                                    const shrunk = turf.transformScale(g, scaleFactor);
+                                    if (shrunk && turf.area(shrunk) > 50) {
+                                        console.log(`[DEBUG-COMM] Building ${gIdx}: SHRUNK OK -> ${turf.area(shrunk).toFixed(0)}m²`);
+                                        builtObstacles.push(shrunk);
+                                        geomFeatures.push(shrunk);
+                                    } else {
+                                        console.log(`[DEBUG-COMM] Building ${gIdx}: SHRUNK FAILED (null or too small)`);
+                                    }
+                                } catch (e) {
+                                    console.warn(`[DEBUG-COMM] Building ${gIdx}: SHRINK ERROR`, e);
+                                }
+                                primaryCoverageMet = true;
+                            } else if (!isLargeFootprint && currentFp + buildingArea > effectiveMaxFootprint) {
+                                console.log(`[DEBUG-COMM] Building ${gIdx}: RESIDENTIAL DISCARD (${(currentFp + buildingArea).toFixed(0)} > ${effectiveMaxFootprint.toFixed(0)})`);
+                                primaryCoverageMet = true;
+                                break;
                             } else {
-                                if (!checkCollision(g, builtObstacles)) {
+                                console.log(`[DEBUG-COMM] Building ${gIdx}: ACCEPTED (${buildingArea.toFixed(0)} <= ${remainingBudget.toFixed(0)})`);
+                                if (isLargeFootprint) {
                                     builtObstacles.push(g);
                                     geomFeatures.push(g);
+                                } else {
+                                    if (!checkCollision(g, builtObstacles)) {
+                                        builtObstacles.push(g);
+                                        geomFeatures.push(g);
+                                    }
                                 }
                             }
                         }
+                        console.log(`[DEBUG-COMM] After coverage loop: geomFeatures.length=${geomFeatures.length}`);
                     }
                 });
 
@@ -2703,8 +2739,11 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             // Stack Order (Bottom -> Top): Retail -> Institutional -> Hospitality -> Office -> Residential
                             const commFloors = Math.round(floors * (mix.commercial / 100));
                             
-                            // Split Commercial roughly 40% Retail / 60% Office (min 1 Retail if any commercial)
-                            const retailFloors = commFloors > 0 ? Math.max(1, Math.floor(commFloors * 0.4)) : 0;
+                            // Split Commercial using commercialMix if provided, else roughly 40% Retail / 60% Office
+                            const defaultRetailPct = params.commercialMix ? (params.commercialMix.retail / 100) : 0.4;
+                            const retailFloors = commFloors > 0 ? 
+                                (params.commercialMix ? Math.round(commFloors * defaultRetailPct) : Math.max(1, Math.floor(commFloors * defaultRetailPct))) 
+                                : 0;
                             const officeFloors = Math.max(0, commFloors - retailFloors);
 
                             const instFloors = Math.round(floors * (mix.institutional / 100));
@@ -2741,7 +2780,42 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     } else if (regulationType.includes('public') || regulationType.includes('civic') || regulationType.includes('government') || params.landUse === 'institutional') {
                         intendedUse = BuildingIntendedUse.Public;
                     } else if (params.landUse === 'commercial') {
-                        intendedUse = BuildingIntendedUse.Commercial;
+                        if (params.commercialMix && params.allocationMode === 'plot') {
+                            // Plot-wise: split buildings based on ratio
+                            const totalBuildings = explodedFeatures.length;
+                            const retailLimit = (params.commercialMix.retail / 100) * totalBuildings;
+                            intendedUse = i < retailLimit ? BuildingIntendedUse.Retail : BuildingIntendedUse.Office;
+                        } else if (params.commercialMix && params.allocationMode !== 'plot') {
+                            // Floor-wise: stack Retail on bottom, Office on top
+                            intendedUse = BuildingIntendedUse.Commercial;
+                            const retailFloors = Math.round(floors * (params.commercialMix.retail / 100));
+                            const officeFloors = Math.max(0, floors - retailFloors);
+                            
+                            let currentFloorIndex = 0;
+                            const addFloors = (count: number, type: BuildingIntendedUse) => {
+                                if (count <= 0) return;
+                                const colors = generateFloorColors(count, type);
+                                for (let k = 0; k < count; k++) {
+                                    buildingSpecificFloors.push({
+                                        id: `floor-${id}-${currentFloorIndex}`,
+                                        height: floorHeight,
+                                        color: colors[k] || '#cccccc',
+                                        type: 'Occupied',
+                                        intendedUse: type,
+                                        level: currentFloorIndex
+                                    });
+                                    currentFloorIndex++;
+                                }
+                            };
+                            
+                            addFloors(retailFloors, BuildingIntendedUse.Retail);
+                            addFloors(officeFloors, BuildingIntendedUse.Office);
+
+                            if (retailFloors === floors) intendedUse = BuildingIntendedUse.Retail;
+                            if (officeFloors === floors) intendedUse = BuildingIntendedUse.Office;
+                        } else {
+                            intendedUse = BuildingIntendedUse.Office; // Default commercial to Office layout
+                        }
                     }
 
                     // Fallback for non-mixed / standard cases if floors not yet generated
@@ -3234,8 +3308,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             return heightB - heightA;
                         });
                         
-                        // 2d. Level-by-level sweep: B3 to all → B4 to all → B5 to all
-                        const MAX_BASEMENTS = 5;
+                        // 2d. Level-by-level sweep: B3 to all → B4 to all
+                        const MAX_BASEMENTS = 4;
                         const DEFAULT_BASEMENTS = 2; // B1+B2 already added
                         
                         for (let lvl = DEFAULT_BASEMENTS + 1; lvl <= MAX_BASEMENTS; lvl++) {

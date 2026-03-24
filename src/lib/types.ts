@@ -308,6 +308,7 @@ export interface FeasibilityParams {
   efficiencyTarget: number; // e.g., 0.70
   selectedUtilities?: string[]; // Optional list of enabled utilities
   exactTypologyAllocation?: boolean; // Force grid allocation based strictly on theoretical unit mix
+  commercialMix?: { retail: number; office: number }; // Retail vs Office split
 }
 
 export interface DevelopmentStats {
@@ -1099,4 +1100,113 @@ export interface ProjectEstimates {
 
   // Monte Carlo simulation results
   simulation?: SimulationResults;
+}
+
+// ─── LAND INTELLIGENCE TYPES (Phase 1.2) ─────────────────────────────────────
+
+export interface LandIntelligenceQuery {
+  location: string;                    // City/district name (e.g. "Delhi")
+  coordinates?: [number, number];      // [lng, lat]
+  district?: string;                   // Sub-district/area
+  landSizeSqm?: number;               // Plot area in sqm
+  intendedUse?: 'Residential' | 'Commercial' | 'Industrial' | 'Mixed-Use';
+  targetPriceRange?: { min: number; max: number }; // INR
+}
+
+// data.gov.in response types
+export interface CensusData {
+  state: string;
+  district: string;
+  totalPopulation: number;
+  malePopulation: number;
+  femalePopulation: number;
+  literacyRate: number;
+  populationDensity: number;  // per sq km
+  decadalGrowthRate: number;  // percentage
+  urbanPopulationPct: number;
+  householdCount: number;
+  source: string;
+  year: number;
+}
+
+export interface FDIData {
+  sector: string;
+  amountInrCrores: number;
+  amountUsdMillions: number;
+  year: string;
+  state?: string;
+  source: string;
+}
+
+export interface SEZData {
+  name: string;
+  developer: string;
+  state: string;
+  district: string;
+  sector: string;        // IT/ITES, Multi-product, etc.
+  areaHectares: number;
+  status: 'Operational' | 'Notified' | 'Formal Approval' | 'In-Principle';
+  distanceKm?: number;   // From query location
+  source: string;
+}
+
+// Google Earth Engine (satellite) types
+export interface SatelliteChangeData {
+  location: string;
+  coordinates: [number, number];
+  urbanGrowthIndex: number;       // 0-100: rate of urban expansion
+  builtUpAreaPct: number;         // % of area that is built-up
+  builtUpChange5yr: number;       // Change in built-up % over 5 years
+  ndviTrend: 'increasing' | 'decreasing' | 'stable'; // vegetation trend
+  ndviAverage: number;            // 0 to 1
+  landSurfaceTempC: number;       // avg land surface temperature
+  analysisDate: string;
+  source: string;
+}
+
+// Master Plan extraction types
+export interface MasterPlanZone {
+  zoneName: string;              // e.g. "Residential Zone R1"
+  permittedUses: string[];       // e.g. ["Residential", "Educational"]
+  conditionalUses?: string[];
+  prohibitedUses?: string[];
+  far: number;                   // Floor Area Ratio
+  maxHeight: number;             // meters
+  maxCoverage: number;           // percentage
+  minPlotSize?: number;          // sqm
+  densityDU?: number;            // dwelling units per hectare
+  setbacks?: {
+    front: number;
+    rear: number;
+    side: number;
+  };
+  cluProvisions?: string;       // Change of Land Use notes
+  remarks?: string;
+}
+
+export interface MasterPlanData {
+  cityName: string;
+  planName: string;              // e.g. "Delhi Master Plan 2041"
+  planYear: number;
+  zones: MasterPlanZone[];
+  generalFARRules?: string;
+  transitOrientedDev?: string;   // TOD provisions
+  greenBeltRules?: string;
+  confidence: number;            // 0-1
+  source: string;                // filename
+}
+
+// Developability Score output
+export interface DevelopabilityScore {
+  overallScore: number;           // 0-1000
+  rating: 'Excellent' | 'Good' | 'Moderate' | 'Poor' | 'Not Viable';
+  categories: {
+    growthPotential: { score: number; maxScore: number; details: string[] };
+    legalRegulatory: { score: number; maxScore: number; details: string[] };
+    locationConnectivity: { score: number; maxScore: number; details: string[] };
+    marketEconomics: { score: number; maxScore: number; details: string[] };
+  };
+  recommendation: string;
+  dataCompleteness: number;       // 0-1: how much data was available
+  timestamp: string;
 }

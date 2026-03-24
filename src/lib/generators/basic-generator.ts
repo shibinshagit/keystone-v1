@@ -41,6 +41,7 @@ export interface AlgoParams {
     landUse?: string; 
     selectedUtilities?: string[];
     programMix?: { residential: number; commercial: number; institutional: number; hospitality: number; };
+    commercialMix?: { retail: number; office: number };
     allocationMode?: 'floor' | 'plot'; 
     parkingType?: any;
     parkingTypes?: ('ug' | 'pod' | 'surface' | 'ground' | 'none')[];
