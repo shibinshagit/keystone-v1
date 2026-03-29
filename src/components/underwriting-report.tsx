@@ -61,7 +61,7 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
 
     const far = plot.far || plot.regulation?.geometry?.floor_area_ratio?.value || 1.0;
     const maxCov = plot.maxCoverage || plot.regulation?.geometry?.max_ground_coverage?.value || 40;
-    const towers = plot.buildings?.length || 1;
+    const towers = (plot.buildings || []).filter(b => !b.id.includes('-tower')).length || 1;
     const maxFloors = plot.buildings?.reduce((m, b) => Math.max(m, b.numFloors || 1), 0) || 5;
     const maxHeight = maxFloors * (plot.buildings?.[0]?.typicalFloorHeight || 3);
     const plotArea = plot.area || 0;

@@ -46,6 +46,7 @@ export interface AlgoParams {
     parkingType?: any;
     parkingTypes?: ('ug' | 'pod' | 'surface' | 'ground' | 'none')[];
     floorHeight?: number;
+    groundFloorHeight?: number;
     maxAllowedFAR?: number; 
     siteCoverage?: number;
     seedOffset?: number;

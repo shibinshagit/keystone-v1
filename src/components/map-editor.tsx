@@ -1720,7 +1720,7 @@ export function MapEditor({
                 const isBuildingSelected =
                   showSelectionHighlight &&
                   selectedObjectId &&
-                  selectedObjectId.id === building.id &&
+                  (selectedObjectId.id === building.id || building.id.replace(/-podium$/, '').replace(/-tower$/, '') === selectedObjectId.id) &&
                   selectedObjectId.type === "Building";
                 const patternName = `texture-${floorUse}-${opacityStr}${isBuildingSelected ? "-selected" : ""}`;
                 try {
@@ -3435,12 +3435,22 @@ export function MapEditor({
               if (seenGeoKeys.has(geoKey)) return;
               seenGeoKeys.add(geoKey);
 
+              // For tower buildings, the core (elevator shaft) should ALWAYS run from
+              // ground level all the way to the top of the tower, even if the
+              // podium it sits on was manually deleted by the user.
+              let coreBase = effectiveBase;
+              if (building.id.includes("-tower")) {
+                // If it's a tower, force the core to start at the absolute ground
+                // (accounting for global basement lift if toggled on)
+                coreBase = shouldLiftForBasements ? totalBasementHeight : 0;
+              }
+
               features.push({
                 ...core.geometry,
                 properties: {
                   ...core.geometry.properties,
                   height: visualBuildingTop,
-                  base_height: effectiveBase,
+                  base_height: coreBase,
                   coreId: core.id,
                 },
               } as Feature);
@@ -3698,7 +3708,7 @@ export function MapEditor({
             const isBuildingSelected =
               showSelectionHighlight &&
               selectedObjectId &&
-              selectedObjectId.id === building.id &&
+              (selectedObjectId.id === building.id || building.id.replace(/-podium$/, '').replace(/-tower$/, '') === selectedObjectId.id) &&
               selectedObjectId.type === "Building";
             const isInternalSelected =
               selectedObjectId &&

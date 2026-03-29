@@ -124,7 +124,7 @@ function MetricsTab() {
   // Use consumedBuildableArea to exactly match the Project Constraints panel FAR calculation
   const gfa =
     activeProject.consumedBuildableArea || metrics.totalBuiltUpArea || 1;
-  const totalFootprint = buildingsForMetrics.reduce((s, b) => s + b.area, 0);
+  const totalFootprint = buildingsForMetrics.filter((b) => !b.id.includes('-tower')).reduce((s, b) => s + b.area, 0);
   const totalGreenArea = allGreenAreas.reduce(
     (s, g) => s + (g.visible ? g.area : 0),
     0,
@@ -141,7 +141,7 @@ function MetricsTab() {
     allParkingFloors.reduce((s, f) => s + (f.parkingCapacity || 0), 0);
 
   // Building & Unit summaries
-  const totalBuildings = buildingsForMetrics.length;
+  const totalBuildings = buildingsForMetrics.filter((b) => !b.id.includes('-tower')).length;
 
   // Aggregate unit types (e.g., '1BHK', '2BHK') across all buildings
   const unitBreakdown = useMemo(() => {
@@ -487,36 +487,51 @@ function MetricsTab() {
       })()}
 
       {/* ══════════ PER-BUILDING BREAKDOWN ══════════ */}
-      <Section title={`🏢 Buildings (${buildingsForMetrics.length} total)`}>
-        <div className="space-y-2">
-          {buildingsForMetrics.map((b: any, idx: number) => {
-            const bFloors = b.floors || [];
-            const occFloors = bFloors.filter(
-              (f: any) => f.type !== "Parking" && f.type !== "Utility",
-            );
-            const parkFloors = bFloors.filter((f: any) => f.type === "Parking");
-            const utilFloors = bFloors.filter((f: any) => f.type === "Utility");
-            const bUnits = b.units || [];
-            const bCores = b.cores || [];
-            const bInternals = b.internalUtilities || [];
-            // Defensive normalization for display values (some sources return objects)
-            const displayBName =
-              typeof b.name === "string"
-                ? b.name
-                : typeof b.buildingName === "string"
-                  ? b.buildingName
-                  : String(b.id || `Building ${idx + 1}`);
-            const displayIntendedUse =
-              typeof b.intendedUse === "string"
-                ? b.intendedUse
-                : b.intendedUse && typeof b.intendedUse === "object"
-                  ? b.intendedUse.type ||
-                    b.intendedUse.name ||
-                    String(b.intendedUse.id)
-                  : String(b.intendedUse || "");
-            const bHeight =
-              b.height || b.numFloors * (b.typicalFloorHeight || 3.5);
-            const isExpanded = expandedBuildings[b.id] ?? idx < 3;
+      <Section title={`🏢 Buildings (${totalBuildings} total)`}>
+        <div className="space-y-4">
+          {(() => {
+            const groups: { key: string; label: string; buildings: typeof buildingsForMetrics }[] = [];
+            const used = new Set<string>();
+            buildingsForMetrics.forEach((b: any) => {
+              if (used.has(b.id)) return;
+              const baseId = b.id.replace(/-podium$/, '').replace(/-tower$/, '');
+              const podium = buildingsForMetrics.find((x: any) => x.id === `${baseId}-podium`);
+              const tower = buildingsForMetrics.find((x: any) => x.id === `${baseId}-tower`);
+              if (podium && tower) {
+                const label = typeof podium.name === "string" ? podium.name.replace(/\s*\(Podium\)\s*$/i, '').trim() : "Building";
+                groups.push({ key: baseId, label, buildings: [podium, tower] });
+                used.add(podium.id);
+                used.add(tower.id);
+              } else {
+                groups.push({ key: b.id, label: b.name || 'Building', buildings: [b] });
+                used.add(b.id);
+              }
+            });
+            return groups;
+          })().map((group, groupIdx) => (
+            <div key={group.key} className="space-y-2">
+              {/* Group Header for Podium + Tower combinations */}
+              {group.buildings.length > 1 && (
+                <div className="text-sm font-bold text-muted-foreground pt-1 border-b border-border/30 pb-1.5 flex items-center gap-2">
+                  <Building className="h-4 w-4" /> {group.label}
+                </div>
+              )}
+              {group.buildings.map((b: any, subIdx: number) => {
+                const bFloors = b.floors || [];
+                const occFloors = bFloors.filter((f: any) => f.type !== "Parking" && f.type !== "Utility");
+                const parkFloors = bFloors.filter((f: any) => f.type === "Parking");
+                const utilFloors = bFloors.filter((f: any) => f.type === "Utility");
+                const bUnits = b.units || [];
+                const bCores = b.cores || [];
+                const bInternals = b.internalUtilities || [];
+                // Defensive normalization for display values
+                let displayBName = typeof b.name === "string" ? b.name : typeof b.buildingName === "string" ? b.buildingName : String(b.id || `Building ${groupIdx + 1}`);
+                if (group.buildings.length > 1) {
+                  displayBName = b.id.endsWith('-podium') ? 'Podium' : b.id.endsWith('-tower') ? 'Tower' : displayBName;
+                }
+                const displayIntendedUse = typeof b.intendedUse === "string" ? b.intendedUse : b.intendedUse && typeof b.intendedUse === "object" ? b.intendedUse.type || b.intendedUse.name || String(b.intendedUse.id) : String(b.intendedUse || "");
+                const bHeight = b.height || b.numFloors * (b.typicalFloorHeight || 3.5);
+                const isExpanded = expandedBuildings[b.id] ?? groupIdx < 3;
 
             // Unit breakdown (normalize unit type/name to safe string)
             const unitBD: Record<string, number> = {};
@@ -601,7 +616,9 @@ function MetricsTab() {
                           {bHeight.toFixed(1)}m
                         </div>
                         <div className="text-[11px] text-muted-foreground/70 italic">
-                          = {occFloors.length} × {b.typicalFloorHeight || 3.5}m
+                          {b.groundFloorHeight && b.groundFloorHeight !== b.typicalFloorHeight 
+                             ? `${b.groundFloorHeight}m GF + ${occFloors.length - 1} × ${b.typicalFloorHeight || 3.5}m`
+                             : `= ${occFloors.length} × ${b.typicalFloorHeight || 3.5}m`}
                         </div>
                       </div>
                       <div className="text-center p-2 rounded bg-secondary/30">
@@ -635,33 +652,43 @@ function MetricsTab() {
                             − Minus total core area
                           </span>
                           <span className="text-muted-foreground/50 mx-2 border-b border-dashed border-muted-foreground/30 w-full inline-block mb-1"></span>
-                          <span className="text-right text-red-400/80">
-                            −
-                            {Math.round(
-                              bCores.reduce(
-                                (s: number, c: any) =>
-                                  s + (turf.area(c.geometry) || 0),
-                                0,
-                              ),
-                            )}{" "}
-                            m²
-                          </span>
-
-                          <span className="font-semibold text-indigo-300 pt-1 border-t border-indigo-500/20">
-                            Available leasable area
-                          </span>
-                          <span className="text-muted-foreground/50 mx-2 pt-1 border-t border-indigo-500/20"></span>
-                          <span className="text-right font-bold text-indigo-300 pt-1 border-t border-indigo-500/20">
-                            {Math.round(
-                              b.area -
-                                bCores.reduce(
+                          {(() => {
+                            let coreArea = bCores.reduce(
+                              (s: number, c: any) =>
+                                s + (turf.area(c.geometry) || 0),
+                              0,
+                            );
+                            // If this is a podium, the tower's core passes through it!
+                            if (b.id.endsWith("-podium")) {
+                              const siblingTower = buildingsForMetrics.find(
+                                (x: any) => x.id === b.id.replace("-podium", "-tower")
+                              );
+                              if (siblingTower && siblingTower.cores) {
+                                coreArea += siblingTower.cores.reduce(
                                   (s: number, c: any) =>
                                     s + (turf.area(c.geometry) || 0),
-                                  0,
-                                ),
-                            )}{" "}
-                            m²
-                          </span>
+                                  0
+                                );
+                              }
+                            }
+                            return (
+                              <>
+                                <span className="text-right text-red-400/80">
+                                  −
+                                  {Math.round(coreArea)}{" "}
+                                  m²
+                                </span>
+
+                                <span className="font-semibold text-indigo-300 pt-1 border-t border-indigo-500/20">
+                                  Available leasable area
+                                </span>
+                                <span className="text-muted-foreground/50 mx-2 pt-1 border-t border-indigo-500/20"></span>
+                                <span className="text-right font-bold text-indigo-300 pt-1 border-t border-indigo-500/20">
+                                  {Math.round(b.area - coreArea)} m²
+                                </span>
+                              </>
+                            );
+                          })()}
 
                           <span className="text-muted-foreground pl-2 text-[10px] mt-1 italic">
                             Generated unit target area
@@ -940,26 +967,43 @@ function MetricsTab() {
                     <div>
                       {(() => {
                         // ═══ METHOD A: Actual Geometry Area ═══
-                        const coreGeomAreas = bCores.map((c: any) => {
-                          const rawCoreType = c?.type;
-                          const displayCoreType =
-                            typeof rawCoreType === "string"
-                              ? rawCoreType
-                              : rawCoreType && typeof rawCoreType === "object"
-                                ? (rawCoreType as any).type ||
-                                  (rawCoreType as any).name ||
-                                  (rawCoreType as any).utilityType ||
-                                  String((rawCoreType as any).id || "Core")
-                                : String(rawCoreType || "Core");
-                          try {
-                            return {
-                              type: displayCoreType,
-                              area: Math.round(turf.area(c.geometry)),
-                            };
-                          } catch {
-                            return { type: displayCoreType, area: 0 };
+                        const coreGeomAreas: any[] = [];
+                        
+                        const processCoreArr = (coresArr: any[], suffix: string = "") => {
+                          coresArr.forEach((c: any) => {
+                            const rawCoreType = c?.type;
+                            const displayCoreType =
+                              typeof rawCoreType === "string"
+                                ? rawCoreType
+                                : rawCoreType && typeof rawCoreType === "object"
+                                  ? (rawCoreType as any).type ||
+                                    (rawCoreType as any).name ||
+                                    (rawCoreType as any).utilityType ||
+                                    String((rawCoreType as any).id || "Core")
+                                  : String(rawCoreType || "Core");
+                            try {
+                              coreGeomAreas.push({
+                                type: displayCoreType + suffix,
+                                area: Math.round(turf.area(c.geometry)),
+                              });
+                            } catch {
+                              coreGeomAreas.push({ type: displayCoreType + suffix, area: 0 });
+                            }
+                          });
+                        };
+
+                        processCoreArr(bCores);
+
+                        // If this is a podium, append the sibling tower's cores passing through
+                        if (b.id.endsWith("-podium")) {
+                          const siblingTower = buildingsForMetrics.find(
+                            (x: any) => x.id === b.id.replace("-podium", "-tower")
+                          );
+                          if (siblingTower && siblingTower.cores) {
+                             processCoreArr(siblingTower.cores, " (Tower shaft)");
                           }
-                        });
+                        }
+
                         const totalGeomArea = coreGeomAreas.reduce(
                           (s: number, c: any) => s + c.area,
                           0,
@@ -1401,6 +1445,8 @@ function MetricsTab() {
               </div>
             );
           })}
+            </div>
+          ))}
         </div>
       </Section>
 
@@ -1696,7 +1742,7 @@ function MetricsTab() {
               <div className="space-y-4">
                 {/* Base inputs from plot/buildings */}
                 <div className="rounded border border-border/50 bg-secondary/10 p-2 text-xs relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-1.5 flex items-center gap-2 bg-yellow-400/10 border-b border-l border-yellow-400/20 rounded-bl z-10">
+                  {/* <div className="absolute top-0 right-0 p-1.5 flex items-center gap-2 bg-yellow-400/10 border-b border-l border-yellow-400/20 rounded-bl z-10">
                     <Switch
                       checked={useMaxCapacity}
                       onCheckedChange={setUseMaxCapacity}
@@ -1704,7 +1750,7 @@ function MetricsTab() {
                     <span className="text-[10px] font-bold text-yellow-600 dark:text-yellow-500 uppercase">
                       Max Permissible Capacity
                     </span>
-                  </div>
+                  </div> */}
 
                   <div className="font-bold text-muted-foreground mb-1.5 border-b border-border/40 pb-1 w-[200px]">
                     ⚙️ Calculation Parameters
@@ -2957,11 +3003,55 @@ function MultiBuildingBudgetTab({
 
   const usingPlotScope = selectedPlotBuildings.length > 0;
   const usingEstimateRows = !usingPlotScope || matchedPlotEstimates.length > 0;
-  const buildings = usingPlotScope
+  const rawBuildings = usingPlotScope
     ? usingEstimateRows
       ? matchedPlotEstimates
       : selectedPlotBuildings
     : estimateBreakdown;
+
+  // Group podium/tower buildings for display/averages so we treat them as one single building
+  const buildings = (() => {
+    const groups: any[] = [];
+    const used = new Set<string>();
+    rawBuildings.forEach((b: any) => {
+        const id = b?.id || b?.buildingId || '';
+        if (!id || used.has(id)) {
+           if (!used.has(id)) groups.push(b);
+           return;
+        }
+        const baseId = id.replace(/-podium$/, '').replace(/-tower$/, '');
+        const podium = rawBuildings.find((x: any) => (x.id || x.buildingId) === `${baseId}-podium`);
+        const tower = rawBuildings.find((x: any) => (x.id || x.buildingId) === `${baseId}-tower`);
+        
+        if (podium && tower) {
+           used.add(podium.id || podium.buildingId);
+           used.add(tower.id || tower.buildingId);
+           
+           const pName = typeof podium.name === "string" ? podium.name : podium.buildingName || "Building";
+           const cleanName = pName.replace(/\s*\(Podium\)\s*$/i, '').trim();
+
+           groups.push({
+               ...podium,
+               id: baseId,
+               buildingId: baseId,
+               buildingName: cleanName,
+               name: cleanName,
+               cost: {
+                   ...podium.cost,
+                   total: (podium.cost?.total || 0) + (tower.cost?.total || 0),
+                   ratePerSqm: ((podium.cost?.total || 0) + (tower.cost?.total || 0)) / ((podium.gfa || 1) + (tower.gfa || 0))
+               },
+               utilityCost: (podium.utilityCost || 0) + (tower.utilityCost || 0),
+               gfa: (podium.gfa || 0) + (tower.gfa || 0),
+               unitCount: getBuildingUnitCount(podium) + getBuildingUnitCount(tower)
+           });
+        } else {
+           used.add(id);
+           groups.push(b);
+        }
+    });
+    return groups;
+  })();
 
   const scopedConstructionCost = usingPlotScope
     ? matchedPlotEstimates.reduce(
@@ -3096,7 +3186,7 @@ function MultiBuildingBudgetTab({
             return (
               <div
                 key={i}
-                className="grid grid-cols-6 gap-2 text-[10px] p-2 rounded bg-secondary/20 border border-border/20 hover:bg-secondary/30 transition"
+                className="grid grid-cols-7 gap-2 text-[10px] p-2 rounded bg-secondary/20 border border-border/20 hover:bg-secondary/30 transition"
               >
                 <div className="font-semibold truncate">
                   {buildingDisplayName}
@@ -3388,8 +3478,8 @@ function FeasibilityTab() {
 
   // Totals for building breakdown used in headers (prefer selected plot)
   const totalBuildings = selectedPlot
-    ? (selectedPlot.buildings || []).length
-    : (estimates?.breakdown?.length ?? 0);
+    ? (selectedPlot.buildings || []).filter((b) => !b.id.includes('-tower')).length
+    : (estimates?.breakdown?.filter((b: any) => !(b.buildingId || b.id || '').includes('-tower')).length ?? 0);
   // Robust total units: prefer explicit units arrays, then unitCount fields, then project building data
   const project = useProjectData();
   const projectBuildingList = (project?.plots || []).flatMap(
@@ -4208,7 +4298,7 @@ function FeasibilityTab() {
                     : `~₹${((estimates.potential_profit || 0) / 10000000).toFixed(2)} Cr`}
                 </div>
                 <div className="text-[10px] text-muted-foreground">
-                  Revenue (fixed): ₹
+                  Est. Revenue: ₹
                   {((estimates.total_revenue || 0) / 10000000).toFixed(2)} Cr
                 </div>
               </div>
@@ -4235,20 +4325,21 @@ function FeasibilityTab() {
             <div className="text-[10px] text-muted-foreground mb-1 italic">
               Critical-path baseline (est.):
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Substructure:</span>
+                <span className="text-muted-foreground">Excavation:</span>
                 <span>
-                  ~
-                  {(
-                    (estimates.timeline?.phases?.excavation || 0) +
-                    (estimates.timeline?.phases?.foundation || 0)
-                  ).toFixed(1)}{" "}
-                  mo
+                  ~{(estimates.timeline?.phases?.excavation || 0).toFixed(1)} mo
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Structure:</span>
+                <span className="text-muted-foreground">Foundation:</span>
+                <span>
+                  ~{(estimates.timeline?.phases?.foundation || 0).toFixed(1)} mo
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Superstructure:</span>
                 <span>
                   ~{(estimates.timeline?.phases?.structure || 0).toFixed(1)} mo
                 </span>
@@ -4262,8 +4353,7 @@ function FeasibilityTab() {
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Contingency:</span>
                 <span>
-                  ~{(estimates.timeline?.phases?.contingency || 2).toFixed(1)}{" "}
-                  mo
+                  ~{(estimates.timeline?.phases?.contingency || 2).toFixed(1)} mo
                 </span>
               </div>
               <div className="pt-2 col-span-2 border-t border-border/10 flex justify-between items-center">
@@ -4305,58 +4395,77 @@ function FeasibilityTab() {
                     Building Breakdown
                   </span>
                   <div className="text-[11px] text-muted-foreground">
-                    {(selectedPlot?.buildings || estimates.breakdown).length}{" "}
-                    buildings •{" "}
-                    {selectedPlot
-                      ? (selectedPlot.buildings || []).reduce(
-                          (s: any, bb: any) =>
-                            s +
-                            (bb.units?.length ??
-                              bb.unitCount ??
-                              bb.unit_count ??
-                              0),
-                          0,
-                        )
-                      : totalUnitsCount}{" "}
-                    units
+                     {totalBuildings} buildings • {totalUnitsCount} units
                   </div>
                 </div>
               </div>
               <div className="space-y-2 max-h-[150px] overflow-y-auto scrollbar-thin pr-1">
-                {(selectedPlot?.buildings || estimates.breakdown).map(
+                {(() => {
+                  // Use estimates.breakdown as the source of truth for cost/time.
+                  // Filter to selected plot if active.
+                  let baseList: any[] = estimates.breakdown || [];
+                  if (selectedPlot && selectedPlot.buildings) {
+                     const pBids = selectedPlot.buildings.map((x: any) => x.id);
+                     baseList = baseList.filter((eb: any) => pBids.includes(eb.buildingId) || pBids.includes(eb.id));
+                  }
+
+                  const groups: any[] = [];
+                  const used = new Set<string>();
+                  baseList.forEach((b: any) => {
+                      const id = b?.id || b?.buildingId || '';
+                      if (!id || used.has(id)) {
+                         if (!used.has(id)) groups.push(b);
+                         return;
+                      }
+                      const baseId = id.replace(/-podium$/, '').replace(/-tower$/, '');
+                      const podium = baseList.find((x: any) => (x.id || x.buildingId) === `${baseId}-podium`);
+                      const tower = baseList.find((x: any) => (x.id || x.buildingId) === `${baseId}-tower`);
+                      
+                      if (podium && tower) {
+                         used.add(podium.id || podium.buildingId);
+                         used.add(tower.id || tower.buildingId);
+                         const pName = typeof podium.buildingName === "string" ? podium.buildingName : podium.name || "Building";
+                         const cleanName = pName.replace(/\s*\(Podium\)\s*$/i, '').trim();
+                         groups.push({
+                             ...podium,
+                             id: baseId,
+                             buildingId: baseId,
+                             buildingName: cleanName,
+                             cost: {
+                                 ...podium.cost,
+                                 total: (podium.cost?.total || 0) + (tower.cost?.total || 0),
+                             },
+                             timeline: {
+                                 ...podium.timeline,
+                                 total: Math.max(
+                                     (podium.timeline?.startOffset || 0) + (podium.timeline?.total || 0),
+                                     (tower.timeline?.startOffset || 0) + (tower.timeline?.total || 0)
+                                 ) - Math.min(podium.timeline?.startOffset || 0, tower.timeline?.startOffset || 0)
+                             }
+                         } as any);
+                      } else {
+                         used.add(id);
+                         groups.push(b);
+                      }
+                  });
+                  return groups;
+                })().map(
                   (b: any, idx: number) => {
-                    // Some building objects (from selectedPlot) may not include estimate fields (cost/timeline).
-                    // Use safe defaults to avoid runtime errors.
-                    const rawCostTotal =
-                      b && b.cost && typeof b.cost.total === "number"
-                        ? b.cost.total
-                        : 0;
+                    const rawCostTotal = b && b.cost && typeof b.cost.total === "number" ? b.cost.total : 0;
                     const bCost = rawCostTotal / 10000000;
-                    const costLo = sim
-                      ? (bCost * (sim.cost_p10 / sim.cost_p50)).toFixed(2)
-                      : null;
-                    const costHi = sim
-                      ? (bCost * (sim.cost_p90 / sim.cost_p50)).toFixed(2)
-                      : null;
-                    const bTime =
-                      b && b.timeline && typeof b.timeline.total === "number"
-                        ? b.timeline.total
-                        : 0;
-                    const timeLo =
-                      sim && bTime > 0
-                        ? (bTime * (sim.time_p10 / sim.time_p50)).toFixed(0)
-                        : null;
-                    const timeHi =
-                      sim && bTime > 0
-                        ? (bTime * (sim.time_p90 / sim.time_p50)).toFixed(0)
-                        : null;
+                    const costLo = sim ? (bCost * (sim.cost_p10 / sim.cost_p50)).toFixed(2) : null;
+                    const costHi = sim ? (bCost * (sim.cost_p90 / sim.cost_p50)).toFixed(2) : null;
+                    const bTime = b && b.timeline && typeof b.timeline.total === "number" ? b.timeline.total : 0;
+                    const timeLo = sim && bTime > 0 ? (bTime * (sim.time_p10 / sim.time_p50)).toFixed(0) : null;
+                    const timeHi = sim && bTime > 0 ? (bTime * (sim.time_p90 / sim.time_p50)).toFixed(0) : null;
+                    
                     return (
                       <div
                         key={idx}
                         className="text-xs border-b border-border/10 pb-2 last:border-0 last:pb-0"
                       >
                         <div className="flex justify-between font-medium mb-1">
-                          <span>{b.buildingName}</span>
+                          <span>{b.buildingName || b.name || `Building ${idx+1}`}</span>
                           <span className="text-emerald-500">
                             {sim
                               ? `₹${costLo} – ${costHi} Cr`

@@ -111,7 +111,7 @@ function BuildingProperties() {
                 <Input id="name" className="h-8 text-sm" value={selectedBuilding.name} onChange={(e) => actions.updateBuilding(selectedBuilding.id, { name: e.target.value })} />
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
                 <div>
                     <Label htmlFor="num-floors" className="text-xs text-muted-foreground">Floors</Label>
                     <Input
@@ -131,6 +131,21 @@ function BuildingProperties() {
                         type="number"
                         value={selectedBuilding.typicalFloorHeight ?? ''}
                         onChange={(e) => handleTypicalFloorHeightChange(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                        step="0.5"
+                        min="1"
+                    />
+                </div>
+                <div>
+                    <Label htmlFor="gf-height" className="text-xs text-muted-foreground">GF H (m)</Label>
+                    <Input
+                        id="gf-height"
+                        className="h-8 text-sm"
+                        type="number"
+                        value={selectedBuilding.groundFloorHeight ?? selectedBuilding.typicalFloorHeight ?? ''}
+                        onChange={(e) => {
+                            const val = e.target.value === '' ? undefined : parseFloat(e.target.value);
+                            actions.updateBuilding(selectedBuilding.id, { groundFloorHeight: val || selectedBuilding.typicalFloorHeight });
+                        }}
                         step="0.5"
                         min="1"
                     />

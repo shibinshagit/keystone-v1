@@ -9,7 +9,7 @@ import { Slider } from '@/components/ui/slider';
 import { useBuildingStore, useSelectedPlot, useProjectData } from '@/hooks/use-building-store';
 import type { BuildingIntendedUse } from '@/lib/types';
 import { Info, RotateCcw, Box, Layers, Maximize, Move, MousePointer, AlertTriangle, Sparkles, MousePointerClick } from "lucide-react";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
@@ -141,6 +141,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
     const [infillMode, setInfillMode] = useState<'ring' | 'grid' | 'hybrid'>('hybrid');
 
     const [floorHeight, setFloorHeight] = useState(3.5);
+    const [groundFloorHeight, setGroundFloorHeight] = useState(4.5);
     const [landUse, setLandUse] = useState<LandUseType>('residential');
     const [programMix, setProgramMix] = useState({
         residential: 100,
@@ -355,6 +356,36 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
         }
     }, [targetFAR, selectedPlot?.area]);
 
+    // Ref to remember the manual setback before height-based mode overrides it
+    const manualSetbackRef = useRef(setback);
+
+    // Live-sync height-based setback to store when toggle is ON (reacts to floor/height changes)
+    useEffect(() => {
+        if (!selectedPlot || !useHeightBasedSetback) return;
+        const estH = floorRange[1] * floorHeight;
+        const hSb = getHeightBasedSetback(estH);
+        const effective = Math.max(manualSetbackRef.current, hSb);
+        if (effective !== selectedPlot.setback) {
+            actions.updatePlot(selectedPlot.id, { setback: effective });
+        }
+    }, [useHeightBasedSetback, floorRange, floorHeight, selectedPlot?.id]);
+
+    // Toggle handler: save/restore manual setback synchronously (avoids useEffect ordering bugs)
+    const handleToggleHeightSetback = () => {
+        if (!useHeightBasedSetback) {
+            // About to turn ON — save current manual setback
+            manualSetbackRef.current = setback;
+        } else {
+            // About to turn OFF — restore saved manual setback
+            const saved = manualSetbackRef.current;
+            setSetback(saved);
+            if (selectedPlot) {
+                actions.updatePlot(selectedPlot.id, { setback: saved });
+            }
+        }
+        setUseHeightBasedSetback(v => !v);
+    };
+
     useEffect(() => {
         if (selectedPlot?.selectedRegulationType) {
             const regType = selectedPlot.selectedRegulationType.toLowerCase();
@@ -422,6 +453,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
             minLength: buildingLengthRange[0],
             buildingCount,
             floorHeight,
+            groundFloorHeight,
             landUse,
             programMix,
             commercialMix,
@@ -457,10 +489,6 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
             paramsSideSetback: params.sideSetback
         });
 
-        // Sync effective setback to store so the orange visualisation lines update
-        if (useHeightBasedSetback && effectiveSetback !== selectedPlot.setback) {
-            actions.updatePlot(selectedPlot.id, { setback: effectiveSetback });
-        }
 
         actions.generateScenarios(selectedPlot.id, params);
     };
@@ -1282,10 +1310,26 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                         />
                                     </div>
 
+                                    {/* Ground Floor Height */}
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <Label className="text-[10px] font-medium text-foreground/80">Ground Floor Ht</Label>
+                                            <span className="text-[10px] text-muted-foreground">{groundFloorHeight}m</span>
+                                        </div>
+                                        <Slider
+                                            value={[groundFloorHeight]}
+                                            min={3.0}
+                                            max={7.0}
+                                            step={0.1}
+                                            onValueChange={([v]) => setGroundFloorHeight(v)}
+                                            className="[&_.relative]:h-1.5 [&_.absolute]:bg-amber-500/40 [&_span]:h-3.5 [&_span]:w-3.5"
+                                        />
+                                    </div>
+
                                     {/* Height-Based Setback Toggle */}
                                     <button
                                         className="flex items-center justify-between w-full group"
-                                        onClick={() => setUseHeightBasedSetback(v => !v)}
+                                        onClick={handleToggleHeightSetback}
                                     >
                                         <div className="flex flex-col items-start gap-0.5">
                                             <Label className="text-[10px] font-medium text-foreground/80 cursor-pointer">
@@ -1340,7 +1384,8 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                             <Input
                                                 type="number"
                                                 step="0.5"
-                                                value={setback}
+                                                value={useHeightBasedSetback ? Math.max(setback, getHeightBasedSetback(floorRange[1] * floorHeight)) : setback}
+                                                disabled={useHeightBasedSetback}
                                                 onChange={(e) => {
                                                     const val = Number(e.target.value);
                                                     setSetback(val);
@@ -1349,7 +1394,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                                         actions.updatePlot(selectedPlot.id, { setback: val });
                                                     }
                                                 }}
-                                                className={cn("h-8 text-xs bg-muted/20 border-border pr-8", selectedPlot?.regulation?.geometry?.setback?.value && setback < selectedPlot.regulation.geometry.setback.value && "border-red-500 text-red-500")}
+                                                className={cn("h-8 text-xs bg-muted/20 border-border pr-8", useHeightBasedSetback && "opacity-60 cursor-not-allowed", selectedPlot?.regulation?.geometry?.setback?.value && setback < selectedPlot.regulation.geometry.setback.value && "border-red-500 text-red-500")}
                                             />
                                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">m</span>
                                         </div>

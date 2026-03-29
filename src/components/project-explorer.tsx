@@ -35,6 +35,68 @@ import { Project } from '@/lib/types';
 import { useDevelopmentMetrics } from '@/hooks/use-development-metrics';
 
 
+function renderBuildingSubItems(b: import('@/lib/types').Building, componentVisibility: any, actions: any) {
+    return (
+        <>
+            {b.internalUtilities && b.internalUtilities.length > 0 && (
+                <div className="pl-8 space-y-1 pb-2">
+                    {b.internalUtilities.map(util => {
+                        let toggleKey: 'electrical' | 'hvac' | 'solar' | 'ev' | null = null;
+                        let IconComp = Zap;
+                        let iconColor = 'text-amber-400';
+                        if (util.type === 'Electrical') { toggleKey = 'electrical'; IconComp = Zap; iconColor = 'text-amber-400'; }
+                        else if (util.type === 'HVAC') { toggleKey = 'hvac'; IconComp = Fan; iconColor = 'text-orange-400'; }
+                        else if (util.type === 'Solar PV') { toggleKey = 'solar'; IconComp = Sun; iconColor = 'text-indigo-400'; }
+                        else if (util.type === 'EV Station') { toggleKey = 'ev'; IconComp = BatteryCharging; iconColor = 'text-green-500'; }
+                        if (!toggleKey) return null;
+                        const isVisible = componentVisibility[toggleKey];
+                        return (
+                            <div key={util.id} className={cn("flex items-center text-xs cursor-pointer transition-colors group", isVisible ? "text-primary font-medium" : "text-muted-foreground hover:text-primary")}
+                                onClick={(e) => { e.stopPropagation(); actions.toggleComponentVisibility(toggleKey!); }}>
+                                <IconComp className={`h-3.5 w-3.5 mr-1.5 shrink-0 ${iconColor}`} />
+                                <span className="flex-1 truncate">{util.name}</span>
+                                <span className="shrink-0 ml-1">{isVisible ? <Eye className="h-3 w-3 text-primary" /> : <EyeOff className="h-3 w-3 text-muted-foreground/40" />}</span>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+            {b.floors.filter(f => f.type === 'Parking' && f.parkingType !== 'Stilt' && f.parkingType !== 'Podium').length > 0 && (
+                <div className="pl-8 space-y-1 pb-2">
+                    {b.floors.filter(f => f.type === 'Parking' && f.parkingType !== 'Stilt' && f.parkingType !== 'Podium').map(floor => (
+                        <div key={floor.id} className={cn("flex items-center text-xs cursor-pointer transition-colors group", componentVisibility.basements ? "text-primary font-medium" : "text-muted-foreground hover:text-primary")}
+                            onClick={(e) => { e.stopPropagation(); actions.toggleComponentVisibility('basements'); }} title={componentVisibility.basements ? "Hide Basements" : "Show Basements"}>
+                            <ArrowDownToLine className="h-3.5 w-3.5 mr-1.5 text-slate-500 shrink-0" />
+                            <span className="flex-1 truncate">{floor.parkingType || 'Basement'} ({floor.parkingCapacity || 0})</span>
+                            <span className="shrink-0 ml-1">{componentVisibility.basements ? <Eye className="h-3 w-3 text-primary" /> : <EyeOff className="h-3 w-3 text-muted-foreground/40" />}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {b.cores && b.cores.length > 0 && (
+                <div className="pl-8 space-y-1 pb-2">
+                    <div className={cn("flex items-center text-xs cursor-pointer transition-colors group", componentVisibility.cores ? "text-primary font-medium" : "text-muted-foreground hover:text-primary")}
+                        onClick={(e) => { e.stopPropagation(); actions.toggleComponentVisibility('cores'); }} title={componentVisibility.cores ? "Hide Cores" : "Show Only Cores"}>
+                        <Box className="h-3.5 w-3.5 mr-1.5 shrink-0" style={{ color: '#9370DB' }} />
+                        <span className="flex-1 truncate">Cores ({b.cores.length})</span>
+                        <span className="shrink-0 ml-1">{componentVisibility.cores ? <Eye className="h-3 w-3 text-primary" /> : <EyeOff className="h-3 w-3 text-muted-foreground/40" />}</span>
+                    </div>
+                </div>
+            )}
+            {b.units && b.units.length > 0 && (
+                <div className="pl-8 space-y-1 pb-2">
+                    <div className={cn("flex items-center text-xs cursor-pointer transition-colors group", componentVisibility.units ? "text-primary font-medium" : "text-muted-foreground hover:text-primary")}
+                        onClick={(e) => { e.stopPropagation(); actions.toggleComponentVisibility('units'); }} title={componentVisibility.units ? "Hide Units" : "Show Only Units"}>
+                        <Grid className="h-3.5 w-3.5 mr-1.5 text-blue-400 shrink-0" />
+                        <span className="flex-1 truncate">Units ({b.units.length})</span>
+                        <span className="shrink-0 ml-1">{componentVisibility.units ? <Eye className="h-3 w-3 text-primary" /> : <EyeOff className="h-3 w-3 text-muted-foreground/40" />}</span>
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
 function PlotItem({ plot }: { plot: import('@/lib/types').Plot }) {
     const { actions, selectedObjectId, uiState, componentVisibility } = useBuildingStore(s => ({
         actions: s.actions,
@@ -117,150 +179,78 @@ function PlotItem({ plot }: { plot: import('@/lib/types').Plot }) {
             <CollapsibleContent>
                 <div className='p-2 space-y-2'>
                     {buildableAreas.map(b => renderObject(b, 'BuildableArea'))}
-                    {plot.buildings.map(b => (
-                        <React.Fragment key={b.id}>
-                            {renderObject(b, 'Building')}
-
-                            {/* Render Internal Utilities (New System) */}
-                            {b.internalUtilities && b.internalUtilities.length > 0 && (
-                                <div className="pl-8 space-y-1 pb-2">
-                                    {b.internalUtilities.map(util => {
-                                        // Determine which toggle this utility maps to
-                                        let toggleKey: 'electrical' | 'hvac' | 'solar' | 'ev' | null = null;
-                                        let IconComp = Zap;
-                                        let iconColor = 'text-amber-400';
-                                        
-                                        if (util.type === 'Electrical') {
-                                            toggleKey = 'electrical';
-                                            IconComp = Zap;
-                                            iconColor = 'text-amber-400';
-                                        } else if (util.type === 'HVAC') {
-                                            toggleKey = 'hvac';
-                                            IconComp = Fan;
-                                            iconColor = 'text-orange-400';
-                                        } else if (util.type === 'Solar PV') {
-                                            toggleKey = 'solar';
-                                            IconComp = Sun;
-                                            iconColor = 'text-indigo-400';
-                                        } else if (util.type === 'EV Station') {
-                                            toggleKey = 'ev';
-                                            IconComp = BatteryCharging;
-                                            iconColor = 'text-green-500';
-                                        }
-
-                                        if (!toggleKey) return null;
-
-                                        const isVisible = componentVisibility[toggleKey];
-
-                                        return (
-                                            <div
-                                                key={util.id}
-                                                className={cn(
-                                                    "flex items-center text-xs cursor-pointer transition-colors group",
-                                                    isVisible
-                                                        ? "text-primary font-medium"
-                                                        : "text-muted-foreground hover:text-primary"
-                                                )}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    actions.toggleComponentVisibility(toggleKey!);
-                                                }}
+                    {(() => {
+                        // Group podium+tower buildings under a single logical building
+                        const groups: { key: string; label: string; buildings: typeof plot.buildings }[] = [];
+                        const used = new Set<string>();
+                        plot.buildings.forEach(b => {
+                            if (used.has(b.id)) return;
+                            const baseId = b.id.replace(/-podium$/, '').replace(/-tower$/, '');
+                            const podium = plot.buildings.find(x => x.id === `${baseId}-podium`);
+                            const tower = plot.buildings.find(x => x.id === `${baseId}-tower`);
+                            if (podium && tower) {
+                                // Extract the building number from the name (e.g. "Building 1 (Podium)" → "Building 1")
+                                const label = podium.name.replace(/\s*\(Podium\)\s*$/i, '').trim();
+                                groups.push({ key: baseId, label, buildings: [podium, tower] });
+                                used.add(podium.id);
+                                used.add(tower.id);
+                            } else {
+                                groups.push({ key: b.id, label: b.name, buildings: [b] });
+                                used.add(b.id);
+                            }
+                        });
+                        return groups.map(group => {
+                            const isGrouped = group.buildings.length > 1;
+                            return (
+                                <React.Fragment key={group.key}>
+                                    {isGrouped ? (
+                                        // Grouped podium+tower: single header with selectable sub-items
+                                        <>
+                                            <div className={cn("flex items-center justify-between p-2 rounded-md transition-colors cursor-pointer",
+                                                selectedObjectId?.id === group.key || selectedObjectId?.id === group.buildings[0].id || selectedObjectId?.id === group.buildings[1].id ? 'bg-primary/20' : 'hover:bg-muted')}
+                                                onClick={() => actions.selectObject(group.key, 'Building')}
                                             >
-                                <IconComp className={`h-3.5 w-3.5 mr-1.5 shrink-0 ${iconColor}`} />
-                                                <span className="flex-1 truncate">{util.name}</span>
-                                                <span className="shrink-0 ml-1">
-                                                    {isVisible ?
-                                                        <Eye className="h-3 w-3 text-primary" /> :
-                                                        <EyeOff className="h-3 w-3 text-muted-foreground/40" />
-                                                    }
-                                                </span>
+                                                <div className="flex-1 text-left text-xs flex items-center gap-1.5 min-w-0">
+                                                    <Building2 className="h-3.5 w-3.5 text-primary shrink-0" />
+                                                    <span className="truncate font-medium">{group.label}</span>
+                                                </div>
+                                                <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); actions.deleteObject(plot.id, group.buildings[0].id, 'Building'); actions.deleteObject(plot.id, group.buildings[1].id, 'Building'); }}>
+                                                    <Trash2 className="h-3 w-3" />
+                                                </Button>
                                             </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-
-                            {/* Basement Parking with Visibility Toggle - Show Individual Floors */}
-                            {b.floors.filter(f => f.type === 'Parking' && f.parkingType !== 'Stilt' && f.parkingType !== 'Podium').length > 0 && (
-                                <div className="pl-8 space-y-1 pb-2">
-                                    {b.floors
-                                        .filter(f => f.type === 'Parking' && f.parkingType !== 'Stilt' && f.parkingType !== 'Podium')
-                                        .map((floor, index) => (
-                                            <div
-                                                key={floor.id}
-                                                className={cn(
-                                                    "flex items-center text-xs cursor-pointer transition-colors group",
-                                                    componentVisibility.basements
-                                                        ? "text-primary font-medium"
-                                                        : "text-muted-foreground hover:text-primary"
-                                                )}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    actions.toggleComponentVisibility('basements');
-                                                }}
-                                                title={componentVisibility.basements ? "Hide Basements" : "Show Basements"}
-                                            >
-                                            <ArrowDownToLine className="h-3.5 w-3.5 mr-1.5 text-slate-500 shrink-0" />
-                                                <span className="flex-1 truncate">
-                                                    {floor.parkingType || 'Basement'} ({floor.parkingCapacity || 0})
-                                                </span>
-                                                <span className="shrink-0 ml-1">
-                                                    {componentVisibility.basements ? <Eye className="h-3 w-3 text-primary" /> : <EyeOff className="h-3 w-3 text-muted-foreground/40" />}
-                                                </span>
-                                            </div>
-                                        ))
-                                    }
-                                </div>
-                            )}
-
-                            {/* Render Internal Layout Items */}
-                            {b.cores && b.cores.length > 0 && (
-                                <div className="pl-8 space-y-1 pb-2">
-                                    <div
-                                        className={cn(
-                                            "flex items-center text-xs cursor-pointer transition-colors group",
-                                            componentVisibility.cores
-                                                ? "text-primary font-medium"
-                                                : "text-muted-foreground hover:text-primary"
-                                        )}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            actions.toggleComponentVisibility('cores');
-                                        }}
-                                        title={componentVisibility.cores ? "Hide Cores" : "Show Only Cores"}
-                                    >
-                                        <Box className="h-3.5 w-3.5 mr-1.5 shrink-0" style={{ color: '#9370DB' }} />
-                                        <span className="flex-1 truncate">Cores ({b.cores.length})</span>
-                                        <span className="shrink-0 ml-1">
-                                            {componentVisibility.cores ? <Eye className="h-3 w-3 text-primary" /> : <EyeOff className="h-3 w-3 text-muted-foreground/40" />}
-                                        </span>
-                                    </div>
-                                </div>
-                            )}
-
-                            {b.units && b.units.length > 0 && (
-                                <div className="pl-8 space-y-1 pb-2">
-                                    {/* Header row */}
-                                    <div
-                                        className={cn(
-                                            "flex items-center text-xs cursor-pointer transition-colors group",
-                                            componentVisibility.units
-                                                ? "text-primary font-medium"
-                                                : "text-muted-foreground hover:text-primary"
-                                        )}
-                                        onClick={(e) => { e.stopPropagation(); actions.toggleComponentVisibility('units'); }}
-                                        title={componentVisibility.units ? "Hide Units" : "Show Only Units"}
-                                    >
-                                        <Grid className="h-3.5 w-3.5 mr-1.5 text-blue-400 shrink-0" />
-                                        <span className="flex-1 truncate">Units ({b.units.length})</span>
-                                        <span className="shrink-0 ml-1">
-                                            {componentVisibility.units ? <Eye className="h-3 w-3 text-primary" /> : <EyeOff className="h-3 w-3 text-muted-foreground/40" />}
-                                        </span>
-                                    </div>
-                                </div>
-                            )}
-                        </React.Fragment>
-                    ))}
+                                            {group.buildings.map(b => {
+                                                const partLabel = b.id.endsWith('-podium') ? 'Podium' : b.id.endsWith('-tower') ? 'Tower' : b.name;
+                                                const isPartSelected = selectedObjectId?.id === b.id;
+                                                return (
+                                                    <div key={b.id} className="pl-4">
+                                                        <div className={cn("flex items-center justify-between p-1.5 rounded-md transition-colors",
+                                                            isPartSelected ? 'bg-primary/15' : 'hover:bg-muted/50')}
+                                                        >
+                                                            <div className="flex-1 cursor-pointer flex items-center" onClick={() => actions.selectObject(b.id, 'Building')}>
+                                                                <Layers className="h-3 w-3 mr-1.5 text-muted-foreground shrink-0" />
+                                                                <span className="text-xs font-medium truncate">{partLabel}</span>
+                                                                <span className="text-[10px] text-muted-foreground ml-1.5">({b.numFloors}F)</span>
+                                                            </div>
+                                                            <Button size="icon" variant="ghost" className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); actions.deleteObject(plot.id, b.id, 'Building'); }}>
+                                                                <Trash2 className="h-3 w-3" />
+                                                            </Button>
+                                                        </div>
+                                                        {renderBuildingSubItems(b, componentVisibility, actions)}
+                                                    </div>
+                                                );
+                                            })}
+                                        </>
+                                    ) : (
+                                        // Non-grouped: render normally
+                                        <>
+                                            {renderObject(group.buildings[0], 'Building')}
+                                            {renderBuildingSubItems(group.buildings[0], componentVisibility, actions)}
+                                        </>
+                                    )}
+                                </React.Fragment>
+                            );
+                        });
+                    })()}
                     {plot.greenAreas.map(g => renderObject(g, 'GreenArea'))}
                     {(plot.entries || []).map(e => renderObject(e, 'EntryPoint'))}
                     {plot.parkingAreas.map(p => renderObject(p, 'ParkingArea'))}

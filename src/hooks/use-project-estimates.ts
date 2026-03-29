@@ -265,18 +265,17 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                 
                 const bMonths = totalDays / 30;
                 const timelineEnd = startOffset + bMonths;
-                
+                // Track project cumulative substructure maximums since all podiums typically excavate concurrently
+                criticalPathPhases.excavation = Math.max(criticalPathPhases.excavation, excMonths);
+                criticalPathPhases.foundation = Math.max(criticalPathPhases.foundation, fndMonths);
+
                 // Track critical path (longest duration building)
                 if (timelineEnd > maxTimelineMonths) {
                     maxTimelineMonths = timelineEnd;
-                    criticalPathPhases = {
-                        excavation: excMonths,
-                        foundation: fndMonths,
-                        structure: structureDays / 30,
-                        finishing: finishingDays / 30,
-                        overlap: overlapMonths,
-                        contingency: bTimeParam.contingency_buffer_months
-                    };
+                    criticalPathPhases.structure = structureDays / 30;
+                    criticalPathPhases.finishing = finishingDays / 30;
+                    criticalPathPhases.overlap = overlapMonths;
+                    criticalPathPhases.contingency = bTimeParam.contingency_buffer_months;
                 }
 
                 perBuildingBreakdown.push({

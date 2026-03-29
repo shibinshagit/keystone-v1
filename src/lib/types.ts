@@ -75,6 +75,7 @@ export interface Building {
   area: number;
   numFloors: number;
   typicalFloorHeight: number;
+  groundFloorHeight?: number;
   visible: boolean;
   baseHeight?: number;
   utilities?: UtilityType[]; 

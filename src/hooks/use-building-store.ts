@@ -755,8 +755,21 @@ function collectRenderingData(_plots: Plot[], selectedPlot: Plot, designParams: 
     let fallbackGFA = 0;
     selectedPlot.buildings.forEach(b => {
         if (b.units && b.units.length > 0) {
-            const buildingSellable = b.units.reduce((sum, u) => sum + (u.targetArea || 0), 0);
-            sellableArea += buildingSellable;
+            let buildingSellable = b.units.reduce((sum, u) => sum + (u.targetArea || 0), 0);
+
+            // True Mathematical Correction: The tower's core punches through the podium floors,
+            // effectively removing that physical area from the podium's potential leasable space.
+// import * as turf from '@turf/turf'; is already at the top of the file
+            if (b.id.endsWith('-podium')) {
+                const siblingTower = selectedPlot.buildings.find(t => t.id === b.id.replace('-podium', '-tower'));
+                if (siblingTower && siblingTower.cores) {
+                    const towerCoreAreaPerFloor = siblingTower.cores.reduce((sum, c) => sum + (turf.area(c.geometry) || 0), 0);
+                    const occFloors = b.floors ? b.floors.filter(f => f.type !== 'Parking' && f.type !== 'Utility').length : b.numFloors;
+                    buildingSellable -= (towerCoreAreaPerFloor * occFloors);
+                }
+            }
+            
+            sellableArea += Math.max(0, buildingSellable);
         } else {
             const fsiFloors = b.floors ? b.floors.filter(f => f.type !== 'Parking').length : b.numFloors;
             fallbackGFA += (b.area * Math.max(1, fsiFloors));
@@ -1587,15 +1600,15 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 // Keep track of placed buildings to avoid collision
                 const builtObstacles: Feature<Polygon>[] = [];
 
-                // Add User-Defined Obstacles (Only permanent ones, avoid blocking new generation with stale items)
+                // Add User-Defined Obstacles (Only manually-drawn items, NOT previously generated ones)
+                // Manually-drawn items have 'obj-' prefix IDs; generated items (STP, WTP, etc.) do not
                 plotStub.utilityAreas?.forEach(ua => {
-                    // Only treat as obstacle if NOT a generated zone that we are about to replace
-                    if (ua.geometry && !ua.id.includes('peripheral') && !ua.name.includes('Generated')) {
+                    if (ua.geometry && ua.id.startsWith('obj-')) {
                         builtObstacles.push(ua.geometry as Feature<Polygon>);
                     }
                 });
                 plotStub.parkingAreas?.forEach(pa => {
-                    if (pa.geometry && !pa.id.includes('peripheral') && !pa.name.includes('Generated')) {
+                    if (pa.geometry && pa.id.startsWith('obj-')) {
                         builtObstacles.push(pa.geometry as Feature<Polygon>);
                     }
                 });
@@ -2617,6 +2630,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                     // Calculate height based on floor count range AND regulation limits
                     const floorHeight = params.floorHeight || 3.5;
+                    const groundFloorHeight = params.groundFloorHeight || floorHeight;
 
                     let minF = assignedFloors;
                     let maxF = assignedFloors;
@@ -2703,7 +2717,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         }
                     }
 
-                    const height = floors * floorHeight;
+                    const height = groundFloorHeight + (floors - 1) * floorHeight;
 
                     // Determine intended use from params
                     let intendedUse = BuildingIntendedUse.Residential;
@@ -2735,7 +2749,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             const floorColors = generateFloorColors(floors, intendedUse);
                             buildingSpecificFloors = Array.from({ length: floors }, (_, j) => ({
                                 id: `floor-${id}-${j}`,
-                                height: floorHeight,
+                                height: j === 0 ? groundFloorHeight : floorHeight,
                                 color: floorColors[j] || '#cccccc',
                                 type: 'General' as const,
                                 intendedUse: intendedUse,
@@ -2770,7 +2784,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                 for (let k = 0; k < count; k++) {
                                     buildingSpecificFloors.push({
                                         id: `floor-${id}-${currentFloorIndex}`,
-                                        height: floorHeight,
+                                        height: currentFloorIndex === 0 ? groundFloorHeight : floorHeight,
                                         color: colors[k] || '#cccccc',
                                         type: 'Occupied',
                                         intendedUse: type,
@@ -2809,7 +2823,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                 for (let k = 0; k < count; k++) {
                                     buildingSpecificFloors.push({
                                         id: `floor-${id}-${currentFloorIndex}`,
-                                        height: floorHeight,
+                                        height: currentFloorIndex === 0 ? groundFloorHeight : floorHeight,
                                         color: colors[k] || '#cccccc',
                                         type: 'Occupied',
                                         intendedUse: type,
@@ -2834,7 +2848,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         const floorColors = generateFloorColors(floors, intendedUse);
                         buildingSpecificFloors = Array.from({ length: floors }, (_, j) => ({
                             id: `floor-${id}-${j}`,
-                            height: floorHeight,
+                            height: j === 0 ? groundFloorHeight : floorHeight,
                             color: floorColors[j] || '#cccccc',
                             type: 'General' as const,
                             intendedUse: intendedUse,
@@ -2891,6 +2905,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         intendedUse: intendedUse,
                         internalUtilities: layout.utilities || [],
                         typicalFloorHeight: floorHeight,
+                        groundFloorHeight: groundFloorHeight,
                         visible: true,
                         programMix: params.landUse === 'mixed' && params.programMix
                             ? { ...params.programMix }
@@ -2994,9 +3009,9 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             const units: Unit[] = [];
                             floors.forEach(floor => {
                                 if ((floor.level !== undefined && floor.level < 0) || floor.type === 'Parking' || floor.type === 'Utility') return;
-                                // Skip non-residential floors when residentialOnly is true
                                 if (residentialOnly && floor.intendedUse !== BuildingIntendedUse.Residential) return;
-                                (baseLayout.units || []).forEach((u: Unit) => units.push({ ...u, id: `${floor.id}-u-${u.id}`, floorId: floor.id }));
+                                const floorUnits = (floor.level === 0 && baseLayout.groundFloorUnits) ? baseLayout.groundFloorUnits : baseLayout.units || [];
+                                floorUnits.forEach((u: Unit) => units.push({ ...u, id: `${floor.id}-u-${u.id}`, floorId: floor.id }));
                             });
                             return units;
                         };
@@ -3023,12 +3038,13 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             geometry: f,
                             centroid: turf.centroid(f),
                             area: planarArea(f),
-                            height: pFloors * floorHeight,
+                            height: groundFloorHeight + (pFloors - 1) * floorHeight,
                             numFloors: pFloors,
                             baseHeight: 0,
                             floors: podiumFloorsArray,
                             alignmentRotation: alignRot,
                             totalFloors: floors,
+                            groundFloorRemovedArea: layout.groundFloorRemovedArea || 0,
                         } as Building;
                         
                         const towerAlignRot = (towerGeometry as any).properties?.alignmentRotation ?? alignRot;
@@ -3047,7 +3063,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             area: planarArea(towerGeometry),
                             height: tFloors * floorHeight,
                             numFloors: tFloors,
-                            baseHeight: pFloors * floorHeight,
+                            baseHeight: groundFloorHeight + (pFloors - 1) * floorHeight,
                             floors: towerFloorsArray,
                             alignmentRotation: towerAlignRot,
                         } as Building;
@@ -4745,7 +4761,12 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 
                 // Search in main plot objects
                 const mainObjects = [...plot.buildings, ...plot.greenAreas, ...plot.parkingAreas, ...plot.buildableAreas, ...(plot.utilityAreas || [])];
-                const foundMain = mainObjects.find(obj => obj.id === id);
+                let foundMain = mainObjects.find(obj => obj.id === id);
+                if (!foundMain && type === 'Building') {
+                    // Check if it's a grouped building's base ID (e.g., clicking the Podium+Tower header)
+                    foundMain = mainObjects.find(obj => obj.id.replace(/-podium$/, '').replace(/-tower$/, '') === id);
+                }
+                
                 if (foundMain) {
                     selectedObjectCentroid = (foundMain as any).centroid;
                     if (type === 'GreenArea') {
@@ -4837,7 +4858,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         const newTypicalHeight = building.typicalFloorHeight ?? oldTypicalHeight;
                         console.log(`[DEBUG updateBuilding AFTER ASSIGN] building.numFloors=${building.numFloors}, newNumFloors=${newNumFloors}`);
 
-                        if (props.numFloors !== undefined || props.typicalFloorHeight !== undefined) {
+                        if (props.numFloors !== undefined || props.typicalFloorHeight !== undefined || props.groundFloorHeight !== undefined) {
+                            const effectiveGFH = building.groundFloorHeight ?? newTypicalHeight;
                             // Preserve special floors (Parking, Utility)
                             const specialFloors = building.floors.filter(f => f.type === 'Parking' || f.type === 'Utility');
                             const standardFloors = building.floors.filter(f => f.type !== 'Parking' && f.type !== 'Utility');
@@ -4872,7 +4894,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                     for (let k = 0; k < seg.count; k++) {
                                         newFloors.push({
                                             id: standardFloors[idx]?.id || `floor-${crypto.randomUUID()}-${idx}`,
-                                            height: newTypicalHeight,
+                                            height: idx === 0 ? effectiveGFH : newTypicalHeight,
                                             color: segColors[k] || '#cccccc',
                                             type: 'General' as const,
                                             intendedUse: seg.use,
@@ -4898,7 +4920,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                     return {
                                         ...existing,
                                         id: existing?.id || `floor-${crypto.randomUUID()}-${i}`,
-                                        height: newTypicalHeight,
+                                        height: i === 0 ? effectiveGFH : newTypicalHeight,
                                         color: colors[i] || '#cccccc',
                                         type: 'General' as const,
                                         intendedUse: building.intendedUse,
@@ -5294,6 +5316,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 // Convert Features to Buildings
                 const newBuildings = generatedBuildings.map((f, i) => {
                     const floorHeight = params.floorHeight || 3.5;
+                    const groundFloorHeight = params.groundFloorHeight || floorHeight;
                     const minF = params.minFloors ?? 5;
                     let maxF = params.maxFloors ?? 12;
 
@@ -5301,7 +5324,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     // Use params or plot limits
 
                     const floors = Math.floor(Math.random() * (maxF - minF + 1)) + minF;
-                    const height = floors * floorHeight;
+                    const height = groundFloorHeight + (floors - 1) * floorHeight;
 
                     // Determine intended use from params
                     let intendedUse = BuildingIntendedUse.Residential;
@@ -5325,12 +5348,13 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         intendedUse: intendedUse,
                         floors: Array.from({ length: floors }, (_, j) => ({
                             id: `floor-${id}-${j}`,
-                            height: floorHeight,
+                            height: j === 0 ? groundFloorHeight : floorHeight,
                             color: generateFloorColors(floors, intendedUse)[j] || '#cccccc'
                         })),
                         area: planarArea(f),
                         numFloors: floors,
                         typicalFloorHeight: floorHeight,
+                        groundFloorHeight: groundFloorHeight,
                         visible: true,
                     } as Building;
                 });

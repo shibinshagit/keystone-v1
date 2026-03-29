@@ -142,7 +142,7 @@ export function FeasibilityReport({
     plot.maxCoverage ||
     plot.regulation?.geometry?.max_ground_coverage?.value ||
     40;
-  const towers = plot.buildings?.length || 1;
+  const towers = (plot.buildings || []).filter(b => !b.id.includes('-tower')).length || 1;
   const maxFloors =
     plot.buildings?.reduce((m, b) => Math.max(m, b.numFloors || 1), 0) || 5;
   const maxBasements = 2; // Defaulting to 2 or extract from parking if available
