@@ -864,6 +864,59 @@ function collectRenderingData(_plots: Plot[], selectedPlot: Plot, designParams: 
     return { buildingsInfo, plotInfo, summary };
 }
 
+function buildRenderRequest(
+    plots: Plot[],
+    plot: Plot,
+    designParams: DesignParamsForRendering
+): {
+    renderInput: {
+        buildings: RenderingBuildingInfo[];
+        plot: RenderingPlotInfo;
+        design: {
+            landUse: string;
+            unitMix: Record<string, number>;
+            selectedUtilities: string[];
+            hasPodium: boolean;
+            podiumFloors: number;
+            parkingTypes: string[];
+        };
+    };
+    summary: RenderingProjectSummary;
+} | null {
+    const buildingsData = plot.buildings;
+    if (!buildingsData || buildingsData.length === 0) {
+        return null;
+    }
+
+    const renderData = collectRenderingData(
+        plots,
+        { ...plot, buildings: buildingsData },
+        designParams
+    );
+
+    if (!renderData) {
+        return null;
+    }
+
+    const { buildingsInfo, plotInfo, summary } = renderData;
+
+    return {
+        renderInput: {
+            buildings: buildingsInfo,
+            plot: plotInfo,
+            design: {
+                landUse: designParams.landUse,
+                unitMix: designParams.unitMix,
+                selectedUtilities: designParams.selectedUtilities,
+                hasPodium: designParams.hasPodium,
+                podiumFloors: designParams.podiumFloors,
+                parkingTypes: designParams.parkingTypes,
+            },
+        },
+        summary,
+    };
+}
+
 const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
     projects: [],
     activeProjectId: null,
@@ -5746,29 +5799,18 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             }
 
             try {
-            const result = collectRenderingData(plots, plot, designParams);
+            const batchedRender = buildRenderRequest(plots, plot, designParams);
 
-            if (!result) {
+            if (!batchedRender) {
                 toast({ variant: 'destructive', title: 'Error', description: 'No buildings on this plot to render.' });
                 set({ isGeneratingRendering: false });
                 return;
             }
 
-            const { buildingsInfo, plotInfo, summary } = result;
+            const { renderInput, summary } = batchedRender;
 
-                const res = await generateArchitecturalRendering({
-                    buildings: buildingsInfo,
-                    plot: plotInfo,
-                    design: {
-                        landUse: designParams.landUse,
-                        unitMix: designParams.unitMix,
-                        selectedUtilities: designParams.selectedUtilities,
-                        hasPodium: designParams.hasPodium,
-                        podiumFloors: designParams.podiumFloors,
-                        parkingTypes: designParams.parkingTypes,
-                    },
-                });
-                set({ aiRenderingUrl: res.imageUrl, aiRenderingResult: { ...res, buildings: buildingsInfo, plot: plotInfo, summary } });
+                const res = await generateArchitecturalRendering(renderInput);
+                set({ aiRenderingUrl: res.imageUrl, aiRenderingResult: { ...res, buildings: renderInput.buildings, plot: renderInput.plot, summary } });
             } catch (err) {
                 const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
                 toast({ variant: 'destructive', title: 'Rendering Failed', description: msg });
@@ -5858,23 +5900,14 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 hasPodium: ds.hasPodium, podiumFloors: ds.podiumFloors,
                 parkingTypes: ds.parkingTypes, selectedUtilities: ds.selectedUtilities,
             };
-            const result = collectRenderingData(plots, plot, designParams);
-            if (!result) return;
+            const batchedRender = buildRenderRequest(plots, plot, designParams);
+            if (!batchedRender) return;
 
             if (regenerateImage) {
                 set({ isGeneratingRendering: true });
                 try {
-                    const res = await generateArchitecturalRendering({
-                        buildings: result.buildingsInfo,
-                        plot: result.plotInfo,
-                        design: {
-                            landUse: designParams.landUse, unitMix: designParams.unitMix,
-                            selectedUtilities: designParams.selectedUtilities,
-                            hasPodium: designParams.hasPodium, podiumFloors: designParams.podiumFloors,
-                            parkingTypes: designParams.parkingTypes,
-                        },
-                    });
-                    set({ aiRenderingUrl: res.imageUrl, aiRenderingResult: { ...res, buildings: result.buildingsInfo, plot: result.plotInfo, summary: result.summary } });
+                    const res = await generateArchitecturalRendering(batchedRender.renderInput);
+                    set({ aiRenderingUrl: res.imageUrl, aiRenderingResult: { ...res, buildings: batchedRender.renderInput.buildings, plot: batchedRender.renderInput.plot, summary: batchedRender.summary } });
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
                     toast({ variant: 'destructive', title: 'Rendering Failed', description: msg });
@@ -5882,7 +5915,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     set({ isGeneratingRendering: false });
                 }
             } else {
-                set({ aiRenderingResult: { ...aiRenderingResult, buildings: result.buildingsInfo, plot: result.plotInfo, summary: result.summary } });
+                set({ aiRenderingResult: { ...aiRenderingResult, buildings: batchedRender.renderInput.buildings, plot: batchedRender.renderInput.plot, summary: batchedRender.summary } });
             }
         },
         toggleAiRenderingMinimized: (minimized?: boolean) => {
