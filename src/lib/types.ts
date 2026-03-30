@@ -592,6 +592,10 @@ export interface RenderingBuildingInfo {
   parkingCapacity: number;
   evStations: number;
   position?: string;       // spatial placement on plot (e.g. "front-left", "back-right")
+  footprint?: number[][][];
+  center?: { x: number; y: number };
+  relativePosition?: { x: number; y: number };
+  rotation?: number;
 }
 
 export interface RenderingPlotInfo {
@@ -606,6 +610,8 @@ export interface RenderingPlotInfo {
   maxBuildingHeight?: number;
   regulationType?: string;
   roadAccessSides?: string[];
+  footprint?: number[][][];
+  origin?: { x: number; y: number };
 }
 
 export interface RenderingDesignInfo {
@@ -615,6 +621,7 @@ export interface RenderingDesignInfo {
   hasPodium: boolean;
   podiumFloors: number;
   parkingTypes: string[];
+  layoutConstraint?: string;
 }
 
 export interface RenderingProjectSummary {

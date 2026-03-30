@@ -10,6 +10,8 @@ import {
   DialogFooter,
 } from './ui/dialog';
 import { Button } from './ui/button';
+import { Label } from './ui/label';
+import { Textarea } from './ui/textarea';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,20 +20,6 @@ import {
 } from './ui/dropdown-menu';
 import { useBuildingStore } from '@/hooks/use-building-store';
 import { Download, Image, FileText, ChevronDown, Minus, Maximize2, X, GripVertical, RefreshCw } from 'lucide-react';
-import type { RenderingBuildingInfo, RenderingPlotInfo, RenderingProjectSummary } from '@/lib/types';
-
-function InfoCard({ label, value, className }: { label: string; value: string | number; className?: string }) {
-  return (
-    <div className={`bg-muted/50 rounded p-2 ${className ?? ''}`}>
-      <div className="text-muted-foreground text-[10px] leading-tight">{label}</div>
-      <div className="font-medium text-xs mt-0.5">{value}</div>
-    </div>
-  );
-}
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{children}</h4>;
-}
 
 export function AiRenderingModal() {
   const { aiRenderingUrl, aiRenderingResult, aiRenderingMinimized, isGeneratingRendering, actions } = useBuildingStore(s => ({
@@ -44,6 +32,7 @@ export function AiRenderingModal() {
 
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [prompt, setPrompt] = useState('');
 
   // Draggable PiP position (default: bottom-right)
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
@@ -221,10 +210,6 @@ export function AiRenderingModal() {
     actions.refreshAiRenderingData(true);
   };
 
-  const buildings = aiRenderingResult?.buildings ?? [];
-  const plot = aiRenderingResult?.plot;
-  const summary = aiRenderingResult?.summary;
-
   // Minimized floating PiP thumbnail (draggable)
   if (aiRenderingMinimized) {
     const defaultX = typeof window !== 'undefined' ? window.innerWidth - 240 : 0;
@@ -315,239 +300,24 @@ export function AiRenderingModal() {
           />
         </div>
 
-        {/* ═══ PROJECT DETAILS ═══════════════════════════════════════ */}
-        {(buildings.length > 0 || plot || summary) && (
-          <div className="mt-4 space-y-4 border-t pt-3">
-            <h3 className="text-sm font-bold">Project Details</h3>
-
-            {/* ── PLOT & LAND ────────────────────────────────────────── */}
-            {plot && (
-              <div className="space-y-1.5">
-                <SectionTitle>Plot &amp; Land</SectionTitle>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <InfoCard label="Location" value={plot.location} />
-                  <InfoCard label="Plot Area" value={`${Math.round(plot.plotArea).toLocaleString()} sqm`} />
-                  {plot.subPlotCount > 1 && <InfoCard label="Sub-Plots" value={plot.subPlotCount} />}
-                  <InfoCard label="Setback" value={`${plot.setback}m`} />
-                  {plot.far != null && <InfoCard label="FAR (Allowed)" value={plot.far} />}
-                  {plot.maxCoverage != null && <InfoCard label="Max Coverage" value={`${Math.round(plot.maxCoverage * 100)}%`} />}
-                  {plot.maxBuildingHeight != null && <InfoCard label="Max Height" value={`${plot.maxBuildingHeight}m`} />}
-                  {plot.regulationType && <InfoCard label="Regulation" value={plot.regulationType} />}
-                  {plot.greenAreas > 0 && <InfoCard label="Green Areas" value={plot.greenAreas} />}
-                  {plot.parkingAreas > 0 && <InfoCard label="Parking Zones" value={plot.parkingAreas} />}
-                  {plot.roadAccessSides && plot.roadAccessSides.length > 0 && (
-                    <InfoCard label="Road Access" value={plot.roadAccessSides.join(', ')} />
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* ── KPIs & REGULATIONS ─────────────────────────────────── */}
-            {summary && summary.totalBuiltUpArea != null && (
-              <div className="space-y-1.5">
-                <SectionTitle>KPIs &amp; Regulations</SectionTitle>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <InfoCard label="Total Built-up (GFA)" value={`${Math.round(summary.totalBuiltUpArea).toLocaleString()} sqm`} />
-                  <InfoCard label="Achieved FAR" value={summary.achievedFAR ?? 0} />
-                  <InfoCard label="Ground Coverage" value={`${summary.groundCoveragePct ?? 0}%`} />
-                  <InfoCard label="Sellable Area" value={`${(summary.sellableArea ?? 0).toLocaleString()} sqm`} />
-                  <InfoCard label="Open Space" value={`${(summary.openSpace ?? 0).toLocaleString()} sqm`} />
-                  <InfoCard label="Efficiency" value={`${Math.round((summary.efficiency ?? 0) * 100)}%`} />
-                  {(summary.totalUnits ?? 0) > 0 && <InfoCard label="Total Units" value={summary.totalUnits} />}
-                </div>
-              </div>
-            )}
-
-            {/* ── COMPLIANCE SCORES ──────────────────────────────────── */}
-            {summary?.compliance && (
-              <div className="space-y-1.5">
-                <SectionTitle>Compliance Scores</SectionTitle>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="bg-muted/50 rounded p-2 text-center">
-                    <div className="text-[10px] text-muted-foreground">Bylaws</div>
-                    <div className={`text-lg font-bold ${(summary.compliance.bylaws ?? 0) >= 75 ? 'text-green-600' : (summary.compliance.bylaws ?? 0) >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>
-                      {summary.compliance.bylaws ?? 0}%
-                    </div>
-                  </div>
-                  <div className="bg-muted/50 rounded p-2 text-center">
-                    <div className="text-[10px] text-muted-foreground">Green</div>
-                    <div className={`text-lg font-bold ${(summary.compliance.green ?? 0) >= 75 ? 'text-green-600' : (summary.compliance.green ?? 0) >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>
-                      {summary.compliance.green ?? 0}%
-                    </div>
-                  </div>
-                  <div className="bg-muted/50 rounded p-2 text-center">
-                    <div className="text-[10px] text-muted-foreground">Vastu</div>
-                    <div className={`text-lg font-bold ${(summary.compliance.vastu ?? 0) >= 75 ? 'text-green-600' : (summary.compliance.vastu ?? 0) >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>
-                      {summary.compliance.vastu ?? 0}%
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ── BUILDINGS ──────────────────────────────────────────── */}
-            <div className="space-y-2">
-              <SectionTitle>
-                {buildings.length === 1 ? 'Building' : `Buildings (${buildings.length})`}
-              </SectionTitle>
-              <div className="grid gap-2">
-                {buildings.map((b, i) => (
-                  <div key={i} className="border rounded p-3 text-xs space-y-2">
-                    <div className="font-semibold text-sm">{b.name}</div>
-
-                    {/* Row 1: Core dimensions */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <InfoCard label="Intended Use" value={b.intendedUse} />
-                      <InfoCard label="Typology" value={b.typology} className="capitalize" />
-                      <InfoCard label="Height" value={`${Math.round(b.height)}m`} />
-                      <InfoCard label="Floor Height" value={`${b.floorHeight.toFixed(1)}m`} />
-                    </div>
-
-                    {/* Row 2: Floor breakdown */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <InfoCard label="Above-Ground Floors" value={b.numFloors} />
-                      <InfoCard label="Basement Floors" value={b.basementFloors} />
-                      <InfoCard label="Total Floors" value={b.totalFloors} />
-                      <InfoCard label="GFA" value={`${Math.round(b.gfa).toLocaleString()} sqm`} />
-                    </div>
-
-                    {/* Row 3: Footprint dimensions */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <InfoCard label="Footprint Area" value={`${Math.round(b.footprintArea)} sqm`} />
-                      <InfoCard label="Dimensions (W×D)" value={`${b.footprintWidth}m × ${b.footprintDepth}m`} />
-                      {b.parkingFloors > 0 && <InfoCard label="Parking Floors" value={b.parkingFloors} />}
-                      {b.parkingCapacity > 0 && <InfoCard label="Parking Spots" value={b.parkingCapacity} />}
-                    </div>
-
-                    {/* Row 4: Cores & Units */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {(b.cores.lifts + b.cores.stairs + b.cores.service + b.cores.lobbies) > 0 && (
-                        <InfoCard label="Cores" value={
-                          [b.cores.lifts > 0 && `${b.cores.lifts} Lift`, b.cores.stairs > 0 && `${b.cores.stairs} Stair`, b.cores.service > 0 && `${b.cores.service} Svc`, b.cores.lobbies > 0 && `${b.cores.lobbies} Lobby`].filter(Boolean).join(', ')
-                        } />
-                      )}
-                      {b.unitCount > 0 && (
-                        <InfoCard label="Units" value={`${b.unitCount} total`} />
-                      )}
-                      {b.unitCount > 0 && Object.keys(b.unitBreakdown).length > 0 && (
-                        <InfoCard label="Unit Breakdown" value={
-                          Object.entries(b.unitBreakdown).map(([k, v]) => `${k}: ${v}`).join(', ')
-                        } className="col-span-2" />
-                      )}
-                      {b.evStations > 0 && <InfoCard label="EV Stations" value={b.evStations} />}
-                    </div>
-
-                    {/* Program Mix */}
-                    {b.programMix && Object.values(b.programMix).some(v => v > 0) && (
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <InfoCard label="Program Mix" value={
-                          Object.entries(b.programMix).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${v}%`).join(', ')
-                        } className="col-span-2 sm:col-span-4" />
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* ── CUSTOM ZONES ───────────────────────────────────────── */}
-            {summary?.zones && (summary.zones.buildable?.length > 0 || summary.zones.green?.length > 0 || summary.zones.parking?.length > 0 || summary.zones.utility?.length > 0) && (
-              <div className="space-y-1.5">
-                <SectionTitle>Zones</SectionTitle>
-                <div className="grid gap-2">
-                  {summary.zones.buildable?.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] text-muted-foreground font-medium uppercase">Buildable Zones</div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {summary.zones.buildable.map((z, i) => (
-                          <InfoCard key={i} label={z.name} value={`${z.area.toLocaleString()} sqm · ${z.intendedUse}`} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {summary.zones.green?.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] text-muted-foreground font-medium uppercase">Green Zones</div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {summary.zones.green.map((z, i) => (
-                          <InfoCard key={i} label={z.name} value={`${z.area.toLocaleString()} sqm`} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {summary.zones.parking?.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] text-muted-foreground font-medium uppercase">Parking Zones</div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {summary.zones.parking.map((z, i) => (
-                          <InfoCard key={i} label={z.name} value={`${z.area.toLocaleString()} sqm${z.type ? ` · ${z.type}` : ''}${z.capacity ? ` · ${z.capacity} spots` : ''}`} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {summary.zones.utility?.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] text-muted-foreground font-medium uppercase">Utility Zones</div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {summary.zones.utility.map((z, i) => (
-                          <InfoCard key={i} label={z.name} value={`${z.area.toLocaleString()} sqm · ${z.type}`} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* ── PARKING SUMMARY ────────────────────────────────────── */}
-            {summary?.parkingSummary && summary.parkingSummary.length > 0 && (
-              <div className="space-y-1.5">
-                <SectionTitle>Parking</SectionTitle>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {summary.parkingSummary.map(p => (
-                    <InfoCard key={p.type} label={p.type} value={`${p.count} spots`} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* ── UTILITIES ──────────────────────────────────────────── */}
-            {summary?.utilities && summary.utilities.length > 0 && (
-              <div className="space-y-1.5">
-                <SectionTitle>Utilities &amp; Infrastructure</SectionTitle>
-                <div className="flex flex-wrap gap-1.5">
-                  {summary.utilities.map(u => (
-                    <span key={u} className="bg-muted/50 border rounded px-2 py-1 text-xs">{u}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* ── DESIGN STRATEGY ────────────────────────────────────── */}
-            {summary?.designStrategy && (
-              <div className="space-y-1.5">
-                <SectionTitle>Design Strategy</SectionTitle>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <InfoCard label="Land Use" value={summary.designStrategy.landUse} className="capitalize" />
-                  <InfoCard label="Typology" value={summary.designStrategy.typology} className="capitalize" />
-                  {summary.designStrategy.hasPodium && (
-                    <InfoCard label="Podium" value={`${summary.designStrategy.podiumFloors} floors`} />
-                  )}
-                  {summary.designStrategy.parkingTypes?.length > 0 && (
-                    <InfoCard label="Parking Types" value={summary.designStrategy.parkingTypes.join(', ')} />
-                  )}
-                </div>
-                {summary.designStrategy.unitMix && Object.keys(summary.designStrategy.unitMix).length > 0 && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
-                    {Object.entries(summary.designStrategy.unitMix).filter(([, v]) => v > 0).map(([k, v]) => (
-                      <InfoCard key={k} label={k} value={`${v}%`} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+        <div className="mt-4 space-y-3 border-t pt-3">
+          <div className="space-y-1">
+            <h3 className="text-sm font-bold">Generation Panel</h3>
+            <p className="text-xs text-muted-foreground">
+              Add optional guidance for the render. This field is UI-only for now and does not affect generation yet.
+            </p>
           </div>
-        )}
+          <div className="space-y-2">
+            <Label htmlFor="render-prompt">Prompt</Label>
+            <Textarea
+              id="render-prompt"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Describe the desired render mood, facade style, materials, lighting, or camera angle."
+              className="min-h-[110px] resize-none"
+            />
+          </div>
+        </div>
 
         <DialogFooter className="flex gap-2 sm:gap-0">
           <Button variant="outline" onClick={handleRefresh} disabled={isGeneratingRendering} title="Regenerate 3D rendering with latest data">

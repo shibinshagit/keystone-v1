@@ -101,7 +101,18 @@ function createArchitecturalPrompt(input: GenerateRenderingInput): string {
       : maxSide > b.height ? 'wider than it is tall — a horizontally-oriented building'
       : 'taller than it is wide — a vertically-oriented tower';
 
-    return `${label}: ${useStyle}, ${typologyDesc}, a ${cat} building${positionDesc}, ${Math.round(b.height)}m total height (${floorH}m floor-to-floor), footprint: ${w}m wide × ${d}m deep (~${Math.round(b.footprintArea)} sqm). The building is ${proportionDesc}.${floorListDesc}${basementDesc}${mixDesc}`;
+    const footprintCoords = b.footprint
+      ? ` Exact footprint polygon coordinates: ${JSON.stringify(b.footprint)}.`
+      : '';
+    const centerCoords = b.center
+      ? ` Center point: (${b.center.x}, ${b.center.y}).`
+      : '';
+    const relativePosition = b.relativePosition
+      ? ` Relative position from plot origin: (${b.relativePosition.x}, ${b.relativePosition.y}).`
+      : '';
+    const rotation = ` Orientation / rotation: ${b.rotation ?? 0} degrees.`;
+
+    return `${label}: ${useStyle}, ${typologyDesc}, a ${cat} building${positionDesc}, ${Math.round(b.height)}m total height (${floorH}m floor-to-floor), footprint: ${w}m wide × ${d}m deep (~${Math.round(b.footprintArea)} sqm). The building is ${proportionDesc}.${floorListDesc}${basementDesc}${mixDesc}${footprintCoords}${centerCoords}${relativePosition}${rotation}`;
   }).join('\n');
 
   // ── Plot context ─────────────────────────────────────────────────
@@ -114,6 +125,8 @@ function createArchitecturalPrompt(input: GenerateRenderingInput): string {
   if (plot.greenAreas > 0) plotParts.push(`${plot.greenAreas} landscaped green area(s)`);
   if (plot.parkingAreas > 0) plotParts.push(`${plot.parkingAreas} parking zone(s)`);
   if (plot.regulationType) plotParts.push(`regulation: ${plot.regulationType}`);
+  if (plot.origin) plotParts.push(`plot origin: (${plot.origin.x}, ${plot.origin.y})`);
+  if (plot.footprint) plotParts.push(`plot footprint coordinates: ${JSON.stringify(plot.footprint)}`);
   const plotDesc = plotParts.join(', ');
 
   // ── Design strategy details ──────────────────────────────────────
@@ -152,10 +165,12 @@ function createArchitecturalPrompt(input: GenerateRenderingInput): string {
 
   // ── Compose final prompt ─────────────────────────────────────────
   const buildingCountNote = `CRITICAL CONSTRAINT — BUILDING COUNT: There are EXACTLY ${numBuildings} building${isSingle ? '' : 's'} on this plot. Do NOT add extra buildings. Show ONLY ${numBuildings} building structure${isSingle ? '' : 's'}.`;
+  const layoutConstraint = design.layoutConstraint || 'STRICT';
 
   const prompt = `Photorealistic 3D architectural rendering of a development site in ${plot.location}.
 
 ${buildingCountNote}
+CRITICAL CONSTRAINT — LAYOUT: ${layoutConstraint}. Preserve exact building positions, spacing, orientation, scale, and layout based on the provided coordinates and footprint polygons. Do not rearrange, symmetrize, auto-place, or regularize the buildings.
 
 BUILDINGS:
 ${buildingDescriptions}
