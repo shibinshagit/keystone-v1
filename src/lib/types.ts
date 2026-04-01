@@ -578,6 +578,7 @@ export interface RenderingBuildingInfo {
   basementFloors: number;  // underground floors (B1, B2…)
   totalFloors: number;     // above + basement
   floorHeight: number;
+  groundFloorHeight: number; // ground floor height (often taller, e.g. 4.5m)
   footprintArea: number;
   footprintWidth: number;  // meters — measured from polygon bounding box
   footprintDepth: number;  // meters — measured from polygon bounding box
@@ -669,6 +670,10 @@ export interface GenerateRenderingInput {
   buildings: RenderingBuildingInfo[];
   plot: RenderingPlotInfo;
   design: RenderingDesignInfo;
+  /** Base64-encoded site plan PNG for image-to-image rendering (uploaded to public host server-side) */
+  controlImageBase64?: string;
+  /** Optional free-text override from the user (mood, style, materials, camera angle, etc.) */
+  userPrompt?: string;
 }
 
 export interface GenerateRenderingOutput {

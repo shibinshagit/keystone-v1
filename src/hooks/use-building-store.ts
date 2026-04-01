@@ -15,6 +15,7 @@ import { generateSiteLayout } from '@/ai/flows/ai-site-layout-generator';
 import { generateMassingOptions } from '@/ai/flows/ai-massing-generator';
 import { generateArchitecturalRendering } from '@/ai/flows/ai-architectural-rendering';
 import { generateLayoutZones } from '@/ai/flows/ai-zone-generator';
+import { generateSitePlanImage } from '@/lib/generate-site-plan-image';
 
 import { generateLamellas, generateTowers, generatePerimeter, AlgoParams, AlgoTypology } from '@/lib/generators/basic-generator';
 import { generateLShapes, generateUShapes, generateTShapes, generateHShapes, generateSlabShapes, generatePointShapes, generateLargeFootprint, checkCollision } from '@/lib/generators/geometric-typologies';
@@ -630,6 +631,16 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
 // ── Helper: collect rendering project data from current store state ──
 export type DesignParamsForRendering = { landUse: string; unitMix: Record<string, number>; selectedUtilities: string[]; hasPodium: boolean; podiumFloors: number; parkingTypes: string[]; typology: string };
 
+/** Convert a Blob (from canvas.toBlob) into a base64 data-URI string. */
+function blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
 function summarizeAdditiveScore(items: Array<{ maxScore: number; achievedScore: number }>): AdditiveScoreSummary {
     const eligible = items.filter(i => i.maxScore > 0);
     const totalScore = eligible.reduce((sum, item) => sum + item.achievedScore, 0);
@@ -811,7 +822,9 @@ function collectRenderingData(
             id: b.id,
             name: parts.length > 1 ? `${b.name} (${partSummary})` : b.name,
             height: b.height, numFloors: aboveGround, basementFloors,
-            totalFloors: totalFlrs, floorHeight: b.typicalFloorHeight, footprintArea: b.area,
+            totalFloors: totalFlrs, floorHeight: b.typicalFloorHeight,
+            groundFloorHeight: b.groundFloorHeight || b.typicalFloorHeight,
+            footprintArea: b.area,
             footprintWidth, footprintDepth, intendedUse: b.intendedUse,
             typology: designParams.typology, gfa, programMix: b.programMix,
             cores: coreBreakdown, unitCount: b.units?.length || 0, unitBreakdown,
@@ -840,7 +853,19 @@ function collectRenderingData(
     const allRoadSides = new Set<string>();
     selectedPlot.roadAccessSides?.forEach(s => allRoadSides.add(s));
 
-    const plotInfo: RenderingPlotInfo & { boundary?: number[][][] } = {
+    const parkingPolygons = selectedPlot.parkingAreas
+        .map(pa => pa.geometry?.geometry?.coordinates)
+        .filter(coords => !!coords)
+        .map(coords => normalizePolygon(JSON.parse(JSON.stringify(coords)), plotCenterCoords));
+
+    // Extract road zone polygons from utilityAreas (peripheral roads)
+    const roadPolygons = (selectedPlot.utilityAreas || [])
+        .filter(ua => ua.type === UtilityType.Roads || ua.name?.includes('Peripheral Road') || ua.name?.includes('Road'))
+        .map(ua => ua.geometry?.geometry?.coordinates)
+        .filter(coords => !!coords)
+        .map(coords => normalizePolygon(JSON.parse(JSON.stringify(coords)), plotCenterCoords));
+
+    const plotInfo: RenderingPlotInfo & { boundary?: number[][][], parkingPolygons?: number[][][][], roadPolygons?: number[][][][] } = {
         plotArea: totalPlotArea, subPlotCount: 1, setback: selectedPlot.setback,
         location: (selectedPlot.location as string) || 'unspecified',
         greenAreas: totalGreenAreas, parkingAreas: totalParkingAreas,
@@ -851,6 +876,8 @@ function collectRenderingData(
         footprint: plotFootprint,
         origin: { x: 0, y: 0 },
         boundary: plotBoundary,
+        parkingPolygons,
+        roadPolygons,
     };
 
     const totalGFA = buildingsInfo.reduce((s, b) => s + b.gfa, 0);
@@ -3138,13 +3165,13 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             const buffered = turf.buffer(f, bufferDist, { units: 'meters' });
                             if (buffered && buffered.geometry && buffered.geometry.type === 'Polygon') {
                                 const bufferedArea = turf.area(buffered);
-                                // Ensure the buffered geometry didn't completely collapse or become invalid
-                                if (bufferedArea > area * 0.1) {
+                                // Ensure the buffered geometry shrank but didn't collapse
+                                if (bufferedArea < area * 0.95 && bufferedArea > area * 0.1) {
                                     towerGeometry = buffered as Feature<Polygon>;
                                     // REATTACH PROPERTIES LOST DURING BUFFERING
                                     towerGeometry.properties = { ...f.properties, alignmentRotation: f.properties?.alignmentRotation ?? 0 };
                                 } else {
-                                    throw new Error("Buffer caused geometry to collapse too much.");
+                                    throw new Error("Buffer failed to shrink geometry (turf bug) or caused collapse.");
                                 }
                             } else {
                                 throw new Error("Buffer did not return a valid Polygon.");
@@ -3365,20 +3392,36 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                         // If FAR is STILL exceeded (because we refused to shrink floors below the minimum), we MUST prune buildings
                         if (currentFAR > effectiveFARConstraint * 1.05) {
-                            console.warn(`FAR still exceeded after height compression (Current: ${currentFAR.toFixed(2)}). Pruning buildings...`);
-                            const sorted = [...newBuildings].sort((a, b) => (a.area * a.numFloors) - (b.area * b.numFloors)); // Prune smallest first
-                            const pruned: Building[] = [...newBuildings];
-                            for (const bld of sorted) {
+                            console.warn(`FAR still exceeded after height compression (Current: ${currentFAR.toFixed(2)}). Pruning buildings by composite mass...`);
+                            
+                            // Group buildings by baseId to prune whole podium-tower assemblies together
+                            const grouped = new Map<string, Building[]>();
+                            newBuildings.forEach(b => {
+                                const baseId = b.id.replace(/-podium$/, '').replace(/-tower$/, '');
+                                if (!grouped.has(baseId)) grouped.set(baseId, []);
+                                grouped.get(baseId)!.push(b);
+                            });
+
+                            const sortedGroups = Array.from(grouped.entries()).map(([baseId, blds]) => {
+                                const totalGFA = blds.reduce((sum, b) => sum + (b.area * b.numFloors), 0);
+                                return { baseId, blds, totalGFA };
+                            }).sort((a, b) => a.totalGFA - b.totalGFA);
+
+                            let pruned: Building[] = [...newBuildings];
+                            for (const group of sortedGroups) {
                                 if (currentFAR <= effectiveFARConstraint * 1.05) break;
-                                const idx = pruned.findIndex(b => b.id === bld.id);
-                                if (idx !== -1) {
-                                    const bldFAR = (bld.area * bld.numFloors) / plotArea;
-                                    currentFAR -= bldFAR;
-                                    pruned.splice(idx, 1);
-                                }
+                                
+                                group.blds.forEach(bld => {
+                                    const idx = pruned.findIndex(b => b.id === bld.id);
+                                    if (idx !== -1) {
+                                        const bldFAR = (bld.area * bld.numFloors) / plotArea;
+                                        currentFAR -= bldFAR;
+                                        pruned.splice(idx, 1);
+                                    }
+                                });
                             }
                             newBuildings = pruned;
-                            console.log(`Pruning reduced FAR to ${currentFAR.toFixed(2)}. Remaining buildings: ${newBuildings.length}`);
+                            console.log(`Pruning reduced FAR to ${currentFAR.toFixed(2)}. Remaining building segments: ${newBuildings.length}`);
                         }
                     }
                 }
@@ -5942,7 +5985,24 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
             const { renderInput, summary } = batchedRender;
 
-                const res = await generateArchitecturalRendering(renderInput);
+                // Generate site plan control image for image-to-image rendering
+                let controlImageBase64: string | undefined;
+                try {
+                    console.log('[AI Rendering] Generating site plan control image...');
+                    const sitePlanBlob = await generateSitePlanImage({
+                        buildings: renderInput.buildings as any,
+                        plot: renderInput.plot,
+                        parkingPolygons: (renderInput.plot as any).parkingPolygons,
+                        roadPolygons: (renderInput.plot as any).roadPolygons,
+                        summary,
+                    });
+                    controlImageBase64 = await blobToBase64(sitePlanBlob);
+                    console.log('[AI Rendering] Control image generated, size:', Math.round(controlImageBase64.length / 1024), 'KB');
+                } catch (imgErr) {
+                    console.warn('[AI Rendering] Control image generation failed, falling back to text-to-image:', imgErr);
+                }
+
+                const res = await generateArchitecturalRendering({ ...renderInput, controlImageBase64 });
                 set({ aiRenderingUrl: res.imageUrl, aiRenderingResult: { ...res, buildings: renderInput.buildings, plot: renderInput.plot, summary } });
             } catch (err) {
                 const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
@@ -6010,7 +6070,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
         setRenderingDesignParams: (params: DesignParamsForRendering) => {
             set({ renderingDesignParams: params });
         },
-        refreshAiRenderingData: async (regenerateImage?: boolean) => {
+        refreshAiRenderingData: async (regenerateImage?: boolean, userPrompt?: string) => {
             const { aiRenderingResult, plots, selectedObjectId } = get();
             if (!aiRenderingResult || !plots.length) return;
             const ds = aiRenderingResult.summary?.designStrategy;
@@ -6039,7 +6099,22 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             if (regenerateImage) {
                 set({ isGeneratingRendering: true });
                 try {
-                    const res = await generateArchitecturalRendering(batchedRender.renderInput);
+                    // Generate control image for image-to-image mode
+                    let controlImageBase64: string | undefined;
+                    try {
+                        const sitePlanBlob = await generateSitePlanImage({
+                            buildings: batchedRender.renderInput.buildings as any,
+                            plot: batchedRender.renderInput.plot,
+                            parkingPolygons: (batchedRender.renderInput.plot as any).parkingPolygons,
+                            roadPolygons: (batchedRender.renderInput.plot as any).roadPolygons,
+                            summary: batchedRender.summary,
+                        });
+                        controlImageBase64 = await blobToBase64(sitePlanBlob);
+                    } catch (imgErr) {
+                        console.warn('[AI Rendering] Control image failed in refresh, falling back to text-to-image:', imgErr);
+                    }
+
+                    const res = await generateArchitecturalRendering({ ...batchedRender.renderInput, controlImageBase64, userPrompt });
                     set({ aiRenderingUrl: res.imageUrl, aiRenderingResult: { ...res, buildings: batchedRender.renderInput.buildings, plot: batchedRender.renderInput.plot, summary: batchedRender.summary } });
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';

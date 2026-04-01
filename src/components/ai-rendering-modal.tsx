@@ -187,7 +187,7 @@ export function AiRenderingModal() {
     }
   }, [aiRenderingUrl, aiRenderingResult, downloadBlob, downloadFilename]);
 
-  if (!aiRenderingUrl) return null;
+  if (!aiRenderingUrl && !isGeneratingRendering) return null;
 
   const handleClose = () => {
     setImgLoaded(false);
@@ -207,7 +207,7 @@ export function AiRenderingModal() {
   const handleRefresh = () => {
     setImgLoaded(false);
     setImgError(false);
-    actions.refreshAiRenderingData(true);
+    actions.refreshAiRenderingData(true, prompt.trim() || undefined);
   };
 
   // Minimized floating PiP thumbnail (draggable)
@@ -256,7 +256,7 @@ export function AiRenderingModal() {
           </div>
           {/* Thumbnail image */}
           <img
-            src={aiRenderingUrl}
+            src={aiRenderingUrl || undefined}
             alt="AI rendering preview"
             className="w-full h-32 object-cover cursor-pointer"
             onClick={handleRestore}
@@ -268,7 +268,10 @@ export function AiRenderingModal() {
 
   return (
     <Dialog open={true} onOpenChange={open => { if (!open) handleClose(); }}>
-      <DialogContent className="max-w-5xl w-full max-h-[90vh] overflow-y-auto">
+      <DialogContent 
+        className="max-w-5xl w-full max-h-[90vh] overflow-y-auto"
+        onInteractOutside={(e) => e.preventDefault()}
+      >
         <DialogHeader className="flex flex-row items-start justify-between space-y-0 pr-8">
           <div>
             <DialogTitle>AI Architectural Rendering</DialogTitle>
@@ -287,34 +290,43 @@ export function AiRenderingModal() {
             <p className="text-sm text-destructive">Failed to load image.</p>
           )}
           {!imgLoaded && !imgError && (
-            <div className="flex items-center justify-center h-48 bg-muted rounded">
-              <p className="text-sm text-muted-foreground animate-pulse">Loading image…</p>
+            <div className={`flex items-center justify-center h-64 bg-muted rounded ${isGeneratingRendering ? 'animate-pulse' : ''}`}>
+              <div className="text-center space-y-2">
+                <p className="text-sm font-medium text-foreground">
+                  {isGeneratingRendering ? 'Generating High-Fidelity Render...' : 'Loading image...'}
+                </p>
+                {isGeneratingRendering && (
+                  <p className="text-xs text-muted-foreground">This may take 2-5 minutes. You can minimize this window.</p>
+                )}
+              </div>
             </div>
           )}
-          <img
-            src={aiRenderingUrl}
-            alt="AI architectural rendering"
-            className={`w-full h-auto rounded ${!imgLoaded ? 'hidden' : ''}`}
-            onLoad={() => setImgLoaded(true)}
-            onError={() => setImgError(true)}
-          />
+          {aiRenderingUrl && (
+            <img
+              src={aiRenderingUrl}
+              alt="AI architectural rendering"
+              className={`w-full h-auto rounded ${!imgLoaded ? 'hidden' : ''}`}
+              onLoad={() => setImgLoaded(true)}
+              onError={() => setImgError(true)}
+            />
+          )}
         </div>
 
         <div className="mt-4 space-y-3 border-t pt-3">
           <div className="space-y-1">
             <h3 className="text-sm font-bold">Generation Panel</h3>
             <p className="text-xs text-muted-foreground">
-              Add optional guidance for the render. This field is UI-only for now and does not affect generation yet.
+              Optionally describe the render style. Overrides the default photorealistic style when provided. Click <strong>Refresh</strong> to apply.
             </p>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="render-prompt">Prompt</Label>
+            <Label htmlFor="render-prompt">Style Prompt <span className="text-muted-foreground font-normal">(optional)</span></Label>
             <Textarea
               id="render-prompt"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Describe the desired render mood, facade style, materials, lighting, or camera angle."
-              className="min-h-[110px] resize-none"
+              placeholder={`Examples:\n• Minimalist white clay model render\n• Sunset golden hour, warm lighting, lush landscaping\n• Aerial drone view from 200m altitude`}
+              className="min-h-[110px] resize-none text-sm"
             />
           </div>
         </div>

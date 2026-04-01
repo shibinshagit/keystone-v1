@@ -17,178 +17,201 @@ import {
 
 const NANO_BANANA_BASE = 'https://api.nanobananaapi.ai/api/v1/nanobanana';
 const POLL_INTERVAL_MS = 3000;
-const MAX_POLLS = 60; // ~3 minutes max wait
+const MAX_POLLS = 120; // ~6 minutes max wait (Pro 2K can take 2-5 min)
 
 /**
  * Creates a detailed architectural prompt from all building, plot and design parameters
  */
 function createArchitecturalPrompt(input: GenerateRenderingInput): string {
   const { buildings, plot, design } = input;
-  const numBuildings = buildings.length;
-  const isSingle = numBuildings === 1;
-
-  // Helper: describe floor count in terms AI image models understand better
-  function floorCategory(n: number): string {
-    if (n <= 2) return `very small ${n}-storey`;
-    if (n <= 4) return `low-rise ${n}-storey`;
-    if (n <= 6) return `low-rise ${n}-storey`;
-    if (n <= 10) return `mid-rise ${n}-storey`;
-    if (n <= 20) return `tall ${n}-storey`;
-    return `high-rise ${n}-storey`;
-  }
-
-  // ── Building descriptions ────────────────────────────────────────
-  const buildingDescriptions = buildings.map((b, i) => {
-    const effectiveFloors = Math.max(1, b.numFloors);
-    const floorH = (b.height / effectiveFloors).toFixed(1);
-    const w = b.footprintWidth;
-    const d = b.footprintDepth;
-    const label = isSingle ? 'The building' : `Building ${i + 1} ("${b.name}")`;
-    const positionDesc = b.position ? `, positioned on the ${b.position}` : '';
-
-    let useStyle = '';
-    if (b.intendedUse === 'Residential') useStyle = 'residential apartment';
-    else if (b.intendedUse === 'Commercial' || b.intendedUse === 'Office') useStyle = 'commercial office';
-    else if (b.intendedUse === 'Mixed-Use') useStyle = 'mixed-use (retail ground floor, residential upper)';
-    else if (b.intendedUse === 'Retail') useStyle = 'retail';
-    else if (b.intendedUse === 'Industrial') useStyle = 'industrial';
-    else if (b.intendedUse === 'Public' || b.intendedUse === 'Hospitality') useStyle = 'public / hospitality';
-    else useStyle = b.intendedUse;
-
-    let typologyDesc = '';
-    if (b.typology === 'point') typologyDesc = 'point tower (compact square/rectangular footprint)';
-    else if (b.typology === 'slab') typologyDesc = 'slab block (elongated rectangular footprint)';
-    else if (b.typology === 'lshaped') typologyDesc = 'L-shaped footprint';
-    else if (b.typology === 'ushaped') typologyDesc = 'U-shaped footprint with courtyard';
-    else if (b.typology === 'tshaped') typologyDesc = 'T-shaped footprint';
-    else if (b.typology === 'hshaped') typologyDesc = 'H-shaped footprint';
-    else if (b.typology === 'oshaped') typologyDesc = 'O-shaped (ring/donut) footprint with central courtyard';
-    else typologyDesc = `${b.typology} shaped footprint`;
-
-    let mixDesc = '';
-    if (b.programMix) {
-      const parts: string[] = [];
-      if (b.programMix.residential > 0) parts.push(`${b.programMix.residential}% residential`);
-      if (b.programMix.commercial > 0) parts.push(`${b.programMix.commercial}% commercial`);
-      if (b.programMix.hospitality > 0) parts.push(`${b.programMix.hospitality}% hospitality`);
-      if (b.programMix.institutional > 0) parts.push(`${b.programMix.institutional}% institutional`);
-      if (parts.length > 1) mixDesc = ` Program mix: ${parts.join(', ')}.`;
+  const uniqueBuildingIds = new Set(buildings.map((b: any) => {
+    if (typeof b.id === 'string') {
+      return b.id.replace(/-podium$/, '').replace(/-tower$/, '');
     }
+    return String(b.id || b.name);
+  }));
+  const numBuildings = uniqueBuildingIds.size;
 
-    // Describe floors explicitly so the AI model can "see" the count
-    const floorLines: string[] = [];
-    for (let f = 1; f <= b.numFloors; f++) {
-      if (f === 1) floorLines.push('Ground floor (1st storey)');
-      else if (f === b.numFloors) floorLines.push(`Top floor (${f}${f === 2 ? 'nd' : f === 3 ? 'rd' : 'th'} storey) with rooftop/terrace`);
+  function getBaseId(b: any) {
+    if (typeof b.id === 'string') return b.id.replace(/-podium$/, '').replace(/-tower$/, '');
+    return String(b.id || b.name);
+  }
+
+  const buildingGroups = new Map<string, { main: any, podium: any, tower: any }>();
+  buildings.forEach((b: any) => {
+    const baseId = getBaseId(b);
+    if (!buildingGroups.has(baseId)) buildingGroups.set(baseId, { main: b, podium: null, tower: null });
+    const g = buildingGroups.get(baseId)!;
+    if (typeof b.id === 'string') {
+      if (b.id.includes('-podium')) g.podium = b;
+      else if (b.id.includes('-tower')) g.tower = b;
+      else g.main = b;
     }
-    let floorListDesc = '';
-    if (b.numFloors === 1) {
-      floorListDesc = ' It has 1 visible above-ground floor (single storey, ground level only).';
-    } else if (b.numFloors <= 8) {
-      const middleCount = b.numFloors - 2;
-      floorListDesc = ` It has ${b.numFloors} visible above-ground floor slabs: ${floorLines.join(', ')}${middleCount > 0 ? `, and ${middleCount} middle floor${middleCount > 1 ? 's' : ''} between them` : ''}.`;
+  });
+
+  const buildingGroupArray = Array.from(buildingGroups.values());
+
+  // ── Building descriptions (compact, grouped by identical config) ──
+  function describeBuildingGroup(group: any): string {
+    const isComposite = group.podium && group.tower;
+    const b = group.tower || group.main || group.podium;
+    const p = group.podium;
+    const t = group.tower;
+
+    const use = b.intendedUse || 'Residential';
+    const gfH = b.groundFloorHeight || b.floorHeight || 3.5;
+    const tfH = b.floorHeight || 3.5;
+
+    if (isComposite) {
+      const pGfH = p.groundFloorHeight || p.floorHeight || gfH;
+      const pTfH = p.floorHeight || tfH;
+      const tTfH = t.floorHeight || tfH;
+      const podH = pGfH + (p.numFloors - 1) * pTfH;
+      const towH = t.numFloors * tTfH;
+      const totalH = Math.round(podH + towH);
+      return `${use}, podium-tower: ${p.numFloors}F podium (${Math.round(podH)}m, GF ${pGfH}m) + ${t.numFloors}F tower (${Math.round(towH)}m) = ${totalH}m total. Podium wider than tower.`;
+    } else {
+      const totalH = Math.round(gfH + (b.numFloors - 1) * tfH);
+      return `${use}, ${b.numFloors}F, ${totalH}m tall (GF ${gfH}m, upper ${tfH}m). ${Math.round(b.footprintWidth || 0)}×${Math.round(b.footprintDepth || 0)}m footprint.`;
     }
-
-    const basementDesc = b.basementFloors > 0
-      ? ` The building has ${b.basementFloors} underground basement level${b.basementFloors > 1 ? 's' : ''} (not visible above ground — only the ramp entrance should be visible).`
-      : '';
-
-    const cat = floorCategory(b.numFloors);
-
-    // Aspect ratio: building width vs height determines visual proportions
-    const maxSide = Math.max(w, d);
-    const proportionDesc = maxSide > b.height * 2 ? 'VERY WIDE and SHORT — the footprint is much larger than the height, it spreads horizontally'
-      : maxSide > b.height ? 'wider than it is tall — a horizontally-oriented building'
-      : 'taller than it is wide — a vertically-oriented tower';
-
-    const footprintCoords = b.footprint
-      ? ` Exact footprint polygon coordinates: ${JSON.stringify(b.footprint)}.`
-      : '';
-    const centerCoords = b.center
-      ? ` Center point: (${b.center.x}, ${b.center.y}).`
-      : '';
-    const relativePosition = b.relativePosition
-      ? ` Relative position from plot origin: (${b.relativePosition.x}, ${b.relativePosition.y}).`
-      : '';
-    const rotation = ` Orientation / rotation: ${b.rotation ?? 0} degrees.`;
-
-    return `${label}: ${useStyle}, ${typologyDesc}, a ${cat} building${positionDesc}, ${Math.round(b.height)}m total height (${floorH}m floor-to-floor), footprint: ${w}m wide × ${d}m deep (~${Math.round(b.footprintArea)} sqm). The building is ${proportionDesc}.${floorListDesc}${basementDesc}${mixDesc}${footprintCoords}${centerCoords}${relativePosition}${rotation}`;
-  }).join('\n');
-
-  // ── Plot context ─────────────────────────────────────────────────
-  const plotParts: string[] = [
-    `Plot area: ${Math.round(plot.plotArea)} sqm`,
-    `setback: ${plot.setback}m all sides`,
-  ];
-  if (plot.far) plotParts.push(`FAR: ${plot.far}`);
-  if (plot.maxCoverage) plotParts.push(`max ground coverage: ${Math.round(plot.maxCoverage * 100)}%`);
-  if (plot.greenAreas > 0) plotParts.push(`${plot.greenAreas} landscaped green area(s)`);
-  if (plot.parkingAreas > 0) plotParts.push(`${plot.parkingAreas} parking zone(s)`);
-  if (plot.regulationType) plotParts.push(`regulation: ${plot.regulationType}`);
-  if (plot.origin) plotParts.push(`plot origin: (${plot.origin.x}, ${plot.origin.y})`);
-  if (plot.footprint) plotParts.push(`plot footprint coordinates: ${JSON.stringify(plot.footprint)}`);
-  const plotDesc = plotParts.join(', ');
-
-  // ── Design strategy details ──────────────────────────────────────
-  const designParts: string[] = [];
-  if (design.hasPodium && design.podiumFloors > 0) {
-    designParts.push(`The building sits on a ${design.podiumFloors}-floor podium base`);
   }
-  if (design.parkingTypes.length > 0) {
-    designParts.push(`Parking: ${design.parkingTypes.join(', ')}`);
-  }
-  if (design.selectedUtilities.length > 0) {
-    designParts.push(`On-site utilities: ${design.selectedUtilities.join(', ')}`);
-  }
-  const unitMixEntries = Object.entries(design.unitMix).filter(([, v]) => v > 0);
-  if (unitMixEntries.length > 0) {
-    designParts.push(`Unit mix: ${unitMixEntries.map(([k, v]) => `${k} ${v}%`).join(', ')}`);
-  }
-  const designDesc = designParts.length > 0 ? designParts.join('. ') + '.' : '';
 
-  // ── Materials based on primary use ───────────────────────────────
+  // Group identical buildings to save prompt space
+  function getBuildingSignature(group: any): string {
+    const isComposite = group.podium && group.tower;
+    const b = group.tower || group.main || group.podium;
+    if (isComposite) {
+      return `composite_${group.podium.numFloors}_${group.tower.numFloors}_${b.intendedUse}_${b.floorHeight}_${b.groundFloorHeight || ''}`;
+    }
+    return `simple_${b.numFloors}_${b.intendedUse}_${b.floorHeight}_${b.groundFloorHeight || ''}`;
+  }
+
+  const sigMap = new Map<string, { indices: number[]; group: any }>();
+  buildingGroupArray.forEach((group, i) => {
+    const sig = getBuildingSignature(group);
+    if (!sigMap.has(sig)) sigMap.set(sig, { indices: [], group });
+    sigMap.get(sig)!.indices.push(i + 1);
+  });
+
+  const buildingLines: string[] = [];
+  for (const { indices, group } of sigMap.values()) {
+    const desc = describeBuildingGroup(group);
+    if (indices.length === numBuildings) {
+      // All buildings identical
+      buildingLines.push(`ALL ${numBuildings} buildings: ${desc}`);
+    } else if (indices.length > 1) {
+      buildingLines.push(`Buildings ${indices.join(',')}: ${desc}`);
+    } else {
+      buildingLines.push(`Building ${indices[0]}: ${desc}`);
+    }
+  }
+  const buildingDescriptions = buildingLines.join('\n');
+
+  // ── Plot context (compact) ──────────────────────────────────────
+  const plotDesc = `${Math.round(plot.plotArea)}sqm, ${plot.setback}m setback${plot.greenAreas > 0 ? `, ${plot.greenAreas} green areas` : ''}${plot.parkingAreas > 0 ? `, ${plot.parkingAreas} parking zones` : ''}`;
+
+  // ── Materials (compact) ─────────────────────────────────────────
   const primaryUse = buildings[0].intendedUse;
-  let materials = 'glass, concrete, modern facade materials';
-  if (primaryUse === 'Residential') materials = 'glass, modern facade panels, warm lighting from windows, textured external finishes, balcony railings';
-  else if (primaryUse === 'Commercial' || primaryUse === 'Office') materials = 'reflective glass curtain wall, aluminum frames, steel, contemporary signage';
-  else if (primaryUse === 'Mixed-Use') materials = 'brick, glass, metal panels, vibrant street-level retail frontage';
-  else if (primaryUse === 'Industrial') materials = 'concrete, metal cladding, industrial glass, minimal ornamentation';
+  let materials = 'glass, concrete, modern facades';
+  if (primaryUse === 'Residential') materials = 'glass facades, balconies, warm window lighting';
+  else if (primaryUse === 'Commercial' || primaryUse === 'Office') materials = 'glass curtain walls, steel, aluminum';
 
-  // ── Floor count emphasis ─────────────────────────────────────────
-  const floorConstraints = buildings.map((b, i) => {
-    const label = isSingle ? 'the building' : `building ${i + 1}`;
-    if (b.numFloors <= 3) return `${label} is VERY SHORT — only ${b.numFloors} floors, barely taller than a house`;
-    if (b.numFloors <= 6) return `${label} is LOW-RISE — only ${b.numFloors} floors, shorter than nearby trees`;
-    if (b.numFloors <= 10) return `${label} is a MEDIUM building with ${b.numFloors} floors`;
-    return `${label} has ${b.numFloors} floors`;
-  }).join('; ');
+  // ── Peripheral zones (compact) ──────────────────────────────────
+  const hasParking = plot.parkingAreas > 0;
+  const hasRoads = design.selectedUtilities?.includes('Roads');
+  let peripheralDesc = '';
+  if (hasParking && hasRoads) peripheralDesc = 'Site has: parking strip (outer) → road → buildings (inner). ';
+  else if (hasParking) peripheralDesc = 'Site has peripheral parking strip around buildings. ';
+  else if (hasRoads) peripheralDesc = 'Site has internal road around buildings. ';
 
-  // ── Compose final prompt ─────────────────────────────────────────
-  const buildingCountNote = `CRITICAL CONSTRAINT — BUILDING COUNT: There are EXACTLY ${numBuildings} building${isSingle ? '' : 's'} on this plot. Do NOT add extra buildings. Show ONLY ${numBuildings} building structure${isSingle ? '' : 's'}.`;
-  const layoutConstraint = design.layoutConstraint || 'STRICT';
+  // ── Composite note (compact) ────────────────────────────────────
+  const compositeBuildings = buildingGroupArray.filter(g => g.podium && g.tower);
+  let compositeNote = '';
+  if (compositeBuildings.length > 0) {
+    compositeNote = compositeBuildings.length === numBuildings
+      ? 'All buildings have stepped podium-tower massing (wider base, narrower tower on top). '
+      : `${compositeBuildings.length} of ${numBuildings} buildings have podium-tower massing. `;
+  }
 
-  const prompt = `Photorealistic 3D architectural rendering of a development site in ${plot.location}.
+  // ── Height uniformity ──────────────────────────────────────────
+  const allHeights = buildingGroupArray.map(g => {
+    if (g.podium && g.tower) {
+      const pGfH = g.podium.groundFloorHeight || g.podium.floorHeight || 3.5;
+      const pTfH = g.podium.floorHeight || 3.5;
+      const tTfH = g.tower.floorHeight || 3.5;
+      return Math.round(pGfH + (g.podium.numFloors - 1) * pTfH + g.tower.numFloors * tTfH);
+    }
+    const b = g.main || g.tower || g.podium;
+    const gfH = b.groundFloorHeight || b.floorHeight || 3.5;
+    const tfH = b.floorHeight || 3.5;
+    return Math.round(gfH + (b.numFloors - 1) * tfH);
+  });
+  const allSameHeight = allHeights.length > 1 && allHeights.every(h => h === allHeights[0]);
+  const uniformNote = allSameHeight ? `All ${numBuildings} buildings MUST be identical height (${allHeights[0]}m). ` : '';
 
-${buildingCountNote}
-CRITICAL CONSTRAINT — LAYOUT: ${layoutConstraint}. Preserve exact building positions, spacing, orientation, scale, and layout based on the provided coordinates and footprint polygons. Do not rearrange, symmetrize, auto-place, or regularize the buildings.
+  // ── Image-to-image prefix ──────────────────────────────────────
+  const hasControlImage = !!input.controlImageBase64;
+  const img2imgPrefix = hasControlImage
+    ? `Reference image is a 2D site plan. Extrude all ${numBuildings} footprints into 3D buildings preserving exact positions. `
+    : '';
 
-BUILDINGS:
+  // ── User overrides (from the Generation Panel prompt box) ──────
+  const userStyle = input.userPrompt?.trim();
+  const styleSection = userStyle
+    ? `Style: ${userStyle}.`
+    : `Materials: ${materials}. Style: professional architectural visualization, photorealistic, daytime, blue sky, 4K.\nCamera: elevated bird's-eye isometric view showing ALL ${numBuildings} buildings clearly. No building hidden behind another.`;
+
+  // ── Compose final prompt (target <5000 chars) ──────────────────
+  const prompt = `${img2imgPrefix}Photorealistic 3D architectural rendering, ${plot.location}. ${numBuildings} buildings on ${plotDesc}.
+
+${peripheralDesc}${compositeNote}${uniformNote}
 ${buildingDescriptions}
 
-PLOT: ${plotDesc}.
+${styleSection}
 
-${designDesc}
-
-Materials and finishes: ${materials}.
-Rendering style: professional architectural visualization, photorealistic, daytime natural lighting,
-clear blue sky, excellent detail clarity, high resolution 4K quality, depth of field, vibrant colors,
-realistic shadows and reflections, professional architectural render, high-end visualization.
-Camera angle: elevated 3/4 bird's-eye view showing the full plot with all buildings, landscaping, roads and context.
-
-CRITICAL CONSTRAINT — FLOOR COUNT: ${floorConstraints}. Each above-ground floor must be clearly visible as a distinct horizontal band/slab on the facade. Basement floors are underground and NOT visible. Do NOT add extra floors. Do NOT make the building taller than specified. Count the visible floor lines carefully.
-No watermarks or text overlay.`;
+CONSTRAINTS: Exactly ${numBuildings} separate standalone buildings. Each building physically independent with clear space between them. Do not merge or add buildings.`;
 
   return prompt;
+}
+
+/**
+ * Uploads a base64 PNG to a public temporary file host and returns the URL.
+ * Uses tmpfiles.org (no API key needed, files expire after 1 hour).
+ */
+async function uploadToPublicHost(base64Data: string): Promise<string | null> {
+  try {
+    // Strip data URI prefix
+    const raw = base64Data.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(raw, 'base64');
+
+    // Upload to tmpfiles.org
+    const formData = new FormData();
+    const blob = new Blob([buffer], { type: 'image/png' });
+    formData.append('file', blob, 'site-plan.png');
+
+    const res = await fetch('https://tmpfiles.org/api/v1/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!res.ok) {
+      console.warn('[AI Rendering] tmpfiles.org upload failed:', res.status);
+      return null;
+    }
+
+    const data = await res.json();
+    // tmpfiles.org returns { data: { url: "https://tmpfiles.org/12345/site-plan.png" } }
+    // The direct download URL requires replacing /tmpfiles.org/ with /tmpfiles.org/dl/
+    const uploadUrl: string = data?.data?.url;
+    if (!uploadUrl) return null;
+
+    const directUrl = uploadUrl.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+    console.log('[AI Rendering] Control image uploaded to:', directUrl);
+    return directUrl;
+  } catch (e) {
+    console.warn('[AI Rendering] Public upload failed:', e);
+    return null;
+  }
 }
 
 export async function generateArchitecturalRendering(
@@ -205,44 +228,76 @@ export async function generateArchitecturalRendering(
   }
 
   const prompt = createArchitecturalPrompt(input);
+  console.log('[AI Rendering] Prompt length:', prompt.length, 'chars');
+  console.log('[AI Rendering] Prompt preview:', prompt.substring(0, 500));
 
-  // Step 1: Submit generation task
+  // Upload control image to a public host if provided
+  let controlImageUrl: string | null = null;
+  if (input.controlImageBase64) {
+    controlImageUrl = await uploadToPublicHost(input.controlImageBase64);
+  }
+
+  const useImg2Img = !!controlImageUrl;
+  console.log(`[AI Rendering] Mode: ${useImg2Img ? 'Image-to-Image (Pro)' : 'Text-to-Image (Pro)'}${useImg2Img ? ` (control: ${controlImageUrl})` : ''}`);
+
+  // Step 1: Submit generation task using the PRO endpoint for better quality
   let submitData: any;
   try {
-    const submitRes = await fetch(`${NANO_BANANA_BASE}/generate`, {
+    const requestBody: Record<string, any> = {
+      prompt,
+      resolution: '2K',
+      aspectRatio: '16:9',
+      callBackUrl: 'https://localhost/noop', // required field; we poll instead
+    };
+
+    // Add reference image for image-to-image mode
+    if (useImg2Img && controlImageUrl) {
+      requestBody.imageUrls = [controlImageUrl];
+    }
+
+    console.log('[AI Rendering] Submitting to NanoBanana Pro endpoint...');
+    const submitRes = await fetch(`${NANO_BANANA_BASE}/generate-pro`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        prompt,
-        type: 'TEXTTOIAMGE',
-        numImages: 1,
-        image_size: '16:9',
-        callBackUrl: 'https://localhost/noop', // required field; we poll instead
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!submitRes.ok) {
-      throw new Error('Image generation service is temporarily unavailable. Please try again.');
+      const errText = await submitRes.text().catch(() => '');
+      console.error('[AI Rendering] Pro endpoint failed:', submitRes.status, errText);
+      // Fallback to basic endpoint if Pro is unavailable
+      console.log('[AI Rendering] Falling back to basic endpoint...');
+      return await generateWithBasicEndpoint(input, prompt, controlImageUrl, apiKey);
     }
 
     submitData = await submitRes.json();
   } catch (e) {
-    if (e instanceof Error && e.message.includes('Image generation service')) throw e;
-    throw new Error('Could not connect to image generation service. Check your internet connection and try again.');
+    console.error('[AI Rendering] Pro endpoint error:', e);
+    // Fallback to basic endpoint
+    return await generateWithBasicEndpoint(input, prompt, controlImageUrl, apiKey);
   }
 
   if (submitData.code !== 200 || !submitData.data?.taskId) {
-    throw new Error('Failed to start image generation. Please try again.');
+    console.warn('[AI Rendering] Pro submit failed, falling back:', submitData);
+    return await generateWithBasicEndpoint(input, prompt, controlImageUrl, apiKey);
   }
 
   const taskId = submitData.data.taskId;
+  console.log('[AI Rendering] Pro task submitted:', taskId);
 
   // Step 2: Poll for completion
+  // Pro endpoint uses same record-info polling with same response format
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+
+    // Log progress every ~15 seconds
+    if (i % 5 === 4) {
+      const elapsed = Math.round((i + 1) * POLL_INTERVAL_MS / 1000);
+      console.log(`[AI Rendering] Still generating... (${elapsed}s elapsed)`);
+    }
 
     let pollData: any;
     try {
@@ -263,22 +318,101 @@ export async function generateArchitecturalRendering(
     const flag = pollData?.data?.successFlag;
 
     if (flag === 1) {
-      // SUCCESS
-      const rawUrl = pollData.data.response?.resultImageUrl
+      // SUCCESS — Pro uses data.info.resultImageUrl OR data.response.resultImageUrl
+      const rawUrl = pollData.data.info?.resultImageUrl
+        || pollData.data.response?.resultImageUrl
         || pollData.data.response?.originImageUrl;
       if (!rawUrl) {
         throw new Error('Image generation completed but no image was returned. Please try again.');
       }
       // Proxy through our API route to avoid TLS/network issues with tempfile host
       const imageUrl = `/api/proxy-image?url=${encodeURIComponent(rawUrl)}`;
+      console.log('[AI Rendering] Pro generation complete:', rawUrl);
       return { imageUrl, buildings: input.buildings, plot: input.plot, summary: {} as RenderingProjectSummary };
     }
 
     if (flag === 2 || flag === 3) {
-      throw new Error('Image generation failed. Please try again with different parameters.');
+      const errMsg = pollData.data.errorMessage || 'Unknown error';
+      console.error('[AI Rendering] Pro generation failed:', errMsg);
+      throw new Error(`Image generation failed: ${errMsg}. Please try again.`);
     }
     // flag === 0 means still generating — continue polling
   }
 
   throw new Error('Image generation timed out. Please try again.');
 }
+
+/**
+ * Fallback: use the basic /generate endpoint if Pro is unavailable
+ */
+async function generateWithBasicEndpoint(
+  input: GenerateRenderingInput,
+  prompt: string,
+  controlImageUrl: string | null,
+  apiKey: string
+): Promise<GenerateRenderingOutput> {
+  const useImg2Img = !!controlImageUrl;
+  const generationType = useImg2Img ? 'IMAGETOIAMGE' : 'TEXTTOIAMGE';
+
+  const requestBody: Record<string, any> = {
+    prompt,
+    type: generationType,
+    numImages: 1,
+    image_size: '16:9',
+    callBackUrl: 'https://localhost/noop',
+  };
+
+  if (useImg2Img && controlImageUrl) {
+    requestBody.imageUrls = [controlImageUrl];
+  }
+
+  console.log('[AI Rendering] Using basic endpoint, mode:', generationType);
+  const submitRes = await fetch(`${NANO_BANANA_BASE}/generate`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!submitRes.ok) {
+    throw new Error('Image generation service is temporarily unavailable. Please try again.');
+  }
+
+  const submitData = await submitRes.json();
+  if (submitData.code !== 200 || !submitData.data?.taskId) {
+    throw new Error('Failed to start image generation. Please try again.');
+  }
+
+  const taskId = submitData.data.taskId;
+
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+
+    let pollData: any;
+    try {
+      const pollRes = await fetch(
+        `${NANO_BANANA_BASE}/record-info?taskId=${encodeURIComponent(taskId)}`,
+        { headers: { 'Authorization': `Bearer ${apiKey}` } }
+      );
+      if (!pollRes.ok) continue;
+      pollData = await pollRes.json();
+    } catch { continue; }
+
+    const flag = pollData?.data?.successFlag;
+    if (flag === 1) {
+      const rawUrl = pollData.data.response?.resultImageUrl
+        || pollData.data.response?.originImageUrl;
+      if (!rawUrl) throw new Error('Image generation completed but no image was returned.');
+      const imageUrl = `/api/proxy-image?url=${encodeURIComponent(rawUrl)}`;
+      return { imageUrl, buildings: input.buildings, plot: input.plot, summary: {} as RenderingProjectSummary };
+    }
+    if (flag === 2 || flag === 3) {
+      throw new Error('Image generation failed. Please try again with different parameters.');
+    }
+  }
+
+  throw new Error('Image generation timed out. Please try again.');
+}
+

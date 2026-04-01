@@ -22,27 +22,30 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Host not allowed' }, { status: 403 });
   }
 
-  try {
-    // Try direct fetch first
-    const directRes = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    if (directRes.ok) {
-      const contentType = directRes.headers.get('content-type') || 'image/png';
-      const buf = await directRes.arrayBuffer();
-      return new NextResponse(buf, {
-        headers: {
-          'Content-Type': contentType,
-          'Cache-Control': 'public, max-age=86400',
-        },
-      });
+  // Try direct fetch first (with retries)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const directRes = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      if (directRes.ok) {
+        const contentType = directRes.headers.get('content-type') || 'image/png';
+        const buf = await directRes.arrayBuffer();
+        return new NextResponse(buf, {
+          headers: {
+            'Content-Type': contentType,
+            'Cache-Control': 'public, max-age=86400',
+          },
+        });
+      }
+    } catch {
+      // Retry after a short delay
+      if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
     }
-  } catch {
-    // Direct fetch failed — fall through to proxy
   }
 
   // Fallback: use wsrv.nl image proxy
   try {
     const proxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(url)}`;
-    const proxyRes = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+    const proxyRes = await fetch(proxyUrl, { signal: AbortSignal.timeout(30000) });
     if (!proxyRes.ok) {
       return NextResponse.json({ error: 'Proxy fetch failed' }, { status: 502 });
     }
