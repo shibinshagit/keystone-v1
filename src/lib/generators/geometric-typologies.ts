@@ -621,153 +621,304 @@ function segmentWing(
             break;
         }
     }
-
     return segments;
 }
 
+/**
+ * L-Shape Generator â€” Integrated approach:
+ *   For each position on each edge, try to place slab1 (full rectangle)
+ *   THEN immediately attach a perpendicular arm (slab2).
+ *   Only commit the L-shape if BOTH arms fit fully inside validArea.
+ *   Advance past the full L-shape to leave room for the next one.
+ *
+ * NO CLIPPING â€” both arms must be complete, uncut rectangles.
+ * Dimensional constraints: width 20-25m, length 25-55m
+ */
 export function generateLShapes(
     plotGeometry: Feature<Polygon | MultiPolygon>,
     params: GeometricTypologyParams
 ): Feature<Polygon>[] {
     const {
-        wingDepth, setback, obstacles,
+        setback, obstacles,
         minBuildingWidth = 20, maxBuildingWidth = 25,
         minBuildingLength = 25, maxBuildingLength = 55,
-        sideSetback = 6
+        sideSetback = 6,
+        frontSetback = 6,
+        seed = 0
     } = params;
 
-    console.log(`[generateLShapes] Setbacks -> sideSetback: ${sideSetback}, setback: ${setback}`);
-    console.log(`[generateLShapes] Dimensions -> minWidth: ${minBuildingWidth}, maxWidth: ${maxBuildingWidth}, minLength: ${minBuildingLength}, maxLength: ${maxBuildingLength}`);
+    const rearSetback = params.rearSetback ?? frontSetback;
+    const cornerMargin = Math.max(sideSetback, 3);
+    const rowGap = frontSetback + rearSetback;
+    // L-shape arms should TOUCH (same building), gap only between separate L-shapes
+    const lShapeSpacing = Math.max(rowGap, sideSetback * 2, 6);
 
-    // Valid Area
-    // @ts-ignore
-    const bufferedPlot = turf.buffer(plotGeometry, -setback, { units: 'meters' });
-    if (!bufferedPlot) return [];
-    // @ts-ignore
-    const validArea = bufferedPlot as Feature<Polygon | MultiPolygon>;
-    // @ts-ignore
-    const simplified = turf.simplify(validArea, { tolerance: 0.00005, highQuality: true });
+    console.log(`[L-Gen] ===== Integrated L-Gen (seed=${seed}) =====`);
+    console.log(`[L-Gen] Dims: W[${minBuildingWidth}-${maxBuildingWidth}] L[${minBuildingLength}-${maxBuildingLength}]`);
+    console.log(`[L-Gen] Setbacks: side=${sideSetback}, front=${frontSetback}, rear=${rearSetback}, lSpacing=${lShapeSpacing}`);
 
-    // Get Coordinates
+    const validArea = plotGeometry as Feature<Polygon | MultiPolygon>;
+    // @ts-ignore
+    const simplified = turf.simplify(validArea, { tolerance: 0.000001, highQuality: true });
     const coords = (simplified.geometry.type === 'Polygon')
         ? simplified.geometry.coordinates[0]
         : (simplified.geometry as MultiPolygon).coordinates[0][0];
 
-    const minDepth = minBuildingWidth || 20;
-    const maxDepth = maxBuildingWidth || 25;
+    if (coords.length < 4) return [];
 
-    const candidates: { feature: Feature<Polygon>, score: number, variantId?: string }[] = [];
+    // Seeded random
+    const sr = (idx: number) => {
+        const x = Math.sin(seed + idx) * 10000;
+        return x - Math.floor(x);
+    };
+
+    // Helper: Check if polygon is FULLY contained in validArea (>=95% area overlap)
+    function isFullyContained(poly: Feature<Polygon>): boolean {
+        try {
+            let intersection = null;
+            try {
+                // @ts-ignore
+                intersection = turf.intersect(poly, validArea);
+            } catch (e) {
+                // @ts-ignore
+                const cp = turf.buffer(poly, 0);
+                // @ts-ignore
+                const ca = turf.buffer(validArea, 0);
+                // @ts-ignore
+                intersection = turf.intersect(cp, ca);
+            }
+            if (!intersection) return false;
+            return turf.area(intersection) >= turf.area(poly) * 0.95;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // Collect valid edges
+    type EdgeData = { edge: Feature<LineString>; length: number; bearing: number; idx: number };
+    const validEdges: EdgeData[] = [];
+
+    for (let i = 0; i < coords.length - 1; i++) {
+        const p1 = turf.point(coords[i]);
+        const p2 = turf.point(coords[i + 1]);
+        const length = turf.distance(p1, p2, { units: 'meters' });
+        if (length >= minBuildingLength) {
+            validEdges.push({
+                edge: turf.lineString([coords[i], coords[i + 1]]),
+                length,
+                bearing: turf.bearing(p1, p2),
+                idx: i
+            });
+        }
+    }
+
+    if (validEdges.length === 0) return [];
+
+    // Sort edges by strategy
+    const strategy = seed % 3;
+    validEdges.sort((a, b) => {
+        if (strategy === 1) return (b.length + sr(a.idx) * 20) - (a.length + sr(b.idx) * 20);
+        if (strategy === 2) return a.length - b.length;
+        return b.length - a.length;
+    });
+
+    const preferFarEnd = (seed % 2) === 0;
+
+
+    // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+    // INTEGRATED: Place slab1 + slab2 together as a unit
+    // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+
+    const results: Feature<Polygon>[] = [];
     const usedAreas: Feature<Polygon>[] = [...(obstacles || [])];
 
-    // Loop through corners to find valid L-junctions
-    for (let i = 0; i < coords.length - 1; i++) {
-        try {
-            const rand = Math.abs(Math.sin(i * 12.9898 + (params.seed || 0) * 78.233));
-            const targetDepth = minDepth + (rand * (maxDepth - minDepth));
-            const pCorner = turf.point(coords[i]);
-            const pPrev = turf.point(coords[i === 0 ? coords.length - 2 : i - 1]);
-            const pNext = turf.point(coords[i + 1]);
+    const maxDepthPasses = 3; // edge + 2 inner rings
+    let depthOffset = 0;
+    const attachEnds = preferFarEnd ? ['far', 'start'] : ['start', 'far'];
 
-            // Check angle
-            const bearingPrev = turf.bearing(pCorner, pPrev);
-            const bearingNext = turf.bearing(pCorner, pNext);
-            const angle = Math.abs(bearingPrev - bearingNext);
+    for (let depthPass = 0; depthPass < maxDepthPasses; depthPass++) {
+        let placedThisPass = 0;
 
-            const cornerSize = Math.max(minBuildingWidth, targetDepth); // Square corner
+        for (const edgeData of validEdges) {
+            let currentDist = cornerMargin;
+            const limitDist = edgeData.length - cornerMargin;
 
-            // Edge 1
-            const distNext = turf.distance(pCorner, pNext, { units: 'meters' });
-            const distPrev = turf.distance(pCorner, pPrev, { units: 'meters' });
+            while (currentDist + minBuildingLength <= limitDist) {
+                const maxAvailLen = Math.min(maxBuildingLength, limitDist - currentDist);
+                if (maxAvailLen < minBuildingLength) break;
 
-            if (distNext < minBuildingLength || distPrev < minBuildingLength) continue;
+                const edgeStart = turf.along(edgeData.edge, currentDist, { units: 'meters' });
 
-            let cornerPoly: Feature<Polygon> | null = null;
-            let cornerDepth = targetDepth;
-            let validTurn = 0;
-
-            for (const turn of [90, -90]) {
-                try {
-                    const poly = createRect(pCorner.geometry.coordinates, bearingNext, cornerSize, cornerSize, turn);
-                    // @ts-ignore
-                    const intersect = turf.intersect(poly, validArea);
-             
-                    if (intersect && turf.area(intersect) >= turf.area(poly) * 0.99 && !checkCollision(poly, usedAreas)) {
-                        cornerPoly = poly;
-                        validTurn = turn;
-                        break;
-                    }
-                } catch (e) { }
-            }
-
-            if (cornerPoly) {
-
-                const lShapeParts: Feature<Polygon>[] = [cornerPoly];
-
-                // Use segmentWing for arms
-                // Wing 1 (Next) starts after corner block
-                const pNextStart = turf.along(turf.lineString([coords[i], coords[i + 1]]), cornerSize, { units: 'meters' });
-
-                // Construct Wing 1 Polygon (Buffer Edge + Intersect ValidArea)
-                try {
-                    const edgeNext = turf.lineString([coords[i], coords[i + 1]]);
-                    const wingNextRaw = turf.buffer(edgeNext, targetDepth, { units: 'meters' });
-                    // @ts-ignore
-                    const wingNext = turf.intersect(wingNextRaw, validArea);
-
-                    if (wingNext) {
-                        const segs = segmentWing(wingNext as Feature<Polygon>, pNextStart, pNext, params, true);
-                        segs.forEach(s => s.properties = { ...s.properties, subtype: 'lshaped', type: 'generated' });
-                        lShapeParts.push(...segs);
-                    }
-                } catch (e) { }
-
-                const vecLine = turf.lineString([coords[i], coords[i === 0 ? coords.length - 2 : i - 1]]);
-                const pPrevStart = turf.along(vecLine, cornerSize, { units: 'meters' });
-                const pPrevEnd = turf.point(vecLine.geometry.coordinates[1]);
-
-                try {
-                    const wingPrevRaw = turf.buffer(vecLine, targetDepth, { units: 'meters' });
-                    // @ts-ignore
-                    const wingPrev = turf.intersect(wingPrevRaw, validArea);
-
-                    if (wingPrev) {
-                        const segs = segmentWing(wingPrev as Feature<Polygon>, pPrevStart, pPrevEnd, params, true);
-                        segs.forEach(s => s.properties = { ...s.properties, subtype: 'lshaped', type: 'generated' });
-                        lShapeParts.push(...segs);
-                    }
-                } catch (e) { }
-
-                if (lShapeParts.length >= 2) {
-                    // @ts-ignore
-                    const multi = turf.multiPolygon(lShapeParts.map(p => p.geometry.coordinates));
-                    const score = turf.area(multi);
-
-                    candidates.push({
-                        feature: multi,
-                        score,
-                        variantId: `L-Corner-${i}-Turn-${validTurn}`,
+                // Determine inward direction
+                let inwardTurn: number | null = null;
+                for (const turn of [90, -90]) {
+                    try {
+                        const probe = createRect(edgeStart.geometry.coordinates, edgeData.bearing, minBuildingLength, minBuildingWidth, turn);
                         // @ts-ignore
-                        parts: lShapeParts
-                    } as any);
+                        const inter = turf.intersect(turf.buffer(probe, 0), turf.buffer(validArea, 0));
+                        if (inter && turf.area(inter) >= turf.area(probe) * 0.30) {
+                            inwardTurn = turn;
+                            break;
+                        }
+                    } catch (e) { }
                 }
+                if (inwardTurn === null) { currentDist += 5; continue; }
+
+                // For deeper passes, offset start point into plot
+                let pStart: number[];
+                if (depthOffset > 0) {
+                    const perpBearingOff = edgeData.bearing + inwardTurn;
+                    const deeper = turf.destination(edgeStart, depthOffset, perpBearingOff, { units: 'meters' });
+                    pStart = deeper.geometry.coordinates;
+                } else {
+                    pStart = edgeStart.geometry.coordinates;
+                }
+
+                const perpBearing = edgeData.bearing + inwardTurn;
+
+                // Try slab1 sizes: largest first, then smaller
+                let lPlaced = false;
+                const widthOptions = [maxBuildingWidth, minBuildingWidth];
+                const lengthOptions: number[] = [maxAvailLen];
+                if (maxAvailLen > minBuildingLength + 10) lengthOptions.push(Math.round((maxAvailLen + minBuildingLength) / 2));
+                if (maxAvailLen > minBuildingLength) lengthOptions.push(minBuildingLength);
+
+                for (const s1Len of lengthOptions) {
+                    if (lPlaced) break;
+                    for (const s1W of widthOptions) {
+                        if (lPlaced) break;
+
+                        const slab1 = createRect(pStart, edgeData.bearing, s1Len, s1W, inwardTurn);
+
+                        // Slab1 must be fully contained
+                        if (!isFullyContained(slab1)) continue;
+
+                        // Slab1 must not collide
+                        if (checkCollision(slab1, usedAreas)) continue;
+
+                        // â”€â”€â”€ Now try to attach slab2 perpendicular â”€â”€â”€
+                        let slab2: Feature<Polygon> | null = null;
+
+                        for (const end of attachEnds) {
+                            if (slab2) break;
+
+                            let armOrigin: number[];
+                            let armDepthTurn: number;
+
+                            if (end === 'start') {
+                                // Arm from inner corner at START end
+                                const innerCorner = turf.destination(
+                                    turf.point(pStart), s1W, perpBearing, { units: 'meters' }
+                                );
+                                armOrigin = innerCorner.geometry.coordinates;
+                                armDepthTurn = -inwardTurn;
+                            } else {
+                                // Arm from inner corner at FAR end
+                                const farEnd = turf.destination(
+                                    turf.point(pStart), s1Len, edgeData.bearing, { units: 'meters' }
+                                );
+                                const innerCorner = turf.destination(farEnd, s1W, perpBearing, { units: 'meters' });
+                                armOrigin = innerCorner.geometry.coordinates;
+                                armDepthTurn = inwardTurn;
+                            }
+
+                            // Arm starts right at slab1's inner corner (touching, same building)
+                            const armStart = armOrigin;
+
+                            // Try arm sizes: SMALLEST first (more likely to fit)
+                            const armLengthOptions = [minBuildingLength, 35, 40, maxBuildingLength];
+                            const armWidthOptions = [minBuildingWidth, maxBuildingWidth];
+
+                            for (const aLen of armLengthOptions) {
+                                if (slab2) break;
+                                for (const aW of armWidthOptions) {
+                                    if (slab2) break;
+
+                                    const armRect = createRect(armStart, perpBearing, aLen, aW, armDepthTurn);
+
+                                    // Arm must be fully contained
+                                    if (!isFullyContained(armRect)) continue;
+
+                                    // Arm must not collide with existing buildings
+                                    if (checkCollision(armRect, usedAreas)) continue;
+
+                                    // Arm must not overlap slab1
+                                    try {
+                                        // @ts-ignore
+                                        const overlap = turf.intersect(armRect, slab1);
+                                        if (overlap && turf.area(overlap) > 1) continue;
+                                    } catch (e) { }
+
+                                    slab2 = armRect;
+                                }
+                            }
+                        }
+
+                        if (!slab2) continue; // No arm fits â€” try smaller slab1
+
+                        // âœ… Both slab1 + slab2 fit â€” commit!
+                        usedAreas.push(slab1);
+                        usedAreas.push(slab2);
+
+                        // Generate layouts for both arms
+                        const slabPair: [Feature<Polygon>, number][] = [
+                            [slab1, edgeData.bearing],
+                            [slab2, perpBearing]
+                        ];
+
+                        for (const [arm, bearing] of slabPair) {
+                            try {
+                                const area = planarArea(arm);
+                                const layout = generateBuildingLayout(arm, {
+                                    ...params,
+                                    subtype: 'lshaped',
+                                    unitMix: params.unitMix,
+                                    alignmentRotation: bearing,
+                                    selectedUtilities: params.selectedUtilities
+                                });
+
+                                arm.properties = {
+                                    type: 'generated',
+                                    subtype: 'lshaped',
+                                    area,
+                                    cores: layout.cores,
+                                    units: layout.units,
+                                    entrances: layout.entrances,
+                                    internalUtilities: layout.utilities,
+                                    alignmentRotation: bearing,
+                                    scenarioId: `L-${results.length}`,
+                                    score: area
+                                };
+
+                                results.push(arm);
+                            } catch (e) {
+                                console.warn(`[L-Gen] Layout generation failed:`, e);
+                            }
+                        }
+
+                        console.log(`[L-Gen] L-shape at dist=${currentDist.toFixed(0)}: slab1=${s1Len}x${s1W}m, slab2=${turf.area(slab2).toFixed(0)}m2`);
+                        lPlaced = true;
+                        placedThisPass++;
+                        currentDist += s1Len + lShapeSpacing; // generous spacing for L-shapes
+                    }
+                }
+
+                if (!lPlaced) currentDist += 5;
             }
+        }
 
-        } catch (e) { }
+        console.log(`[L-Gen] Depth pass ${depthPass}: ${placedThisPass} L-shapes placed`);
+        if (placedThisPass === 0) break;
+        depthOffset += maxBuildingWidth + rowGap;
     }
 
-    if (candidates.length > 0) {
-        // @ts-ignore
-        const parts = selectDiverseCandidate(candidates, params.seed ?? 0);
-        // @ts-ignore
-        const clearedParts = applyCornerClearance(parts as Feature<Polygon>[], 3);
-        // @ts-ignore
-        clearedParts.forEach(p => p.properties = { ...p.properties, subtype: 'lshaped', type: 'generated' });
-        // @ts-ignore
-        return clearedParts;
-    }
+    console.log(`[L-Gen] Done: ${results.length} buildings (${Math.round(results.length / 2)} L-shapes)`);
 
-    return [];
+    return applyCornerClearance(results, 3);
 }
+
+
+
 
 
 
@@ -1160,7 +1311,7 @@ export function generateSlabShapes(
                         validTurn = turn;
                         break;
                     } else {
-                        console.log(`[Debug SlabGen] Probe ${turn} failed: ${intersectArea.toFixed(1)} / ${probeArea.toFixed(1)} m²`);
+                        console.log(`[Debug SlabGen] Probe ${turn} failed: ${intersectArea.toFixed(1)} / ${probeArea.toFixed(1)} mÃ‚Â²`);
                     }
                 } catch (e) {
                     console.warn('[Generator] Probe failed:', e);
@@ -1226,7 +1377,7 @@ export function generateSlabShapes(
                                     console.log('[Debug SlabGen] Collision blocked placement');
                                 }
                             } else {
-                                console.log(`[Debug SlabGen] Containment failed: ${intersect ? turf.area(intersect).toFixed(1) : 0} / ${polyArea.toFixed(1)} m²`);
+                                console.log(`[Debug SlabGen] Containment failed: ${intersect ? turf.area(intersect).toFixed(1) : 0} / ${polyArea.toFixed(1)} mÃ‚Â²`);
                             }
                         } catch (e) { }
                     }
@@ -1248,7 +1399,7 @@ export function generateSlabShapes(
 
                         candidates.push({ feature: validPoly, score: area });
                         usedAreas.push(validPoly);
-                        console.log(`[Debug SlabGen] Placed building ${candidates.length}. Size: ${actualLength.toFixed(1)}x${winningDepth.toFixed(1)}m. Area: ${area.toFixed(1)}m²`);
+                        console.log(`[Debug SlabGen] Placed building ${candidates.length}. Size: ${actualLength.toFixed(1)}x${winningDepth.toFixed(1)}m. Area: ${area.toFixed(1)}mÃ‚Â²`);
 
                         depthOffset += winningDepth + rowGap;
                         rowsAdded++;
@@ -1446,7 +1597,7 @@ export function generatePointShapes(
     }
 
     if (candidates.length === 0) {
-        console.warn(`[Debug PointGen] No towers generated. Corners: ${coords.length - 1}, Valid Area: ${turf.area(validArea).toFixed(1)}m²`);
+        console.warn(`[Debug PointGen] No towers generated. Corners: ${coords.length - 1}, Valid Area: ${turf.area(validArea).toFixed(1)}mÃ‚Â²`);
     }
 
     const towerFeatures = candidates.map(c => c.feature);
@@ -1551,7 +1702,7 @@ export function generateLargeFootprint(
         // Apply rear setback cuts (opposite to road)
         rearSidesSet.forEach(s => cutEdge(s, extraRear));
 
-        console.log(`[LargeFootprint] After directional setbacks, area=${turf.area(workArea).toFixed(0)}m²`);
+        console.log(`[LargeFootprint] After directional setbacks, area=${turf.area(workArea).toFixed(0)}mÃ‚Â²`);
     }
 
     const plotArea = turf.area(workArea);
@@ -1596,7 +1747,7 @@ export function generateLargeFootprint(
     const gapLat = heightM > 0 ? (maxLat - minLat) * (gapYM / heightM) : 0;
 
     console.log(`[LargeFootprint] START: count=${buildingCount}, seed=${seed}, splitAlong=${splitAlongWidth ? 'width' : 'height'}, gapM=${gapMultiplier.toFixed(2)}`);
-    console.log(`[LargeFootprint] Bbox: ${widthM.toFixed(0)}×${heightM.toFixed(0)}m, gapX=${gapXM.toFixed(1)}m, gapY=${gapYM.toFixed(1)}m`);
+    console.log(`[LargeFootprint] Bbox: ${widthM.toFixed(0)}Ãƒâ€”${heightM.toFixed(0)}m, gapX=${gapXM.toFixed(1)}m, gapY=${gapYM.toFixed(1)}m`);
 
     const createFallbackRect = (cx: number, cy: number, wM: number, hM: number): Feature<Polygon> => {
         const halfW = (wM / 2) * degPerMLng;
@@ -1687,7 +1838,7 @@ export function generateLargeFootprint(
                     });
                     if (bestPart) results.push(bestPart);
                 }
-                console.log(`[LargeFootprint] ${label}: ${results.length} pieces, total area=${results.reduce((s, f) => s + turf.area(f), 0).toFixed(0)}m²`);
+                console.log(`[LargeFootprint] ${label}: ${results.length} pieces, total area=${results.reduce((s, f) => s + turf.area(f), 0).toFixed(0)}mÃ‚Â²`);
             } else {
                 console.warn(`[LargeFootprint] ${label}: no intersection`);
             }
@@ -1707,7 +1858,7 @@ export function generateLargeFootprint(
         // 7 variations for 1 building, cycling with seed
         const variation = seed % 7;
 
-        console.log(`[LargeFootprint] 1 building: variation=${variation}, plotArea=${plotArea.toFixed(0)}m², target=${perBuildingTarget.toFixed(0)}m²`);
+        console.log(`[LargeFootprint] 1 building: variation=${variation}, plotArea=${plotArea.toFixed(0)}mÃ‚Â², target=${perBuildingTarget.toFixed(0)}mÃ‚Â²`);
         
         let frontEdge = 'S';
         if (roadAccessSides && roadAccessSides.length > 0) {
@@ -1861,7 +2012,7 @@ export function generateLargeFootprint(
         try {
             if (poly.properties?.skipScale) {
                 scaledBuildings.push(poly);
-                console.log(`[LargeFootprint] Piece ${idx} kept at ${turf.area(poly).toFixed(0)}m² (pre-sliced)`);
+                console.log(`[LargeFootprint] Piece ${idx} kept at ${turf.area(poly).toFixed(0)}mÃ‚Â² (pre-sliced)`);
                 return;
             }
 
@@ -1873,7 +2024,7 @@ export function generateLargeFootprint(
                     const scaledPoly = turf.transformScale(poly, scaleFactor);
                     if (scaledPoly) {
                         scaledBuildings.push(scaledPoly as Feature<Polygon>);
-                        console.log(`[LargeFootprint] Piece ${idx} scaled: ${currentArea.toFixed(0)}m² -> ${turf.area(scaledPoly).toFixed(0)}m² (target ${perBuildingTarget.toFixed(0)}m², factor ${scaleFactor.toFixed(2)})`);
+                        console.log(`[LargeFootprint] Piece ${idx} scaled: ${currentArea.toFixed(0)}mÃ‚Â² -> ${turf.area(scaledPoly).toFixed(0)}mÃ‚Â² (target ${perBuildingTarget.toFixed(0)}mÃ‚Â², factor ${scaleFactor.toFixed(2)})`);
                     } else {
                         scaledBuildings.push(poly);
                     }
@@ -1883,7 +2034,7 @@ export function generateLargeFootprint(
                 }
             } else {
                 scaledBuildings.push(poly);
-                console.log(`[LargeFootprint] Piece ${idx} kept at ${currentArea.toFixed(0)}m² (target was ${perBuildingTarget.toFixed(0)}m²)`);
+                console.log(`[LargeFootprint] Piece ${idx} kept at ${currentArea.toFixed(0)}mÃ‚Â² (target was ${perBuildingTarget.toFixed(0)}mÃ‚Â²)`);
             }
         } catch (e) {
             console.warn(`[LargeFootprint] Failed to scale piece ${idx}, using original`, e);
@@ -1944,7 +2095,7 @@ export function generateLargeFootprint(
         }
     });
 
-    console.log(`[LargeFootprint] FINAL: ${finalBuildings.length}/${buildingCount} buildings. Total footprint: ${finalBuildings.reduce((s, b) => s + turf.area(b), 0).toFixed(0)}m²`);
+    console.log(`[LargeFootprint] FINAL: ${finalBuildings.length}/${buildingCount} buildings. Total footprint: ${finalBuildings.reduce((s, b) => s + turf.area(b), 0).toFixed(0)}mÃ‚Â²`);
 
     return finalBuildings;
 }
