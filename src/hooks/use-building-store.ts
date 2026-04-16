@@ -4,7 +4,7 @@
 import { create } from 'zustand';
 import type { Feature, Polygon, MultiPolygon, Point, LineString, FeatureCollection } from 'geojson';
 import * as turf from '@turf/turf';
-import { BuildingIntendedUse, type Plot, type Building, type GreenArea, type ParkingArea, type Floor, type Project, type BuildableArea, type SelectableObjectType, AiScenario, type Label, RegulationData, GenerateMassingInput, AiMassingScenario, GenerateMassingOutput, GenerateSiteLayoutInput, GenerateSiteLayoutOutput, AiSiteLayout, AiMassingGeneratedObject, AiZone, GenerateZonesOutput, DesignOption, GreenRegulationData, VastuRegulationData, DevelopmentStats, FeasibilityParams, UtilityType, UtilityArea, ParkingType, Unit, Core, type RenderingBuildingInfo, type RenderingPlotInfo, type RenderingProjectSummary, type GenerateRenderingOutput, type AdditiveScoreSummary } from '@/lib/types';
+import { BuildingIntendedUse, type Plot, type Building, type GreenArea, type ParkingArea, type Floor, type Project, type BuildableArea, type SelectableObjectType, AiScenario, type Label, RegulationData, GenerateMassingInput, AiMassingScenario, GenerateMassingOutput, GenerateSiteLayoutInput, GenerateSiteLayoutOutput, AiSiteLayout, AiMassingGeneratedObject, AiZone, GenerateZonesOutput, DesignOption, GreenRegulationData, VastuRegulationData, DevelopmentStats, FeasibilityParams, UtilityType, UtilityArea, ParkingType, Unit, Core, type RenderingBuildingInfo, type RenderingPlotInfo, type RenderingProjectSummary, type GenerateRenderingOutput, type AdditiveScoreSummary, type EvaluateLandInput } from '@/lib/types';
 import { calculateDevelopmentStats, DEFAULT_FEASIBILITY_PARAMS } from '@/lib/development-calc';
 import { calculateParkingCapacity } from '@/lib/parking-calc';
 import { produce } from 'immer';
@@ -1325,6 +1325,58 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 toast({ variant: 'destructive', title: 'Error', description: 'Failed to create project.' });
                 return null;
             }
+        },
+        startProjectFromEvaluateLand: async (
+            evaluateLandInput: EvaluateLandInput,
+            sourcePlots: Plot[],
+            selectedPlotId?: string | null,
+        ) => {
+            const newProject = await get().actions.createProject(
+                evaluateLandInput.projectName.trim(),
+                evaluateLandInput.landSize,
+                evaluateLandInput.intendedUse,
+                evaluateLandInput.location.trim(),
+                "",
+                [],
+                false,
+            );
+
+            if (!newProject) {
+                return null;
+            }
+
+            const clonedPlots: Plot[] = sourcePlots.map((plot, index) => {
+                const clonedPlot = deepClone(plot);
+                clonedPlot.projectId = newProject.id;
+                clonedPlot.name =
+                    clonedPlot.name ||
+                    (index === 0
+                        ? evaluateLandInput.projectName.trim() || 'Primary Plot'
+                        : `Plot ${index + 1}`);
+                clonedPlot.location = evaluateLandInput.location.trim();
+                return clonedPlot;
+            });
+
+            const selectedClonedPlot =
+                clonedPlots.find(plot => plot.id === selectedPlotId) ||
+                clonedPlots[0] ||
+                null;
+
+            get().actions.loadPlotsIntoWorkspace(
+                clonedPlots,
+                selectedClonedPlot?.id ?? null,
+            );
+            get().actions.updateProject(newProject.id, {
+                evaluateLandInput,
+                lastModified: new Date().toISOString(),
+            });
+            await get().actions.saveCurrentProject();
+
+            return {
+                project: newProject,
+                plots: clonedPlots,
+                selectedPlotId: selectedClonedPlot?.id ?? null,
+            };
         },
         // deleteProject: Moved to bottom
         // loadProject: Moved to bottom

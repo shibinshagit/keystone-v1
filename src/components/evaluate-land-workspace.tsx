@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -55,24 +55,14 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBuildingStore, useSelectedPlot } from "@/hooks/use-building-store";
+import { useEvaluateLandAnalysis } from "@/hooks/use-evaluate-land-analysis";
 import { useToast } from "@/hooks/use-toast";
 import {
-  evaluateBuildabilityVerdict,
-  type BuildabilityVerdict,
-  type BhuvanLandUseSummary,
-} from "@/lib/land-intelligence/buildability-verdict";
-import { applyVariableSetbacks } from "@/lib/generators/setback-utils";
-import { lookupRegulationForLocationAndUse } from "@/lib/regulation-lookup";
-import {
   BuildingIntendedUse,
-  type RegulationData,
-  type RegulationValue,
-  type DevelopabilityScore,
   LandPlotType,
   LandProximity,
   LandZoningPreference,
   type EvaluateLandInput,
-  type Plot,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -107,22 +97,6 @@ const evaluateLandFormSchema = z.object({
 
 type EvaluateLandForm = z.infer<typeof evaluateLandFormSchema>;
 
-interface ScoreResult {
-  score: DevelopabilityScore;
-  dataSources: {
-    census: { count: number; available: boolean };
-    fdi: { count: number; available: boolean };
-    sez: { count: number; available: boolean };
-    satellite: { available: boolean; isMock: boolean };
-  };
-}
-
-interface BhuvanAnalysisResponse {
-  success: boolean;
-  report: BhuvanLandUseSummary;
-  error?: string;
-}
-
 // Default values
 const createDefaultForm = (): EvaluateLandForm => ({
   projectName: "",
@@ -143,44 +117,11 @@ const normalizeNumericInput = (value: string) =>
 const normalizePriceRangeInput = (value: string) =>
   value.replace(/\s+/g, " ").trimStart();
 
-const inferScoreQueryLocation = (location: string) => {
-  const parts = location
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .filter((part) => !/^india$/i.test(part));
-
-  const district = parts[0] || location.trim() || "Unknown";
-  const state = parts.length > 1 ? parts[parts.length - 1] : district;
-
-  return { state, district };
-};
-
 const formatNumber = (value: number, digits = 0) =>
   value.toLocaleString("en-IN", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
-
-const getNumericRegulationValue = (
-  regulation: RegulationData | null,
-  keys: string[],
-) => {
-  if (!regulation) return undefined;
-
-  for (const key of keys) {
-    const candidate = regulation.geometry?.[key] as RegulationValue | undefined;
-    const rawValue = candidate?.value;
-    const numericValue =
-      typeof rawValue === "number" ? rawValue : Number(rawValue);
-
-    if (Number.isFinite(numericValue) && numericValue > 0) {
-      return numericValue;
-    }
-  }
-
-  return undefined;
-};
 
 function ScoreSummary({
   score,
@@ -283,17 +224,6 @@ export function EvaluateLandWorkspace() {
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("none");
   const [solarDate, setSolarDate] = useState<Date>(() => new Date());
   const [isStartingProject, setIsStartingProject] = useState(false);
-  const [isRunningScore, setIsRunningScore] = useState(false);
-  const [scoreError, setScoreError] = useState<string | null>(null);
-  const [scoreData, setScoreData] = useState<ScoreResult | null>(null);
-  const [bhuvanData, setBhuvanData] = useState<BhuvanLandUseSummary | null>(
-    null,
-  );
-  const [matchedRegulation, setMatchedRegulation] =
-    useState<RegulationData | null>(null);
-  const [buildVerdict, setBuildVerdict] = useState<BuildabilityVerdict | null>(
-    null,
-  );
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(380);
   const [activePanelTab, setActivePanelTab] = useState<"inputs" | "analysis">(
@@ -320,11 +250,6 @@ export function EvaluateLandWorkspace() {
     reset(createDefaultForm());
     setHasAttemptedProjectStart(false);
     setIsLocationManuallyEdited(false);
-    setScoreData(null);
-    setBhuvanData(null);
-    setMatchedRegulation(null);
-    setBuildVerdict(null);
-    setScoreError(null);
     setActivePanelTab("inputs");
   }, []);
 
@@ -390,11 +315,7 @@ export function EvaluateLandWorkspace() {
     reset(nextForm);
     setHasAttemptedProjectStart(false);
     setIsLocationManuallyEdited(false);
-    setScoreData(null);
-    setBhuvanData(null);
-    setMatchedRegulation(null);
-    setBuildVerdict(null);
-    setScoreError(null);
+    resetAnalysis();
     setActivePanelTab("inputs");
     toast({
       title: "Inputs reset",
@@ -430,40 +351,10 @@ export function EvaluateLandWorkspace() {
 
     try {
       const values = getValues();
-      const totalPlotArea = Number(values.landSize);
-      const newProject = await actions.createProject(
-        values.projectName.trim(),
-        totalPlotArea,
-        values.intendedUse,
-        values.location.trim(),
-        "",
-        [],
-        false,
-      );
-
-      if (!newProject) return;
-
-      // Clone the temporary plots before handoff so the pre-project workspace stays disposable.
-      const clonedPlots: Plot[] = plots.map((plot, index) => {
-        const clonedPlot: Plot = JSON.parse(JSON.stringify(plot));
-        clonedPlot.projectId = newProject.id;
-        clonedPlot.name =
-          clonedPlot.name ||
-          (index === 0
-            ? values.projectName.trim() || "Primary Plot"
-            : `Plot ${index + 1}`);
-        clonedPlot.location = values.location.trim();
-        return clonedPlot;
-      });
-
-      const selectedClonedPlot =
-        clonedPlots.find((plot) => plot.id === selectedPlot.id) ||
-        clonedPlots[0];
-
       const evaluateLandInput: EvaluateLandInput = {
         projectName: values.projectName.trim(),
         location: values.location.trim(),
-        landSize: totalPlotArea,
+        landSize: Number(values.landSize),
         intendedUse: values.intendedUse,
         priceRange: values.priceRange.trim(),
         plotType: values.plotType,
@@ -471,15 +362,13 @@ export function EvaluateLandWorkspace() {
         proximity: values.proximity,
       };
 
-      actions.loadPlotsIntoWorkspace(
-        clonedPlots,
-        selectedClonedPlot?.id ?? null,
-      );
-      actions.updateProject(newProject.id, {
+      const result = await actions.startProjectFromEvaluateLand(
         evaluateLandInput,
-        lastModified: new Date().toISOString(),
-      });
-      await actions.saveCurrentProject();
+        plots,
+        selectedPlot.id,
+      );
+
+      if (!result?.project) return;
 
       toast({
         title: "Project started",
@@ -487,7 +376,7 @@ export function EvaluateLandWorkspace() {
           "The selected land inputs and plot have been moved into the project editor.",
       });
 
-      router.push(`/dashboard/project/${newProject.id}`);
+      router.push(`/dashboard/project/${result.project.id}`);
     } finally {
       setIsStartingProject(false);
     }
@@ -506,263 +395,43 @@ export function EvaluateLandWorkspace() {
     }
   }, [plots, selectedPlot]);
 
-  const handleRunDevelopabilityScore = useCallback(async () => {
-    const formValid = await trigger(["location", "landSize", "intendedUse"]);
-
-    const coords = getAnalysisCoordinates();
-    if (!coords) {
-      setScoreError(
-        "Draw or select a plot before running the developability score.",
-      );
-      setScoreData(null);
-      setBhuvanData(null);
-      setMatchedRegulation(null);
-      setBuildVerdict(null);
-      return;
-    }
-
-    if (!formValid) {
-      setScoreError(
-        "Complete the required land inputs before running the score.",
-      );
-      setScoreData(null);
-      setBhuvanData(null);
-      setMatchedRegulation(null);
-      setBuildVerdict(null);
-      return;
-    }
-
-    const values = getValues();
-    const { state, district } = inferScoreQueryLocation(values.location);
-
-    setIsRunningScore(true);
-    setScoreError(null);
-
-    try {
-      const [scoreRes, bhuvanRes, regulationRes] = await Promise.allSettled([
-        fetch("/api/land-intelligence/score", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: state,
-            district,
-            coordinates: coords,
-            landSizeSqm: Number(values.landSize),
-            intendedUse: values.intendedUse,
-          }),
-        }).then(async (response) => {
-          const payload = await response.json();
-          if (!response.ok || !payload?.success) {
-            throw new Error(
-              payload?.error || "Failed to run developability score.",
-            );
-          }
-          return payload as ScoreResult;
-        }),
-        fetch("/api/land-intelligence/bhuvan-landuse", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            coordinates: coords,
-            location: values.location.trim(),
-          }),
-        }).then(async (response) => {
-          const payload = (await response.json()) as BhuvanAnalysisResponse;
-          if (!response.ok || !payload?.success) {
-            throw new Error(
-              payload?.error || "Failed to fetch Bhuvan land use.",
-            );
-          }
-          return payload.report;
-        }),
-        lookupRegulationForLocationAndUse({
-          location: values.location.trim(),
-          intendedUse: values.intendedUse,
-        }),
-      ]);
-
-      const errors: string[] = [];
-
-      if (scoreRes.status === "fulfilled") {
-        setScoreData(scoreRes.value);
-      } else {
-        setScoreData(null);
-        errors.push(
-          scoreRes.reason?.message || "Developability score unavailable.",
-        );
-      }
-
-      const nextBhuvan =
-        bhuvanRes.status === "fulfilled" ? bhuvanRes.value : null;
-      const nextRegulation =
-        regulationRes.status === "fulfilled"
-          ? regulationRes.value.regulation
-          : null;
-
-      setBhuvanData(nextBhuvan);
-      setMatchedRegulation(nextRegulation);
-
-      if (!nextBhuvan) {
-        errors.push(
-          bhuvanRes.status === "rejected"
-            ? bhuvanRes.reason?.message || "Bhuvan land use unavailable."
-            : "Bhuvan land use unavailable.",
-        );
-      }
-
-      if (nextBhuvan || nextRegulation) {
-        setBuildVerdict(
-          evaluateBuildabilityVerdict({
-            intendedUse: values.intendedUse,
-            zoningPreference: values.zoningPreference,
-            bhuvan: nextBhuvan,
-            regulation: nextRegulation,
-            regulationSource:
-              regulationRes.status === "fulfilled"
-                ? regulationRes.value.source
-                : null,
-          }),
-        );
-      } else {
-        setBuildVerdict(null);
-      }
-
-      setScoreError(errors.length > 0 ? errors.join(" ") : null);
-      setActivePanelTab("analysis");
-    } catch (error: any) {
-      setScoreData(null);
-      setBhuvanData(null);
-      setMatchedRegulation(null);
-      setBuildVerdict(null);
-      setScoreError(error?.message || "Failed to run developability score.");
-      // Keep failures visible in the analysis tab instead of hiding them behind the form.
-      setActivePanelTab("analysis");
-    } finally {
-      setIsRunningScore(false);
-    }
-  }, [getAnalysisCoordinates, getValues, trigger]);
-
   const analysisCoordinates = getAnalysisCoordinates();
   const watchedLandSize = form.watch("landSize");
+  const {
+    isRunningScore,
+    scoreError,
+    scoreData,
+    bhuvanData,
+    matchedRegulation,
+    buildVerdict,
+    sellableAreaBreakdown,
+    runAnalysis,
+    resetAnalysis,
+  } = useEvaluateLandAnalysis({
+    selectedPlot,
+    plots,
+    typedLandSize: watchedLandSize,
+    getAnalysisCoordinates,
+    getInputValues: () => {
+      const values = getValues();
+      return {
+        location: values.location,
+        landSize: values.landSize,
+        intendedUse: values.intendedUse,
+        zoningPreference: values.zoningPreference,
+      };
+    },
+    validateRequired: () => trigger(["location", "landSize", "intendedUse"]),
+  });
 
-  const sellableAreaBreakdown = useMemo(() => {
-    const plotForAnalysis = selectedPlot || plots[0] || null;
-    const typedLandSize = Number(watchedLandSize);
-    const plotArea =
-      plotForAnalysis?.area && plotForAnalysis.area > 0
-        ? plotForAnalysis.area
-        : Number.isFinite(typedLandSize) && typedLandSize > 0
-          ? typedLandSize
-          : 0;
+  useEffect(() => {
+    resetAnalysis();
+  }, [resetAnalysis]);
 
-    const far =
-      getNumericRegulationValue(matchedRegulation, [
-        "floor_area_ratio",
-        "max_far",
-        "fsi",
-      ]) ?? plotForAnalysis?.far;
-
-    const uniformSetback =
-      getNumericRegulationValue(matchedRegulation, [
-        "setback",
-        "min_setback",
-        "building_setback",
-      ]) ?? plotForAnalysis?.setback;
-
-    const frontSetback =
-      getNumericRegulationValue(matchedRegulation, ["front_setback"]) ??
-      uniformSetback;
-    const rearSetback =
-      getNumericRegulationValue(matchedRegulation, ["rear_setback"]) ??
-      uniformSetback;
-    const sideSetback =
-      getNumericRegulationValue(matchedRegulation, ["side_setback"]) ??
-      uniformSetback;
-
-    const grossMaxGfa = far && plotArea > 0 ? far * plotArea : 0;
-    const hasSetbackInputs =
-      (frontSetback ?? 0) > 0 ||
-      (rearSetback ?? 0) > 0 ||
-      (sideSetback ?? 0) > 0 ||
-      (uniformSetback ?? 0) > 0;
-
-    let netBuildableArea = plotArea;
-    let usedSetbackMethod = "No setback deduction applied.";
-
-    if (plotForAnalysis?.geometry && plotArea > 0 && hasSetbackInputs) {
-      try {
-        const shrunkGeometry = applyVariableSetbacks(
-          plotForAnalysis.geometry as any,
-          {
-            setback:
-              uniformSetback ??
-              Math.max(frontSetback ?? 0, rearSetback ?? 0, sideSetback ?? 0),
-            frontSetback,
-            rearSetback,
-            sideSetback,
-            roadAccessSides: plotForAnalysis.roadAccessSides || [],
-          } as any,
-        );
-
-        if (shrunkGeometry) {
-          netBuildableArea = Math.max(0, turf.area(shrunkGeometry));
-          usedSetbackMethod =
-            plotForAnalysis.roadAccessSides &&
-            plotForAnalysis.roadAccessSides.length > 0 &&
-            (frontSetback !== undefined ||
-              rearSetback !== undefined ||
-              sideSetback !== undefined)
-              ? "Directional setbacks applied to actual plot geometry."
-              : "Uniform setback applied to actual plot geometry.";
-        } else {
-          netBuildableArea = 0;
-          usedSetbackMethod =
-            "Setback deduction consumed the full plot area for this geometry.";
-        }
-      } catch {
-        const fallbackSetback =
-          uniformSetback ??
-          Math.max(frontSetback ?? 0, rearSetback ?? 0, sideSetback ?? 0);
-        if (fallbackSetback > 0) {
-          const buffered = turf.buffer(
-            plotForAnalysis.geometry as any,
-            -fallbackSetback,
-            { units: "meters" },
-          );
-          netBuildableArea = buffered ? Math.max(0, turf.area(buffered)) : 0;
-          usedSetbackMethod =
-            "Uniform setback fallback applied after directional setback calculation failed.";
-        }
-      }
-    } else if (hasSetbackInputs) {
-      usedSetbackMethod =
-        "Setbacks available, but exact buildable area needs a drawn plot geometry.";
-    }
-
-    const areaLostToSetbacks =
-      plotArea > 0 ? Math.max(0, plotArea - netBuildableArea) : 0;
-    const setbackAdjustedMaxGfa =
-      far && netBuildableArea > 0 ? far * netBuildableArea : 0;
-    const estimatedSellableArea =
-      setbackAdjustedMaxGfa > 0 ? setbackAdjustedMaxGfa * 0.7 : 0;
-
-    return {
-      plotArea,
-      far,
-      uniformSetback,
-      frontSetback,
-      rearSetback,
-      sideSetback,
-      grossMaxGfa,
-      netBuildableArea,
-      areaLostToSetbacks,
-      setbackAdjustedMaxGfa,
-      estimatedSellableArea,
-      usedSetbackMethod,
-      hasPlotGeometry: Boolean(plotForAnalysis?.geometry),
-      hasRegulationMatch: Boolean(matchedRegulation),
-    };
-  }, [matchedRegulation, plots, selectedPlot, watchedLandSize]);
+  const handleRunDevelopabilityScore = useCallback(async () => {
+    await runAnalysis();
+    setActivePanelTab("analysis");
+  }, [runAnalysis]);
 
   const startSidebarResize = (event: React.MouseEvent) => {
     event.preventDefault();
@@ -894,7 +563,7 @@ export function EvaluateLandWorkspace() {
                 <TabsList className="grid h-10 w-full grid-cols-2">
                   <TabsTrigger value="inputs">Inputs</TabsTrigger>
                   <TabsTrigger value="analysis" className="gap-2">
-                    Analysis
+                    Land Intelligence
                     {scoreData || buildVerdict ? (
                       <Badge
                         variant="secondary"
@@ -1635,34 +1304,38 @@ export function EvaluateLandWorkspace() {
               )}
             </ScrollArea>
 
-            <CardContent className="border-t border-border/40 bg-background/70 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <Button variant="outline" onClick={handleResetForm}>
+            <CardContent className="border-t border-border/40 bg-gradient-to-t from-background to-background/90 px-4 py-3">
+              <div className="grid grid-cols-3 gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={handleResetForm}
+                  className="h-10 rounded-lg border border-border/50 bg-background/60 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                >
                   Reset
                 </Button>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={handleRunDevelopabilityScore}
-                    disabled={isRunningScore}
-                  >
-                    {isRunningScore ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <TrendingUp className="mr-2 h-4 w-4" />
-                    )}
-                    Analyze
-                  </Button>
-                  <Button
-                    onClick={handleStartProject}
-                    disabled={isStartingProject}
-                  >
-                    {isStartingProject ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : null}
-                    Start Project
-                  </Button>
-                </div>
+                <Button
+                  variant="outline"
+                  onClick={handleRunDevelopabilityScore}
+                  disabled={isRunningScore}
+                  className="h-10 rounded-lg border-primary/30 bg-primary/5 font-semibold hover:bg-primary/10"
+                >
+                  {isRunningScore ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <TrendingUp className="mr-2 h-4 w-4" />
+                  )}
+                  Analyze
+                </Button>
+                <Button
+                  onClick={handleStartProject}
+                  disabled={isStartingProject}
+                  className="h-10 rounded-lg font-semibold shadow-sm"
+                >
+                  {isStartingProject ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  Start Project
+                </Button>
               </div>
             </CardContent>
           </Card>
