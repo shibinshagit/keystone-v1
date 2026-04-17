@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
-import { useBuildingStore, useProjectData, useSelectedPlot } from "@/hooks/use-building-store";
+import React, { useState, useCallback } from "react";
+import { useProjectData, useSelectedPlot } from "@/hooks/use-building-store";
 import { useRegulations } from "@/hooks/use-regulations";
+import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import { ScrollArea } from "./ui/scroll-area";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -15,7 +16,6 @@ import {
   Satellite,
   BarChart2,
   Building2,
-  Leaf,
   AlertTriangle,
   CheckCircle,
   XCircle,
@@ -25,7 +25,6 @@ import {
   Layers,
   RefreshCw,
   ShieldCheck,
-  FileCheck,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -49,6 +48,10 @@ interface ScoreResult {
     fdi: { count: number; available: boolean };
     sez: { count: number; available: boolean };
     satellite: { available: boolean; isMock: boolean };
+    regulation: { available: boolean };
+    googlePlaces: { count: number; available: boolean };
+    googleRoads: { count: number; available: boolean };
+    proposedInfrastructure: { count: number; available: boolean };
   };
 }
 
@@ -178,7 +181,7 @@ export function LandIntelligencePanel() {
   const [error, setError] = useState<string | null>(null);
 
   // Fetch existing regulations from admin panel (Firestore)
-  const { regulations, isLoading: regsLoading } = useRegulations(project);
+  const { regulations } = useRegulations(project);
 
   // Get coordinates from the project or selected plot center
   const getCoordinates = useCallback((): [number, number] | null => {
@@ -207,12 +210,25 @@ export function LandIntelligencePanel() {
   }, [selectedPlot, project]);
 
   const getLocationName = useCallback((): string => {
-    if (project?.location) {
-      if (typeof project.location === "string") return project.location;
-      // If it's a coords object, we can't derive a name from it
+    if (typeof selectedPlot?.location === "string" && selectedPlot.location.trim()) {
+      return selectedPlot.location;
     }
-    return project?.name || "Unknown";
-  }, [project]);
+    if (project?.location) {
+      if (typeof project.location === "string" && project.location.trim()) {
+        return project.location;
+      }
+      if (typeof project.location === "object") {
+        const namedLocation =
+          (project.location as { name?: string; text?: string }).name ||
+          (project.location as { name?: string; text?: string }).text;
+        if (typeof namedLocation === "string" && namedLocation.trim()) {
+          return namedLocation;
+        }
+      }
+    }
+    const regulationLocation = regulations.find((reg) => typeof reg.location === "string" && reg.location.trim())?.location;
+    return regulationLocation || "Location unavailable";
+  }, [project, regulations, selectedPlot]);
 
   const runAnalysis = useCallback(async () => {
     const coords = getCoordinates();
@@ -220,6 +236,15 @@ export function LandIntelligencePanel() {
       setError("No coordinates available. Please place a plot on the map first.");
       return;
     }
+
+    const locationName = getLocationName();
+    if (locationName === "Location unavailable") {
+      setError("No valid location name is available for this project yet. Add a project or plot location before running Land Intelligence.");
+      return;
+    }
+
+    const { state, district } = inferScoreQueryLocation(locationName);
+    const plotForAnalysis = selectedPlot || project?.plots?.[0] || null;
 
     setLoading(true);
     setError(null);
@@ -231,9 +256,15 @@ export function LandIntelligencePanel() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            location: "Delhi",
-            district: getLocationName(),
+            location: state,
+            district,
             coordinates: coords,
+            plotGeometry: plotForAnalysis?.geometry,
+            roadAccessSides: plotForAnalysis?.roadAccessSides,
+            landSizeSqm: plotForAnalysis?.area,
+            intendedUse: project?.intendedUse,
+            underwriting: project?.underwriting,
+            locationAmenities: project?.locationData?.amenities || [],
           }),
         }).then((r) => r.json()),
         fetch("/api/land-intelligence/bhuvan-landuse", {
@@ -262,15 +293,9 @@ export function LandIntelligencePanel() {
     } finally {
       setLoading(false);
     }
-  }, [getCoordinates, getLocationName]);
+  }, [getCoordinates, getLocationName, project, selectedPlot]);
 
   const coords = getCoordinates();
-  const categoryColors: Record<string, string> = {
-    "Growth Potential": "#3b82f6",
-    "Legal Risk": "#f59e0b",
-    "Location Connectivity": "#8b5cf6",
-    "Market Economics": "#10b981",
-  };
 
   return (
     <ScrollArea className="h-full">
@@ -337,7 +362,8 @@ export function LandIntelligencePanel() {
                   <div>
                     <h3 className="text-sm font-bold">Developability Score</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Based on {Object.values(scoreData.dataSources).filter((d) => d.available).length}/4 live data sources
+                      Based on {Object.values(scoreData.dataSources).filter((d) => d.available).length}/
+                      {Object.values(scoreData.dataSources).length} live data sources
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -372,11 +398,15 @@ export function LandIntelligencePanel() {
 
             {/* ── Data Sources Status ── */}
             <div className="flex flex-wrap gap-1.5">
-              {[
+              {[ 
                 { key: "census", label: "Census", icon: Users },
                 { key: "fdi", label: "FDI", icon: DollarSign },
                 { key: "sez", label: "SEZ", icon: Building2 },
                 { key: "satellite", label: "Satellite", icon: Satellite },
+                { key: "regulation", label: "Regulation", icon: ShieldCheck },
+                { key: "googlePlaces", label: "Google Places", icon: MapPin },
+                { key: "googleRoads", label: "Google Roads", icon: MapPin },
+                { key: "proposedInfrastructure", label: "Proposed Infra", icon: TrendingUp },
               ].map(({ key, label, icon: Icon }) => {
                 const ds = scoreData.dataSources[key as keyof typeof scoreData.dataSources];
                 const available = ds?.available;

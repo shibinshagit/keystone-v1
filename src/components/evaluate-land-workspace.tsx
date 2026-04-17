@@ -404,6 +404,7 @@ export function EvaluateLandWorkspace() {
     bhuvanData,
     matchedRegulation,
     buildVerdict,
+    analysisTarget,
     sellableAreaBreakdown,
     runAnalysis,
     resetAnalysis,
@@ -427,6 +428,12 @@ export function EvaluateLandWorkspace() {
   useEffect(() => {
     resetAnalysis();
   }, [resetAnalysis]);
+
+  const plotForAnalysis = selectedPlot || plots[0] || null;
+  const currentPlotDiffersFromAnalysis =
+    analysisTarget != null &&
+    plotForAnalysis != null &&
+    analysisTarget.plotId !== plotForAnalysis.id;
 
   const handleRunDevelopabilityScore = useCallback(async () => {
     await runAnalysis();
@@ -564,14 +571,6 @@ export function EvaluateLandWorkspace() {
                   <TabsTrigger value="inputs">Inputs</TabsTrigger>
                   <TabsTrigger value="analysis" className="gap-2">
                     Land Intelligence
-                    {scoreData || buildVerdict ? (
-                      <Badge
-                        variant="secondary"
-                        className="h-5 px-1.5 text-[10px]"
-                      >
-                        Ready
-                      </Badge>
-                    ) : null}
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
@@ -892,6 +891,66 @@ export function EvaluateLandWorkspace() {
 
                   {scoreData ? (
                     <div className="space-y-4">
+                      {analysisTarget ? (
+                        <div className="rounded-xl border border-border/60 bg-background/80 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="text-sm font-bold">
+                                Intelligence Target
+                              </h3>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                The Developability Score was generated for this
+                                plot snapshot.
+                              </p>
+                            </div>
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] font-medium"
+                            >
+                              {analysisTarget.usedFallbackPlot
+                                ? "Fallback Plot"
+                                : "Selected Plot"}
+                            </Badge>
+                          </div>
+
+                          <div className="mt-4 grid gap-2 rounded-lg border border-border/50 bg-background/70 p-3">
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <span className="text-muted-foreground">
+                                Plot name
+                              </span>
+                              <span className="font-semibold">
+                                {analysisTarget.plotName}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <span className="text-muted-foreground">
+                                Plot area
+                              </span>
+                              <span className="font-semibold tabular-nums">
+                                {formatNumber(analysisTarget.plotAreaSqm)} sqm
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3 text-xs">
+                              <span className="text-muted-foreground">
+                                Analysis point
+                              </span>
+                              <span className="font-semibold tabular-nums">
+                                [{analysisTarget.coordinates[0].toFixed(4)},{" "}
+                                {analysisTarget.coordinates[1].toFixed(4)}]
+                              </span>
+                            </div>
+                          </div>
+
+                          {currentPlotDiffersFromAnalysis ? (
+                            <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700">
+                              The currently selected plot is different from the
+                              plot used for this score. Re-run analysis to score
+                              the new selection.
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
                       <ScoreSummary
                         score={scoreData.score.overallScore}
                         max={1000}
@@ -967,6 +1026,26 @@ export function EvaluateLandWorkspace() {
                             key: "satellite",
                             label: "Satellite",
                             icon: Satellite,
+                          },
+                          {
+                            key: "regulation",
+                            label: "Regulation",
+                            icon: CheckCircle2,
+                          },
+                          {
+                            key: "googlePlaces",
+                            label: "Google Places",
+                            icon: MapPin,
+                          },
+                          {
+                            key: "googleRoads",
+                            label: "Google Roads",
+                            icon: MapPin,
+                          },
+                          {
+                            key: "proposedInfrastructure",
+                            label: "Proposed Infra",
+                            icon: TrendingUp,
                           },
                         ].map(({ key, label, icon: Icon }) => {
                           const ds =
@@ -1294,8 +1373,8 @@ export function EvaluateLandWorkspace() {
                           ) : null}
                           {!sellableAreaBreakdown.hasPlotGeometry ? (
                             <p className="mt-2 text-xs text-amber-600">
-                              Draw a plot to compute the true buildable area after
-                              setbacks from actual geometry.
+                              Draw a plot to compute the true buildable area
+                              after setbacks from actual geometry.
                             </p>
                           ) : null}
                         </div>

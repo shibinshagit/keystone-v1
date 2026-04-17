@@ -1163,9 +1163,13 @@ export interface ProjectEstimates {
 export interface LandIntelligenceQuery {
   location: string;                    // City/district name (e.g. "Delhi")
   coordinates?: [number, number];      // [lng, lat]
+  plotGeometry?: Feature<Polygon>;     // Optional parcel polygon for parcel-level checks
+  roadAccessSides?: string[];
   district?: string;                   // Sub-district/area
   landSizeSqm?: number;               // Plot area in sqm
-  intendedUse?: 'Residential' | 'Commercial' | 'Industrial' | 'Mixed-Use';
+  intendedUse?: BuildingIntendedUse;
+  underwriting?: Pick<UnderwritingData, 'approvals' | 'competitors'>;
+  locationAmenities?: any[];
   targetPriceRange?: { min: number; max: number }; // INR
 }
 

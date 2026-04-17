@@ -6,6 +6,7 @@ import {
   type BhuvanLandUseSummary,
 } from "@/lib/land-intelligence/buildability-verdict";
 import { calculateSellableAreaBreakdown } from "@/lib/land-intelligence/calculate-sellable-area-breakdown";
+import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import { lookupRegulationForLocationAndUse } from "@/lib/regulation-lookup";
 import type {
   BuildingIntendedUse,
@@ -22,26 +23,25 @@ interface ScoreResult {
     fdi: { count: number; available: boolean };
     sez: { count: number; available: boolean };
     satellite: { available: boolean; isMock: boolean };
+    regulation: { available: boolean };
+    googlePlaces: { count: number; available: boolean };
+    googleRoads: { count: number; available: boolean };
+    proposedInfrastructure: { count: number; available: boolean };
   };
+}
+
+interface AnalysisTargetSnapshot {
+  plotId: string;
+  plotName: string;
+  plotAreaSqm: number;
+  usedFallbackPlot: boolean;
+  coordinates: [number, number];
 }
 
 interface BhuvanAnalysisResponse {
   success: boolean;
   report: BhuvanLandUseSummary;
   error?: string;
-}
-
-function inferScoreQueryLocation(location: string) {
-  const parts = location
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .filter((part) => !/^india$/i.test(part));
-
-  const district = parts[0] || location.trim() || "Unknown";
-  const state = parts.length > 1 ? parts[parts.length - 1] : district;
-
-  return { state, district };
 }
 
 export function useEvaluateLandAnalysis({
@@ -71,12 +71,15 @@ export function useEvaluateLandAnalysis({
   const [matchedRegulation, setMatchedRegulation] =
     useState<RegulationData | null>(null);
   const [buildVerdict, setBuildVerdict] = useState<BuildabilityVerdict | null>(null);
+  const [analysisTarget, setAnalysisTarget] =
+    useState<AnalysisTargetSnapshot | null>(null);
 
   const clearAnalysisResults = useCallback(() => {
     setScoreData(null);
     setBhuvanData(null);
     setMatchedRegulation(null);
     setBuildVerdict(null);
+    setAnalysisTarget(null);
   }, []);
 
   const resetAnalysis = useCallback(() => {
@@ -104,9 +107,25 @@ export function useEvaluateLandAnalysis({
 
     const values = getInputValues();
     const { state, district } = inferScoreQueryLocation(values.location);
+    const plotForAnalysis = selectedPlot || plots[0] || null;
+
+    if (!plotForAnalysis) {
+      setScoreError(
+        "Draw or select a plot before running the developability score.",
+      );
+      clearAnalysisResults();
+      return false;
+    }
 
     setIsRunningScore(true);
     setScoreError(null);
+    setAnalysisTarget({
+      plotId: plotForAnalysis.id,
+      plotName: plotForAnalysis.name,
+      plotAreaSqm: plotForAnalysis.area,
+      usedFallbackPlot: selectedPlot == null,
+      coordinates: coords,
+    });
 
     try {
       const [scoreRes, bhuvanRes, regulationRes] = await Promise.allSettled([
@@ -117,6 +136,8 @@ export function useEvaluateLandAnalysis({
             location: state,
             district,
             coordinates: coords,
+            plotGeometry: plotForAnalysis.geometry,
+            roadAccessSides: plotForAnalysis.roadAccessSides,
             landSizeSqm: Number(values.landSize),
             intendedUse: values.intendedUse,
           }),
@@ -201,6 +222,8 @@ export function useEvaluateLandAnalysis({
     clearAnalysisResults,
     getAnalysisCoordinates,
     getInputValues,
+    plots,
+    selectedPlot,
     validateRequired,
   ]);
 
@@ -222,6 +245,7 @@ export function useEvaluateLandAnalysis({
     bhuvanData,
     matchedRegulation,
     buildVerdict,
+    analysisTarget,
     sellableAreaBreakdown,
     runAnalysis,
     resetAnalysis,

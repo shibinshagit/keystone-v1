@@ -1,6 +1,6 @@
 /**
  * Developability Score Engine
- * 
+ *
  * Thin wrapper around the generic schema engine, using the
  * Developability Score schema. Same pattern as dev-engine.ts.
  */
@@ -19,12 +19,10 @@ export function evaluateDevelopability(results: Record<string, ItemResult | unde
  */
 export function toDevelopabilityScore(
   engineOutput: EngineOutput,
-  results: Record<string, ItemResult | undefined>
+  results: Record<string, ItemResult | undefined>,
 ): DevelopabilityScore {
   const score = engineOutput.overallScore;
-  const maxScore = engineOutput.maxScore;
 
-  // Rating bands
   let rating: DevelopabilityScore['rating'];
   if (score >= 800) rating = 'Excellent';
   else if (score >= 600) rating = 'Good';
@@ -32,36 +30,36 @@ export function toDevelopabilityScore(
   else if (score >= 200) rating = 'Poor';
   else rating = 'Not Viable';
 
-  // Data completeness: how many items actually had data
-  const totalItems = Object.keys(results).length;
-  const definedItems = Object.values(results).filter(r => r !== undefined && r !== null).length;
-  const expectedItems = 18; // Total items in the schema
+  const definedItems = Object.values(results).filter((result) => result !== undefined && result !== null).length;
+  const expectedItems = 18;
   const dataCompleteness = Math.min(1, definedItems / expectedItems);
 
-  // Map categories from engine output
   const cats = engineOutput.categories;
   const getDetails = (cat: typeof cats[number]) =>
     cat.items
-      .filter(it => it.status !== 'neutral')
-      .map(it => `${it.title}: ${it.score}/${it.maxScore} (${it.status})`);
+      .filter((item) => item.status !== 'neutral')
+      .map((item) => `${item.title}: ${item.score}/${item.maxScore} (${item.status})`);
 
-  const growthCat = cats.find(c => c.title === 'Growth Potential');
-  const legalCat = cats.find(c => c.title === 'Legal & Regulatory');
-  const locationCat = cats.find(c => c.title === 'Location & Connectivity');
-  const marketCat = cats.find(c => c.title === 'Market & Economics');
+  const growthCat = cats.find((cat) => cat.title === 'Growth Potential');
+  const legalCat = cats.find((cat) => cat.title === 'Legal & Regulatory');
+  const locationCat = cats.find((cat) => cat.title === 'Location & Connectivity');
+  const marketCat = cats.find((cat) => cat.title === 'Market & Economics');
 
-  // Recommendation text
   let recommendation = '';
   if (engineOutput.fail) {
-    recommendation = 'NOT RECOMMENDED — Mandatory compliance checks failed. Resolve legal/zoning issues before proceeding.';
+    recommendation = 'Not recommended. Mandatory compliance checks failed, so the parcel needs legal and zoning resolution first.';
+  } else if (dataCompleteness < 0.4) {
+    recommendation = 'Preliminary score only. Too many developability checks are still missing to treat this result as decision-ready.';
+  } else if (dataCompleteness < 0.65) {
+    recommendation = 'Provisional recommendation. Key checks are available, but additional parcel-level evidence is still needed before relying on this score.';
   } else if (rating === 'Excellent') {
     recommendation = 'Highly recommended for development. Strong growth signals, clear legal pathway, and favorable market conditions.';
   } else if (rating === 'Good') {
     recommendation = 'Recommended with due diligence. Positive indicators across most categories.';
   } else if (rating === 'Moderate') {
-    recommendation = 'Proceed with caution. Mixed signals — conduct detailed feasibility study before committing.';
+    recommendation = 'Proceed with caution. Mixed signals require a more detailed parcel feasibility review before committing.';
   } else if (rating === 'Poor') {
-    recommendation = 'Not recommended at this time. Significant risk factors identified.';
+    recommendation = 'Not recommended at this time. Significant risk factors were identified.';
   } else {
     recommendation = 'Avoid. Multiple critical risk factors make development unviable.';
   }
