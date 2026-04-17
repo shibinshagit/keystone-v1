@@ -84,6 +84,7 @@ export interface AlgoParams {
     autoMaxGFA?: boolean; 
     infillSetback?: number; 
     infillMode?: 'ring' | 'grid' | 'hybrid'; 
+    intendedUse?: string;
 }
 
 export type LamellaParams = AlgoParams;

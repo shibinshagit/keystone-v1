@@ -18,7 +18,7 @@ import { generateLayoutZones } from '@/ai/flows/ai-zone-generator';
 import { generateSitePlanImage } from '@/lib/generate-site-plan-image';
 
 import { generateLamellas, generateTowers, generatePerimeter, AlgoParams, AlgoTypology } from '@/lib/generators/basic-generator';
-import { generateLShapes, generateUShapes, generateTShapes, generateHShapes, generateSlabShapes, generatePointShapes, generateLargeFootprint, checkCollision } from '@/lib/generators/geometric-typologies';
+import { generateLShapes, generateUShapes, generateTShapes, generateHShapes, generateSlabShapes, generatePointShapes, generateLargeFootprint, generateCommercialBlocks, checkCollision } from '@/lib/generators/geometric-typologies';
 import { generateSiteUtilities, generateBuildingLayout, calculateUtilityReservationZones, generateSiteGates, getPlotOrientation } from '@/lib/generators/layout-generator';
 import { splitPolygon } from '@/lib/polygon-utils';
 import { db } from '@/lib/firebase';
@@ -1758,6 +1758,9 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 };
 
                 // 1. APPLY MAIN SETBACK (from plot boundary)
+                // mainSetback is the height-based setback applied uniformly to all sides.
+                // Buildings placed at the edge of the buildable area are already
+                // mainSetback meters from the original plot boundary.
                 let setbackBoundary = plotStub.geometry;
                 const mainSetback = p.setback ?? plotStub.setback ?? 0;
 
@@ -2167,12 +2170,13 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         minBuildingLength: p.minBuildingLength ?? 25,
                         maxBuildingLength: p.maxBuildingLength ?? 55,
                         // Main setback is ALREADY applied to shrink the plot boundary.
-                        // Generator-internal setback should only be the EXTRA beyond mainSetback.
-                        // If user explicitly provided directional setbacks, compute the extra; otherwise use small internal spacing defaults.
-                        setback: (hasPeripheralRoad || hasSurfaceParking) ? Math.max(0, (p.frontSetback ?? mainSetback) - mainSetback) : 0,
-                        sideSetback: p.sideSetback != null ? Math.max(0, p.sideSetback - mainSetback) : 6,
-                        frontSetback: p.frontSetback != null ? Math.max(0, p.frontSetback - mainSetback) : 6,
-                        rearSetback: p.rearSetback != null ? Math.max(0, p.rearSetback - mainSetback) : (p.frontSetback != null ? Math.max(0, p.frontSetback - mainSetback) : 6),
+                        // Directional setbacks handle INTER-BUILDING spacing (arm gaps, row gaps, U-shape spacing).
+                        // genParams.setback is a small internal buffer from peripheral zones (road/parking).
+                        // It is NOT the height-based setback — that's already applied to the plot boundary.
+                        setback: (hasPeripheralRoad || hasSurfaceParking) ? 3 : 0,
+                        sideSetback: p.sideSetback ?? Math.max(mainSetback, 6),
+                        frontSetback: p.frontSetback ?? Math.max(mainSetback, 6),
+                        rearSetback: p.rearSetback ?? (p.frontSetback ?? Math.max(mainSetback, 6)),
                         roadAccessSides: plotStub.roadAccessSides || [],
                         wingLengthA: undefined,
                         wingLengthB: undefined,
@@ -2187,29 +2191,139 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                         let chunkGenerated: Feature<Polygon>[] = [];
 
                         // --- LARGE-FOOTPRINT MODE for Commercial / Institutional / Industrial ---
-                        const effectiveLandUse = (p as any).landUse || params.landUse || 'residential';
-                        if (['commercial', 'institutional', 'industrial'].includes(effectiveLandUse)) {
+                        const rawLandUse = (p as any).landUse || params.landUse || 'residential';
+                        const effectiveLandUse = rawLandUse.toLowerCase();
+                        if (['commercial', 'institutional', 'industrial', 'public'].includes(effectiveLandUse)) {
                             const buildingCount = (p as any).buildingCount ?? (params as any).buildingCount ?? 2;
                             console.log(`[DEBUG-COMM] ========== COMMERCIAL GENERATION START ==========`);
                             console.log(`[DEBUG-COMM] buildingCount=${buildingCount}, landUse=${effectiveLandUse}`);
                             console.log(`[DEBUG-COMM] effectiveMaxFootprint=${effectiveMaxFootprint.toFixed(0)}m², chunk area=${turf.area(chunk).toFixed(0)}m²`);
                             console.log(`[DEBUG-COMM] genParams.maxFootprint=${(genParams as any).maxFootprint?.toFixed(0) ?? 'undefined'}`);
-                            chunkGenerated = generateLargeFootprint(chunk, {
-                                ...genParams,
-                                buildingCount,
-                                mainSetback  // Pass through so generator can calculate extra directional setbacks
-                            } as any);
-                            console.log(`[DEBUG-COMM] generateLargeFootprint returned ${chunkGenerated.length} buildings`);
+
+                            // Apply directional setbacks to the chunk BEFORE passing to the generator
+                            // This mirrors the residential path and ensures front/rear/side setback sliders affect commercial buildings
+                            let adjustedCommChunk = chunk;
+                            const peripheralBuffer = (hasPeripheralRoad || hasSurfaceParking) ? 3 : 0;
+                            const commExtraFront = Math.max(peripheralBuffer, (genParams.frontSetback ?? 0) - mainSetback);
+                            const commExtraRear = Math.max(peripheralBuffer, (genParams.rearSetback ?? 0) - mainSetback);
+                            const commExtraSide = Math.max(peripheralBuffer, (genParams.sideSetback ?? 0) - mainSetback);
+
+                            console.log(`[DEBUG-COMM] Setback application: mainSetback=${mainSetback}, front=${genParams.frontSetback}(extra=${commExtraFront}), rear=${genParams.rearSetback}(extra=${commExtraRear}), side=${genParams.sideSetback}(extra=${commExtraSide})`);
+
+                            if (commExtraFront > 0 || commExtraRear > 0 || commExtraSide > 0) {
+                                // Apply side setback uniformly first
+                                if (commExtraSide > 0) {
+                                    // @ts-ignore
+                                    const sideBuffered = turf.buffer(adjustedCommChunk, -commExtraSide / 1000, { units: 'kilometers' });
+                                    const sideCleaned = ensurePolygon(sideBuffered);
+                                    if (sideCleaned) adjustedCommChunk = sideCleaned;
+                                    console.log(`[DEBUG-COMM] Applied side setback: ${commExtraSide}m, area=${turf.area(adjustedCommChunk).toFixed(0)}m²`);
+                                }
+
+                                // Apply directional front/rear cuts
+                                const commRoadSides = genParams.roadAccessSides || [];
+                                if (commRoadSides.length > 0 && (commExtraFront > 0 || commExtraRear > 0)) {
+                                    const frontSides = new Set(commRoadSides.map((s: string) => s.charAt(0).toUpperCase()));
+                                    const rearSidesSet = new Set<string>();
+                                    frontSides.forEach((s: string) => {
+                                        if (s === 'N') rearSidesSet.add('S');
+                                        if (s === 'S') rearSidesSet.add('N');
+                                        if (s === 'E') rearSidesSet.add('W');
+                                        if (s === 'W') rearSidesSet.add('E');
+                                    });
+                                    frontSides.forEach((s: string) => rearSidesSet.delete(s));
+
+                                    const cutEdgeComm = (edge: string, distance: number) => {
+                                        if (distance <= 0) return;
+                                        let bearing = 0;
+                                        switch (edge) {
+                                            case 'N': bearing = 180; break;
+                                            case 'S': bearing = 0; break;
+                                            case 'E': bearing = 270; break;
+                                            case 'W': bearing = 90; break;
+                                        }
+                                        try {
+                                            // @ts-ignore
+                                            const shifted = turf.transformTranslate(adjustedCommChunk, distance, bearing, { units: 'meters' });
+                                            // @ts-ignore
+                                            const result = turf.intersect(adjustedCommChunk, shifted);
+                                            if (result) {
+                                                const poly = ensurePolygon(result);
+                                                if (poly) {
+                                                    adjustedCommChunk = poly;
+                                                    console.log(`[DEBUG-COMM] Cut ${edge} edge by ${distance}m`);
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.warn(`[DEBUG-COMM] Failed to cut ${edge}:`, e);
+                                        }
+                                    };
+                                    frontSides.forEach((s: string) => cutEdgeComm(s, commExtraFront));
+                                    rearSidesSet.forEach((s: string) => cutEdgeComm(s, commExtraRear));
+                                } else if (commExtraFront > 0 || commExtraRear > 0) {
+                                    // No road access sides defined — apply max as uniform buffer
+                                    const uniformExtra = Math.max(commExtraFront, commExtraRear);
+                                    // @ts-ignore
+                                    const buffered = turf.buffer(adjustedCommChunk, -uniformExtra / 1000, { units: 'kilometers' });
+                                    const cleaned = ensurePolygon(buffered);
+                                    if (cleaned) adjustedCommChunk = cleaned;
+                                    console.log(`[DEBUG-COMM] Applied uniform front/rear buffer: ${uniformExtra}m`);
+                                }
+                            }
+
+                            console.log(`[DEBUG-COMM] Adjusted chunk area: ${turf.area(adjustedCommChunk).toFixed(0)}m² (from ${turf.area(chunk).toFixed(0)}m²)`);
+
+                            // Map land use to intendedUse for layout generator branching
+                            const landUseToIntendedUse: Record<string, string> = {
+                                'commercial': 'Retail',  // Default commercial to Retail layout
+                                'institutional': 'Institutional',
+                                'industrial': 'Industrial',
+                                'public': 'Institutional',
+                            };
+                            const mappedIntendedUse = landUseToIntendedUse[effectiveLandUse] || 'Retail';
+
+                            const commercialShape = (p as any).commercialShape || (params as any).commercialShape || 'large-footprint';
+                            console.log(`[DEBUG-COMM] commercialShape=${commercialShape}, intendedUse=${mappedIntendedUse}`);
+                            if (commercialShape === 'block') {
+                                chunkGenerated = generateCommercialBlocks(adjustedCommChunk, {
+                                    ...genParams,
+                                    buildingCount,
+                                    mainSetback: 0,  // setbacks already applied to the chunk
+                                    intendedUse: mappedIntendedUse
+                                } as any);
+                                console.log(`[DEBUG-COMM] generateCommercialBlocks returned ${chunkGenerated.length} buildings`);
+                            } else {
+                                chunkGenerated = generateLargeFootprint(adjustedCommChunk, {
+                                    ...genParams,
+                                    buildingCount,
+                                    mainSetback: 0,  // setbacks already applied to the chunk
+                                    sideSetback: 0,
+                                    frontSetback: 0,
+                                    rearSetback: 0,
+                                    intendedUse: mappedIntendedUse
+                                } as any);
+                                console.log(`[DEBUG-COMM] generateLargeFootprint returned ${chunkGenerated.length} buildings`);
+                            }
                             chunkGenerated.forEach((b, i) => {
                                 console.log(`[DEBUG-COMM]   Building ${i}: area=${turf.area(b).toFixed(0)}m², coords=${b.geometry.coordinates[0].length} vertices`);
                             });
                         } else {
                         // --- STANDARD TYPOLOGY MODE (Residential / Mixed) ---
                         // Apply directional front/rear/side setback EXTRA beyond mainSetback
+                        // When peripheral roads/parking exist, ensure at least 3m buffer from the road zone.
+                        // When roadAccessSides are defined, always apply front setback from the road side
+                        // so buildings maintain proper distance from the road regardless of peripheral utilities.
                         let adjustedChunk = chunk;
-                        const extraFront = Math.max(0, (genParams.frontSetback ?? 0) - mainSetback);
-                        const extraRear = Math.max(0, (genParams.rearSetback ?? 0) - mainSetback);
-                        const extraSide = Math.max(0, (genParams.sideSetback ?? 0) - mainSetback);
+                        const peripheralBuffer = (hasPeripheralRoad || hasSurfaceParking) ? 3 : 0;
+                        const hasRoadAccess = (genParams.roadAccessSides?.length ?? 0) > 0;
+                        // mainSetback already enforces the height-based setback from the plot boundary.
+                        // Extras only apply when directional setback EXCEEDS mainSetback,
+                        // or when peripheral road/parking needs a buffer.
+                        const extraFront = Math.max(peripheralBuffer, (genParams.frontSetback ?? 0) - mainSetback);
+                        const extraRear = Math.max(peripheralBuffer, (genParams.rearSetback ?? 0) - mainSetback);
+                        const extraSide = Math.max(peripheralBuffer, (genParams.sideSetback ?? 0) - mainSetback);
+
+                        console.log(`[Setback Debug] mainSetback=${mainSetback}, peripheralBuffer=${peripheralBuffer}, hasRoadAccess=${hasRoadAccess}, extras: F=${extraFront} R=${extraRear} S=${extraSide}`);
 
                         if (extraFront > 0 || extraRear > 0 || extraSide > 0) {
                             // Case 1: Peripheral road wraps whole plot — apply front setback on ALL sides uniformly
@@ -2274,6 +2388,15 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                                     frontSides.forEach((s: string) => cutEdgeRes(s, extraFront));
                                     rearSidesSet.forEach((s: string) => cutEdgeRes(s, extraRear));
+                                }
+                                // Case 3: No road access sides defined — apply uniform buffer as fallback
+                                else {
+                                    const uniformExtra = Math.max(extraFront, extraRear, extraSide);
+                                    console.log(`[Residential Setback] No road sides: applying ${uniformExtra}m uniform buffer`);
+                                    // @ts-ignore
+                                    const buffered = turf.buffer(adjustedChunk, -uniformExtra / 1000, { units: 'kilometers' });
+                                    const cleaned = ensurePolygon(buffered);
+                                    if (cleaned) adjustedChunk = cleaned;
                                 }
                             }
                         }
@@ -2352,8 +2475,9 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             const currentFp = geomFeatures.reduce((sum, f) => sum + turf.area(f), 0);
                             const remainingBudget = effectiveMaxFootprint - currentFp;
                             const buildingArea = turf.area(g);
+                            const bTypo = g.properties?.subtype || g.properties?.typology || typology;
                             
-                            console.log(`[DEBUG-COMM] Building ${gIdx}: area=${buildingArea.toFixed(0)}m², currentFp=${currentFp.toFixed(0)}m², remainingBudget=${remainingBudget.toFixed(0)}m², effectiveMaxFootprint=${effectiveMaxFootprint.toFixed(0)}m²`);
+                            console.log(`[DEBUG-COMM] Building ${gIdx} (${bTypo}): area=${buildingArea.toFixed(0)}m², currentFp=${currentFp.toFixed(0)}m², remainingBudget=${remainingBudget.toFixed(0)}m², effectiveMaxFootprint=${effectiveMaxFootprint.toFixed(0)}m²`);
                             
                             if (isLargeFootprint && buildingArea > remainingBudget && remainingBudget > 50) {
                                 // SHRINK to fit remaining budget instead of discarding
@@ -2374,18 +2498,21 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                 }
                                 primaryCoverageMet = true;
                             } else if (!isLargeFootprint && currentFp + buildingArea > effectiveMaxFootprint) {
-                                console.log(`[DEBUG-COMM] Building ${gIdx}: RESIDENTIAL DISCARD (${(currentFp + buildingArea).toFixed(0)} > ${effectiveMaxFootprint.toFixed(0)})`);
+                                console.log(`[DEBUG-COMM] Building ${gIdx} (${bTypo}): RESIDENTIAL DISCARD (${(currentFp + buildingArea).toFixed(0)} > ${effectiveMaxFootprint.toFixed(0)})`);
                                 primaryCoverageMet = true;
                                 break;
                             } else {
-                                console.log(`[DEBUG-COMM] Building ${gIdx}: ACCEPTED (${buildingArea.toFixed(0)} <= ${remainingBudget.toFixed(0)})`);
                                 if (isLargeFootprint) {
+                                    console.log(`[DEBUG-COMM] Building ${gIdx} (${bTypo}): ACCEPTED (${buildingArea.toFixed(0)} <= ${remainingBudget.toFixed(0)})`);
                                     builtObstacles.push(g);
                                     geomFeatures.push(g);
                                 } else {
                                     if (!checkCollision(g, builtObstacles)) {
+                                        console.log(`[DEBUG-COMM] Building ${gIdx} (${bTypo}): ACCEPTED (${buildingArea.toFixed(0)}m², no collision)`);
                                         builtObstacles.push(g);
                                         geomFeatures.push(g);
+                                    } else {
+                                        console.log(`[DEBUG-COMM] Building ${gIdx} (${bTypo}): COLLISION REJECTED (${buildingArea.toFixed(0)}m², collides with ${builtObstacles.length} obstacles)`);
                                     }
                                 }
                             }
@@ -4323,17 +4450,11 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 set({ tempScenarios: [...generatedScenarios] });
 
 
-                // --- Generate Scenario 2: Complementary typology for variety ---
+                // --- Generate Scenario 2: Same typology, different seed for variety ---
                 await sleep(600); // Thinking time
-                // Pick a complementary typology for S2 to ensure visual variety
-                const s2Typo = scenarioTypologies[1].length > 0 ? baseTypo :
-                    (baseTypo === 'slab' ? 'lshaped' :
-                        baseTypo === 'lshaped' ? 'slab' :
-                            baseTypo === 'ushaped' ? 'slab' :
-                                baseTypo === 'hshaped' ? 'lshaped' :
-                                    baseTypo === 'oshaped' ? 'perimeter' :
-                                        baseTypo === 'tshaped' ? 'slab' :
-                                            baseTypo);
+                // Keep the SAME typology for all 3 scenarios — the seed (0,1,2) provides
+                // diversity (different edge rotation, strategy variant, crossbar position etc.)
+                const s2Typo = scenarioTypologies[1].length > 0 ? baseTypo : baseTypo;
                 generatedScenarios.push(createScenario("Scenario 2: Max Density", {
                     typology: s2Typo as AlgoTypology,
                     spacing: 12,
@@ -4351,14 +4472,11 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 set({ tempScenarios: [...generatedScenarios] });
 
 
-                // --- Generate Scenario 3: Alternative angle/typology ---
+                // --- Generate Scenario 3: Same typology, different seed ---
                 await sleep(600); // Thinking time
-                // S3 uses a rotated orientation for visual variety
-                const altAngle = isVastu ? 0 : 90;
-                const s3Typo = scenarioTypologies[2].length > 0 ? baseTypo :
-                    (baseTypo === 'slab' ? 'slab' :
-                        baseTypo === 'lshaped' ? 'lshaped' :
-                            'slab');
+                // S3 uses a different seed — the generator handles diversity internally
+                const altAngle = isVastu ? 0 : 0;
+                const s3Typo = scenarioTypologies[2].length > 0 ? baseTypo : baseTypo;
 
                 generatedScenarios.push(createScenario("Scenario 3: Alternative", {
                     typology: s3Typo as AlgoTypology,

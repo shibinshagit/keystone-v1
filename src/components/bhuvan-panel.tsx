@@ -384,9 +384,9 @@ function BhuvanLegend({
     fetch(jsonUrl.toString())
       .then(res => res.json())
       .then(data => {
-        if (data && data.Legend && data.Legend[0] && data.Legend[0].rules) {
-          const rules = data.Legend[0].rules;
-          const parsed = rules.map((r: any) => {
+        if (data && data.Legend && Array.isArray(data.Legend)) {
+          const allRules = data.Legend.flatMap((l: any) => l.rules || []);
+          const parsed = allRules.map((r: any) => {
             let color = '#888';
             if (r.symbolizers && r.symbolizers.length > 0) {
               const sym = r.symbolizers[0];
@@ -445,6 +445,11 @@ function BhuvanLegend({
             alt="Legend"
             className="max-w-none h-auto rounded-sm dark:invert dark:hue-rotate-180"
             onError={() => setImgError(true)}
+            onLoad={(e) => {
+              if (e.currentTarget.naturalWidth <= 1 && e.currentTarget.naturalHeight <= 1) {
+                setImgError(true);
+              }
+            }}
           />
         </div>
         <ScrollBar orientation="horizontal" />

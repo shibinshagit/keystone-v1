@@ -4,7 +4,7 @@ import { generateBuildingLayout } from './layout-generator';
 import { Feature, Polygon, MultiPolygon, Point, LineString } from 'geojson';
 import { UnitTypology } from '../types';
 import { applyVariableSetbacks } from './setback-utils';
-import { AlgoParams } from './geometric-typologies-helpers';
+import { AlgoParams } from './basic-generator';
 export interface GeometricTypologyParams {
     wingDepth?: number;
     wingLengthA?: number;
@@ -30,6 +30,7 @@ export interface GeometricTypologyParams {
     roadAccessSides?: string[];
     seed?: number;
     selectedUtilities?: string[];
+    intendedUse?: string;
 }
 
 export function checkCollision(poly: Feature<Polygon>, obstacles?: Feature<Polygon>[]): boolean {
@@ -185,154 +186,276 @@ function selectDiverseCandidate(
     const selected = diverseList[seed % diverseList.length];
     return selected.parts || [];
 }
-
 /**
- * Robust "Perimeter-Aligned" U-Shape Generator
- * 1. Identify 3 Consecutive Edges (forming a U base).
- * 2. Generate Wings.
- * 3. Union.
+ * U-Shape Generator - Direct clone of L-shape with arms from BOTH ends.
+ *
+ * slab1 = horizontal bottom along edge (= L-shape slab1)
+ * slab2 = left arm perpendicular from START end (= L-shape slab2 at 'start')
+ * slab3 = right arm perpendicular from FAR end (= L-shape slab2 at 'far')
  */
 export function generateUShapes(
     plotGeometry: Feature<Polygon | MultiPolygon>,
     params: GeometricTypologyParams
 ): Feature<Polygon>[] {
-    const { wingDepth, setback, obstacles } = params;
-    console.log(`[generateUShapes] Setbacks -> setback: ${setback}, sideSetback: ${params.sideSetback}`);
+    const {
+        obstacles,
+        minBuildingWidth = 20, maxBuildingWidth = 25,
+        minBuildingLength = 25, maxBuildingLength = 55,
+        seed = 0
+    } = params;
 
-    // Get Valid Area
+    const globalSetback = params.setback ?? 3;
+    const sideSetback  = Math.max(params.sideSetback  ?? globalSetback, 3);
+    const frontSetback = Math.max(params.frontSetback ?? globalSetback, 3);
+    const rearSetback  = Math.max(params.rearSetback  ?? frontSetback, 3);
+    const cornerMargin = Math.min(Math.max(sideSetback, 3), 5); // Moderate buffer — plot already shrunk by setback extras
+    const rowGap       = frontSetback + rearSetback;
+    const armGap       = 0;
+
+    const strategyVariant = seed % 3;
+    let sMinLength = minBuildingLength;
+    let sMaxLength = maxBuildingLength;
+    let sMinWidth  = minBuildingWidth;
+    let sMaxWidth  = maxBuildingWidth;
+
+    // Seed diversity: vary courtyard width and arm proportions
+    // Keep multipliers conservative so all variants can fit on typical plots
+    const courtPreference = strategyVariant === 0 ? 'compact' : strategyVariant === 1 ? 'medium' : 'wide';
+
+    const uShapeSpacing = Math.max(rowGap, sideSetback * 2, 6);
+
+    console.log(`[U-Gen] seed=${seed} variant=${strategyVariant} W[${sMinWidth}-${sMaxWidth}] L[${sMinLength}-${sMaxLength}] setbacks: F=${frontSetback} R=${rearSetback} S=${sideSetback} uGap=${Math.max(sideSetback, 6)}`);
+
     const validArea = plotGeometry as Feature<Polygon | MultiPolygon>;
     // @ts-ignore
-    const simplified = turf.simplify(validArea, { tolerance: 0.00005, highQuality: true });
-
+    const simplified = turf.simplify(validArea, { tolerance: 0.000001, highQuality: true });
     const coords = (simplified.geometry.type === 'Polygon')
         ? simplified.geometry.coordinates[0]
         : (simplified.geometry as MultiPolygon).coordinates[0][0];
+    if (coords.length < 4) return [];
 
-    const bbox = turf.bbox(validArea);
-    const widthM = turf.distance([bbox[0], bbox[1]], [bbox[2], bbox[1]], { units: 'meters' });
-    const heightM = turf.distance([bbox[0], bbox[1]], [bbox[0], bbox[3]], { units: 'meters' });
-    const minDim = Math.min(widthM, heightM);
+    const validEdges: { edge: any; length: number; bearing: number; idx: number }[] = [];
+    for (let i = 0; i < coords.length - 1; i++) {
+        const p1 = turf.point(coords[i]);
+        const p2 = turf.point(coords[i + 1]);
+        const length = turf.distance(p1, p2, { units: 'meters' });
+        if (length >= sMinLength) {
+            validEdges.push({ edge: turf.lineString([coords[i], coords[i + 1]]), length, bearing: turf.bearing(p1, p2), idx: i });
+        }
+    }
+    if (validEdges.length === 0) return [];
+    // Don't sort by length — keep original polygon edge order so rotation gives
+    // genuinely different starting positions on the plot boundary for each seed.
+    const edgeRotation = seed % validEdges.length;
+    const rotatedEdges = [...validEdges.slice(edgeRotation), ...validEdges.slice(0, edgeRotation)];
+    console.log(`[U-Gen] ${validEdges.length} valid edges, rotation=${edgeRotation}`);
 
-    const minDepth = params.minBuildingWidth || 20;
-    const maxDepth = params.maxBuildingWidth || 25;
+    const results: Feature<Polygon>[] = [];
+    const usedAreas: Feature<Polygon>[] = [...(obstacles || [])];
+    let uIdx = 0;
 
-    const rand = Math.abs(Math.sin((params.seed || 0) * 99.123));
-    const targetDepth = minDepth + (rand * (maxDepth - minDepth));
-
-    let safeDepth = Math.min(targetDepth, minDim * 0.45);
-    if (safeDepth < minDepth) safeDepth = minDepth;
-    if (safeDepth > targetDepth) safeDepth = targetDepth;
-
-    const candidates: { feature: Feature<Polygon | MultiPolygon>, score: number, variantId?: string, parts?: Feature<Polygon>[] }[] = [];
-
-    for (let i = 0; i < coords.length - 2; i++) {
+    function clipToValidArea(poly: Feature<Polygon>, threshold = 0.80): Feature<Polygon> | null {
         try {
-            const p1 = coords[i];
-            const p2 = coords[i + 1];
-            const p3 = coords[i + 2];
-            const p4 = (i + 3 < coords.length) ? coords[i + 3] : coords[0];
+            let intersection: any = null;
+            try {
+                // @ts-ignore
+                intersection = turf.intersect(poly, validArea);
+            } catch {
+                // @ts-ignore
+                intersection = turf.intersect(turf.buffer(poly, 0), turf.buffer(validArea, 0));
+            }
+            if (!intersection || turf.area(intersection) < turf.area(poly) * threshold) return null;
+            if (intersection.geometry.type === 'MultiPolygon') {
+                const parts = (turf.unkinkPolygon(intersection as any) as any).features as Feature<Polygon>[];
+                intersection = parts.reduce((a: Feature<Polygon>, b: Feature<Polygon>) => turf.area(a) >= turf.area(b) ? a : b);
+            }
+            return intersection as Feature<Polygon>;
+        } catch { return null; }
+    }
 
-            // Edges
-            const edges = [
-                turf.lineString([p1, p2]),
-                turf.lineString([p2, p3]),
-                turf.lineString([p3, p4])
-            ];
+    // Like clipToValidArea but returns the ORIGINAL rectangle (keeps it rectangular)
+    function checkContainment(poly: Feature<Polygon>, threshold = 0.80): Feature<Polygon> | null {
+        try {
+            let intersection: any = null;
+            try {
+                // @ts-ignore
+                intersection = turf.intersect(poly, validArea);
+            } catch {
+                // @ts-ignore
+                intersection = turf.intersect(turf.buffer(poly, 0), turf.buffer(validArea, 0));
+            }
+            if (!intersection || turf.area(intersection) < turf.area(poly) * threshold) return null;
+            return poly; // Return ORIGINAL rectangle, not clipped shape
+        } catch { return null; }
+    }
 
-            const variations = [
-                { name: 'Standard', depthFactor: 1.0 },
-                { name: 'Thick', depthFactor: 1.5 },
-                { name: 'Thin', depthFactor: 0.75 }
-            ];
+    const clearance = 0; // No applyCornerClearance, so no buffer needed — exact dimensions
 
-            variations.forEach(v => {
-                try {
-                    const currentDepth = safeDepth * v.depthFactor;
-                    let wings: Feature<Polygon>[] = [];
-                    for (const edge of edges) {
-                        try {
-                            // @ts-ignore
-                            const raw = turf.buffer(edge, currentDepth, { units: 'meters', steps: 1 });
-                            // @ts-ignore
-                            const trimmed = turf.intersect(raw, validArea);
-                            if (trimmed) wings.push(trimmed as Feature<Polygon>);
-                        } catch (e) { }
-                    }
+    let depthOffset = 0;
+    for (let depthPass = 0; depthPass < 4; depthPass++) {
+        let placedThisPass = 0;
 
-                    if (wings.length === 3) {
-                        const side1 = wings[0];
-                        const baseRaw = wings[1];
-                        const side2 = wings[2];
+        for (const edgeData of rotatedEdges) {
+            const limitDist = edgeData.length - cornerMargin;
+            // Center-outward scan: start from edge midpoint where both arms have max room
+            const midDist = edgeData.length / 2;
+            const scanPositions: number[] = [];
+            for (let offset = 0; offset < edgeData.length / 2; offset += 5) {
+                const leftPos = midDist - offset;
+                const rightPos = midDist + offset;
+                if (leftPos >= cornerMargin && leftPos + sMinLength <= limitDist) scanPositions.push(leftPos);
+                if (offset > 0 && rightPos >= cornerMargin && rightPos + sMinLength <= limitDist) scanPositions.push(rightPos);
+            }
+            let scanIdx = 0;
 
-                        // Trim base with gaps
-                        // Buffer sides OUTWARD by sideSetback to create exclusion zones
-                        const gap = params.sideSetback ?? params.setback ?? 6;
+            while (scanIdx < scanPositions.length) {
+                const currentDist = scanPositions[scanIdx];
+                const maxAvailLen = limitDist - currentDist;
+                if (maxAvailLen < sMinWidth * 2 + sMinWidth) { scanIdx++; continue; }
+
+                const edgeStart = turf.along(edgeData.edge, currentDist, { units: 'meters' });
+
+                let inwardTurn: number | null = null;
+                for (const turn of [90, -90]) {
+                    try {
+                        const probe = createRect(edgeStart.geometry.coordinates, edgeData.bearing, sMinLength, sMinWidth, turn);
                         // @ts-ignore
-                        const side1Buffered = turf.buffer(side1, gap, { units: 'meters' });
-                        // @ts-ignore
-                        const side2Buffered = turf.buffer(side2, gap, { units: 'meters' });
-                        // @ts-ignore
-                        const sidesExclusion = turf.union(side1Buffered, side2Buffered);
-                        // @ts-ignore
-                        const baseTrimmed = turf.difference(baseRaw, sidesExclusion);
+                        const inter = turf.intersect(turf.buffer(probe, 0), turf.buffer(validArea, 0));
+                        if (inter && turf.area(inter) >= turf.area(probe) * 0.30) { inwardTurn = turn; break; }
+                    } catch { }
+                }
+                if (inwardTurn === null) { scanIdx++; continue; }
 
-                        if (side1 && side2 && baseTrimmed) {
-                            const uParts: Feature<Polygon>[] = [];
+                const perpBearing = edgeData.bearing + inwardTurn;
 
-                            // Segment Side 1 (p1 -> p2)
-                            uParts.push(...segmentWing(side1, turf.point(p1), turf.point(p2), params, false));
+                let pStart: number[];
+                if (depthOffset > 0) {
+                    const deeper = turf.destination(edgeStart, depthOffset, perpBearing, { units: 'meters' });
+                    pStart = deeper.geometry.coordinates;
+                } else {
+                    pStart = edgeStart.geometry.coordinates;
+                }
 
-                            // Segment Base (p2 -> p3)
-                            uParts.push(...segmentWing(baseTrimmed as Feature<Polygon>, turf.point(p2), turf.point(p3), params, false));
+                const containThreshold = depthPass <= 1 ? 0.85 : 0.70;
+                const armContainThreshold = 0.30; // arms go deep into irregular plots, clip aggressively
+                let uPlaced = false;
+                let dbgS1Fail = 0, dbgS2Fail = 0, dbgS3Fail = 0;
+                // -- U-SHAPE: connector along edge + arms from BOTH ends --
+                // -- PERIPHERAL U-SHAPE: all 3 pieces anchored to plot edge --
+                //
+                // +------+                          +------+
+                // | ARM1 |  armLen (deep, inward)    | ARM2 |
+                // |      |  +--------------------+   |      |
+                // |      |  | CONNECTOR (shallow) |  |      |
+                // |      |  | conDepth (inward)   |  |      |
+                // +------+  +--------------------+   +------+
+                // =========== PLOT EDGE ===========================
 
-                            // Segment Side 2 (p3 -> p4)
-                            uParts.push(...segmentWing(side2, turf.point(p3), turf.point(p4), params, false));
+                const widthOptions: number[] = [];
+                for (let w = sMaxWidth; w >= sMinWidth; w -= 1) widthOptions.push(w);
+                if (widthOptions.length === 0 || widthOptions[widthOptions.length - 1] !== sMinWidth) widthOptions.push(sMinWidth);
 
-                            if (uParts.length > 0) {
-                                // @ts-ignore
-                                const shape = turf.multiPolygon(uParts.map(p => p.geometry.coordinates));
+                const armLenOpts: number[] = [];
+                for (let al = sMaxLength; al >= sMinLength; al -= 5) armLenOpts.push(Math.round(al));
+                if (armLenOpts.length === 0 || armLenOpts[armLenOpts.length - 1] !== sMinLength) armLenOpts.push(sMinLength);
 
-                                // 4. ENFORCE FOOTPRINT
-                                const enforced = enforceMaxFootprint(shape, params.maxFootprint, params.minFootprint);
+                // Connector depth: same width range as other slabs (20-25m)
+                const conDepthOpts: number[] = [];
+                for (let cd = sMaxWidth; cd >= sMinWidth; cd -= 1) conDepthOpts.push(cd);
+                if (conDepthOpts.length === 0 || conDepthOpts[conDepthOpts.length - 1] !== sMinWidth) conDepthOpts.push(sMinWidth);
 
-                                if (enforced) {
-                                    // Calculate Score
-                                    const area = turf.area(enforced);
+                // Courtyard width varies by seed strategy — keep multipliers conservative
+                // so all variants succeed on the same plot (diversity via edge rotation + arm dims)
+                const minCourt = courtPreference === 'compact' ? sMinLength : courtPreference === 'medium' ? Math.round(sMinLength * 1.15) : Math.round(sMinLength * 1.3);
+                const uGap = Math.max(sideSetback, 6); // Gap based on height-setback to keep slabs separated safely
+                const maxCourt = Math.min(maxAvailLen - 2 * (sMinWidth + uGap + clearance), sMaxLength); // Strictly adhere to sMaxLength
+
+                for (const armW of widthOptions) {
+                    if (uPlaced) break;
+                    const compArmW = armW + clearance;
+                    for (let court = minCourt; court <= maxCourt; court += 5) {
+                        if (uPlaced) break;
+                        const totalEdgeSpan = compArmW + uGap + court + uGap + compArmW;
+                        if (totalEdgeSpan > maxAvailLen + clearance) continue;
+                        for (const armLen of armLenOpts) {
+                            if (uPlaced) break;
+                            const compArmLen = armLen + clearance;
+                            // ARM1: at pStart, perpendicular inward, width along edge
+                            const arm1Raw = createRect(pStart, perpBearing, compArmLen, compArmW, -inwardTurn);
+                            const arm1 = checkContainment(arm1Raw, armContainThreshold);
+                            if (!arm1) { dbgS1Fail++; continue; }
+                            if (checkCollision(arm1, usedAreas)) { dbgS1Fail++; continue; }
+                            // ARM2: offset along edge (after ARM1 and CONNECTOR, with gaps), perpendicular inward
+                            const arm2Origin = turf.destination(turf.point(pStart), compArmW + uGap + court + uGap, edgeData.bearing, { units: 'meters' }).geometry.coordinates;
+                            const arm2Raw = createRect(arm2Origin, perpBearing, compArmLen, compArmW, -inwardTurn);
+                            const arm2 = checkContainment(arm2Raw, armContainThreshold);
+                            if (!arm2) { dbgS3Fail++; continue; }
+                            if (checkCollision(arm2, usedAreas)) { dbgS3Fail++; continue; }
+                            try { // @ts-ignore
+                                const ov = turf.intersect(arm1, arm2);
+                                if (ov && turf.area(ov) > 1) continue;
+                            } catch { }
+                            // CONNECTOR: between arms at edge with gaps on both sides
+                            const conOrigin = turf.destination(turf.point(pStart), compArmW + uGap, edgeData.bearing, { units: 'meters' }).geometry.coordinates;
+                            let connector: Feature<Polygon> | null = null;
+                            for (const conDepth of conDepthOpts) {
+                                if (connector) break;
+                                // Crucial fix: the arms must be significantly longer than the connector depth 
+                                // to form a visible courtyard (otherwise it looks like a solid block)
+                                if (armLen < conDepth + 15) continue;
+                                
+                                const compConDepth = conDepth + clearance;
+                                const conRaw = createRect(conOrigin, edgeData.bearing, court, compConDepth, inwardTurn);
+                                const clipped = checkContainment(conRaw, containThreshold);
+                                if (!clipped) continue;
+                                if (checkCollision(clipped, usedAreas)) continue;
+                                try { // @ts-ignore
+                                    const o1 = turf.intersect(clipped, arm1);
+                                    if (o1 && turf.area(o1) > 1) continue;
                                     // @ts-ignore
-                                    const perimeter = turf.length(enforced, { units: 'meters' });
-                                    const compactness = (4 * Math.PI * area) / (perimeter * perimeter);
-                                    const score = area * compactness;
-
-                                    // @ts-ignore
-                                    candidates.push({
-                                        feature: enforced,
-                                        score,
-                                        variantId: `U-Seq-${i}-${v.name}`,
-                                        parts: uParts
-                                    });
-                                }
+                                    const o2 = turf.intersect(clipped, arm2);
+                                    if (o2 && turf.area(o2) > 1) continue;
+                                } catch { }
+                                connector = clipped;
                             }
+                            if (!connector) { dbgS2Fail++; continue; }
+                            usedAreas.push(arm1, connector, arm2);
+                            const slabs: [Feature<Polygon>, number][] = [[connector, edgeData.bearing], [arm1, perpBearing], [arm2, perpBearing]];
+                            for (const [slab, bearing] of slabs) {
+                                try {
+                                    const area = planarArea(slab);
+                                    const layout = generateBuildingLayout(slab, { ...params, subtype: 'slab', unitMix: params.unitMix, alignmentRotation: bearing, selectedUtilities: params.selectedUtilities });
+                                    slab.properties = { type: 'generated', subtype: 'slab', area, cores: layout.cores, units: layout.units, entrances: layout.entrances, internalUtilities: layout.utilities, alignmentRotation: bearing, scenarioId: `U-${uIdx}`, score: area };
+                                    results.push(slab);
+                                } catch (e) { console.warn('[U-Gen] Layout failed:', e); }
+                            }
+                            uIdx++;
+                            console.log(`[U-Gen] Placed U: arms=${armLen}x${armW}m, court=${court}m, span=${totalEdgeSpan.toFixed(0)}m`);
+                            uPlaced = true;
+                            placedThisPass++;
+                            const placedEnd = currentDist + totalEdgeSpan + uShapeSpacing;
+                            while (scanIdx < scanPositions.length && scanPositions[scanIdx] < placedEnd) scanIdx++;
                         }
                     }
-                } catch (e) { }
-            });
-        } catch (e) { }
+                }
+                if (!uPlaced) {
+                    if (dbgS1Fail + dbgS2Fail + dbgS3Fail > 0) {
+                        console.log(`[U-Gen] edge=${edgeData.idx} dist=${currentDist.toFixed(0)}: slab1Fail=${dbgS1Fail} slab2Fail=${dbgS2Fail} slab3Fail=${dbgS3Fail}`);
+                    }
+                    scanIdx++;
+                }
+            }
+        }
+        console.log(`[U-Gen] Depth pass ${depthPass}: placed ${placedThisPass} U-shapes`);
+        if (placedThisPass === 0) break;
+        depthOffset += sMaxWidth + Math.max(rowGap, 5);
     }
-
-    // Diversity Selection (Seeded)
-    if (candidates.length > 0) {
-        // @ts-ignore
-        const parts = selectDiverseCandidate(candidates, params.seed ?? 0);
-        const clearedParts = applyCornerClearance(parts as Feature<Polygon>[], 3);
-        // Add subtype
-        // @ts-ignore
-        clearedParts.forEach(p => p.properties = { ...p.properties, subtype: 'ushaped', type: 'generated' });
-        // @ts-ignore
-        return clearedParts;
-    }
-
-    return [];
+    console.log(`[U-Gen] Done: ${results.length} parts (${uIdx} U-shapes)`);
+    // Return results directly — rectangles already have 3.5m clearance buffer built in
+    return results;
 }
+
+
 
 // Helper to get midpoint of a LineString or coords
 function getMidpoint(coords: number[][]): number[] {
@@ -361,15 +484,20 @@ export function generateTShapes(
         setback, obstacles,
         minBuildingWidth = 20, maxBuildingWidth = 25,
         minBuildingLength = 25, maxBuildingLength = 55,
-        sideSetback = 6,
-        frontSetback = 6,
         seed = 0
     } = params;
 
-    const rearSetback = params.rearSetback ?? frontSetback;
-    const cornerMargin = Math.max(sideSetback, 3);
-    const rowGap = frontSetback + rearSetback;
-    const armGap = rearSetback; // gap between bar and stem
+    // Use at least 3m internal margins regardless of what setback values were passed
+    // (the plot boundary has already been shrunk by mainSetback in the store)
+    const globalSetback = params.setback ?? 3;
+    const sideSetback = Math.max(params.sideSetback ?? globalSetback, 3);
+    const frontSetback = Math.max(params.frontSetback ?? globalSetback, 3);
+    const rearSetback = Math.max(params.rearSetback ?? frontSetback, 3);
+
+    // cornerMargin: moderate buffer — plot already shrunk by setback extras
+    const cornerMargin = Math.min(Math.max(sideSetback, 3), 5);
+    // armGap: physical gap between the bar's inner face and the stem start (prevents merging)
+    const armGap = Math.max(rearSetback, 3);
 
     // --- DIVERSITY LOGIC ---
     const strategyVariant = seed % 3; // 0: Balanced, 1: Dense, 2: Heavy
@@ -380,16 +508,16 @@ export function generateTShapes(
 
     if (strategyVariant === 1) {
         // Dense: slightly shorter buildings, but keep them architecturally viable
-        sMaxLength = Math.min(maxBuildingLength, minBuildingLength + 20); // 45m max, not 40m
+        sMaxLength = Math.min(maxBuildingLength, minBuildingLength + 20);
     } else if (strategyVariant === 2) {
-        // Heavy: wider, longer buildings
+        // Heavy: wider buildings, modest min length increase (40m was too high for many plots)
         sMinWidth = Math.max(minBuildingWidth, maxBuildingWidth - 2);
-        sMinLength = Math.max(minBuildingLength, 40);
+        sMinLength = Math.max(minBuildingLength, 30); // was 40 → too aggressive
     }
 
     const dynWidthOptions = strategyVariant === 1 ? [sMinWidth, sMaxWidth] : [sMaxWidth, sMinWidth];
 
-    const tShapeSpacing = Math.max(sideSetback, 3); // Tight spacing between T-shapes along an edge
+    const tShapeSpacing = Math.max(sideSetback, 3);
 
     console.log(`[T-Gen] ===== Integrated T-Gen (seed=${seed}) =====`);
     console.log(`[T-Gen] Dims: W[${sMinWidth}-${sMaxWidth}] L[${sMinLength}-${sMaxLength}]`);
@@ -411,7 +539,8 @@ export function generateTShapes(
     };
 
     // Helper: Check if polygon is contained in validArea
-    function isFullyContained(poly: Feature<Polygon>, threshold = 0.95): boolean {
+    // Helper: Confine polygon to validArea to mold to boundary
+    function clipToValidArea(poly: Feature<Polygon>, threshold = 0.80): Feature<Polygon> | null {
         try {
             let intersection = null;
             try {
@@ -425,10 +554,21 @@ export function generateTShapes(
                 // @ts-ignore
                 intersection = turf.intersect(cp, ca);
             }
-            if (!intersection) return false;
-            return turf.area(intersection) >= turf.area(poly) * threshold;
+            if (!intersection || turf.area(intersection) < turf.area(poly) * threshold) return null;
+
+            // Extract main polygon if multipolygon is returned
+            if (intersection.geometry.type === 'MultiPolygon') {
+                const polys = turf.unkinkPolygon(intersection as any).features;
+                let largest = polys[0];
+                for (const p of polys) {
+                    if (turf.area(p) > turf.area(largest)) largest = p;
+                }
+                intersection = largest;
+            }
+
+            return intersection as Feature<Polygon>;
         } catch (e) {
-            return false;
+            return null;
         }
     }
 
@@ -466,6 +606,7 @@ export function generateTShapes(
 
     const results: Feature<Polygon>[] = [];
     const usedAreas: Feature<Polygon>[] = [...(obstacles || [])];
+    let tIdx = 0;
 
     const maxDepthPasses = 5; // More passes to fill deep plots
     let depthOffset = 0;
@@ -473,21 +614,11 @@ export function generateTShapes(
     for (let depthPass = 0; depthPass < maxDepthPasses; depthPass++) {
         let placedThisPass = 0;
 
-        // Initialize edge distances for round-robin placement
-        const edgeDists = new Map<number, number>();
-        validEdges.forEach(e => edgeDists.set(e.idx, cornerMargin));
+        for (const edgeData of validEdges) {
+            let currentDist = cornerMargin;
+            const limitDist = edgeData.length - cornerMargin;
 
-        let keepTrying = true;
-        while (keepTrying) {
-            keepTrying = false;
-
-            for (const edgeData of validEdges) {
-                let currentDist = edgeDists.get(edgeData.idx)!;
-                const limitDist = edgeData.length - cornerMargin;
-
-                let tPlacedForThisEdgeInThisRound = false;
-
-                while (currentDist + sMinLength <= limitDist && !tPlacedForThisEdgeInThisRound) {
+            while (currentDist + sMinLength <= limitDist) {
                 const maxAvailLen = Math.min(sMaxLength, limitDist - currentDist);
                 if (maxAvailLen < sMinLength) break;
 
@@ -520,23 +651,43 @@ export function generateTShapes(
 
                 const perpBearing = edgeData.bearing + inwardTurn;
 
-                // Try bar (slab1) sizes: dynamic based on strategy
+                // Try bar (slab1) sizes: step down in 5m increments for best fit
                 let tPlaced = false;
-                const widthOptions = dynWidthOptions;
-                const lengthOptions: number[] = [maxAvailLen];
-                if (maxAvailLen > sMinLength + 10) lengthOptions.push(Math.round((maxAvailLen + sMinLength) / 2));
-                if (maxAvailLen > sMinLength) lengthOptions.push(sMinLength);
+
+                // Generate granular length options: from maxAvailLen down to sMinLength in 5m steps
+                const lengthOptions: number[] = [];
+                for (let l = Math.min(sMaxLength, maxAvailLen); l >= sMinLength; l -= 5) {
+                    lengthOptions.push(Math.round(l));
+                }
+                if (lengthOptions.length === 0 || lengthOptions[lengthOptions.length - 1] !== sMinLength) {
+                    lengthOptions.push(sMinLength);
+                }
+
+                // Generate granular width options: from sMaxWidth down to sMinWidth in 1m steps
+                const widthOptions: number[] = [];
+                for (let w = sMaxWidth; w >= sMinWidth; w -= 1) {
+                    widthOptions.push(w);
+                }
+                if (widthOptions.length === 0 || widthOptions[widthOptions.length - 1] !== sMinWidth) {
+                    widthOptions.push(sMinWidth);
+                }
 
                 for (const s1Len of lengthOptions) {
                     if (tPlaced) break;
                     for (const s1W of widthOptions) {
                         if (tPlaced) break;
 
-                        const slab1 = createRect(pStart, edgeData.bearing, s1Len, s1W, inwardTurn);
+                        // Add clearance buffer (matches slab generator) so that after
+                        // applyCornerClearance shrinks by ~1.5m/side, final dims match user config
+                        const clearance = 3.5;
+                        const compLen = s1Len + clearance;
+                        const compW = s1W + clearance;
+                        const slab1Raw = createRect(pStart, edgeData.bearing, compLen, compW, inwardTurn);
 
                         // Bar must be fully contained (relax for deeper passes)
-                        const containThreshold = depthPass <= 1 ? 0.95 : 0.85;
-                        if (!isFullyContained(slab1, containThreshold)) continue;
+                        const containThreshold = depthPass <= 1 ? 0.90 : 0.80;
+                        const slab1 = clipToValidArea(slab1Raw, containThreshold);
+                        if (!slab1) continue;
 
                         // Bar must not collide
                         if (checkCollision(slab1, usedAreas)) continue;
@@ -546,10 +697,10 @@ export function generateTShapes(
 
                         // Find center of slab1's inner edge
                         const barMidAlongEdge = turf.destination(
-                            turf.point(pStart), s1Len / 2, edgeData.bearing, { units: 'meters' }
+                            turf.point(pStart), compLen / 2, edgeData.bearing, { units: 'meters' }
                         );
                         const innerEdgeCenter = turf.destination(
-                            barMidAlongEdge, s1W, perpBearing, { units: 'meters' }
+                            barMidAlongEdge, compW, perpBearing, { units: 'meters' }
                         );
 
                         // Stem origin: offset from inner edge center by armGap
@@ -557,16 +708,17 @@ export function generateTShapes(
                             innerEdgeCenter, armGap, perpBearing, { units: 'meters' }
                         ).geometry.coordinates;
 
-                        // Try stem sizes: cap stem to avoid eating deep into center, but ensure valid range
-                        // maxStemLen: 70% of bar length, floored at sMinLength so there's always a valid option
-                        // minStemLen: sMinLength (stems must respect min building length 25m)
-                        // Cap stem at 50% of bar to leave interior room for deeper passes
-                        const maxStemLen = Math.min(sMaxLength, Math.max(Math.round(s1Len * 0.5), sMinLength));
+                        // Try stem sizes: step down in 5m increments, cap at 60% of bar length
+                        const maxStemLen = Math.min(sMaxLength, Math.max(Math.round(s1Len * 0.6), sMinLength));
                         const minStemLen = sMinLength;
-                        const computedStemLenOptions = [maxStemLen, Math.round((maxStemLen + minStemLen) / 2), minStemLen].filter(l => l <= maxStemLen && l >= minStemLen);
-                        // Deduplicate
-                        const stemLengthOptions = [...new Set(strategyVariant === 1 ? computedStemLenOptions.sort((a, b) => a - b) : computedStemLenOptions.sort((a, b) => b - a))];
-                        const stemWidthOptions = dynWidthOptions;
+                        const stemLengthOptions: number[] = [];
+                        for (let sl = maxStemLen; sl >= minStemLen; sl -= 5) {
+                            stemLengthOptions.push(Math.round(sl));
+                        }
+                        if (stemLengthOptions.length === 0 || stemLengthOptions[stemLengthOptions.length - 1] !== minStemLen) {
+                            stemLengthOptions.push(minStemLen);
+                        }
+                        const stemWidthOptions = widthOptions; // Same granular widths as bar
 
                         for (const stemLen of stemLengthOptions) {
                             if (slab2) break;
@@ -575,16 +727,19 @@ export function generateTShapes(
 
                                 // Stem goes inward (perpBearing), centered on the bar's midpoint
                                 // We need to offset the start so the stem is centered horizontally
-                                const halfStemW = stemW / 2;
+                                const compStemLen = stemLen + clearance;
+                                const compStemW = stemW + clearance;
+                                const halfStemW = compStemW / 2;
                                 const stemStartCentered = turf.destination(
                                     turf.point(stemOrigin), -halfStemW, edgeData.bearing, { units: 'meters' }
                                 ).geometry.coordinates;
 
                                 // Create stem: along perpBearing direction, with width extending along edgeData.bearing
-                                const stemRect = createRect(stemStartCentered, perpBearing, stemLen, stemW, -inwardTurn);
+                                const stemRectRaw = createRect(stemStartCentered, perpBearing, compStemLen, compStemW, -inwardTurn);
 
                                 // Stem must be fully contained
-                                if (!isFullyContained(stemRect, containThreshold)) continue;
+                                const stemRect = clipToValidArea(stemRectRaw, containThreshold);
+                                if (!stemRect) continue;
 
                                 // Stem must not collide with existing buildings
                                 if (checkCollision(stemRect, usedAreas)) continue;
@@ -618,7 +773,7 @@ export function generateTShapes(
                                 const area = planarArea(arm);
                                 const layout = generateBuildingLayout(arm, {
                                     ...params,
-                                    subtype: 'tshaped',
+                                    subtype: 'slab', // Treat arm as standard slab for core/unit layout
                                     unitMix: params.unitMix,
                                     alignmentRotation: bearing,
                                     selectedUtilities: params.selectedUtilities
@@ -626,14 +781,14 @@ export function generateTShapes(
 
                                 arm.properties = {
                                     type: 'generated',
-                                    subtype: 'tshaped',
+                                    subtype: 'slab',
                                     area,
                                     cores: layout.cores,
                                     units: layout.units,
                                     entrances: layout.entrances,
                                     internalUtilities: layout.utilities,
                                     alignmentRotation: bearing,
-                                    scenarioId: `T-${results.length}`,
+                                    scenarioId: `T-${tIdx}`,
                                     score: area
                                 };
 
@@ -645,9 +800,8 @@ export function generateTShapes(
 
                         console.log(`[T-Gen] T-shape at dist=${currentDist.toFixed(0)}: bar=${s1Len}x${s1W}m, stem=${slab2 ? turf.area(slab2).toFixed(0) : 0}m2`);
                         tPlaced = true;
-                        tPlacedForThisEdgeInThisRound = true;
-                        keepTrying = true; // Something was placed, try another round later
                         placedThisPass++;
+                        tIdx++;
                         currentDist += s1Len + tShapeSpacing; // generous spacing for T-shapes
                     }
                 }
@@ -655,18 +809,16 @@ export function generateTShapes(
                 if (!tPlaced) {
                     currentDist += 5;
                 }
-                edgeDists.set(edgeData.idx, currentDist);
-            } // close while(currentDist...)
-        } // close for(edgeData...)
-        } // close while(keepTrying)
-
+            }
+        }
+        
         console.log(`[T-Gen] Depth pass ${depthPass}: ${placedThisPass} T-shapes placed`);
         if (placedThisPass === 0) break;
-        // Tighter depth stepping: building width + small gap, so inner passes start sooner
-        depthOffset += sMinWidth + Math.max(sideSetback, 3);
+        // Step inward by max bar depth + gap to avoid overlapping previous pass's widest bar
+        depthOffset += sMaxWidth + armGap;
     }
 
-    console.log(`[T-Gen] Done: ${results.length} buildings (${Math.round(results.length / 2)} T-shapes)`);
+    console.log(`[T-Gen] Done: ${results.length} buildings (${tIdx} T-shapes)`);
 
     return applyCornerClearance(results, 3);
 }
@@ -786,13 +938,13 @@ export function generateLShapes(
         setback, obstacles,
         minBuildingWidth = 20, maxBuildingWidth = 25,
         minBuildingLength = 25, maxBuildingLength = 55,
-        sideSetback = 6,
-        frontSetback = 6,
+        sideSetback = params.setback ?? 6,
+        frontSetback = params.setback ?? 6,
         seed = 0
     } = params;
 
     const rearSetback = params.rearSetback ?? frontSetback;
-    const cornerMargin = Math.max(sideSetback, 3);
+    const cornerMargin = Math.min(Math.max(sideSetback, 3), 5); // Moderate buffer — plot already shrunk by setback extras
     const rowGap = frontSetback + rearSetback;
     const armGap = rearSetback; // arm uses rear setback as gap between L-shape arms
     
@@ -835,7 +987,8 @@ export function generateLShapes(
 
     // Helper: Check if polygon is contained in validArea
     // threshold: 0.95 for edge placement, relaxed for deeper passes
-    function isFullyContained(poly: Feature<Polygon>, threshold = 0.95): boolean {
+    // Helper: Confine polygon to validArea to mold to boundary
+    function clipToValidArea(poly: Feature<Polygon>, threshold = 0.80): Feature<Polygon> | null {
         try {
             let intersection = null;
             try {
@@ -849,10 +1002,21 @@ export function generateLShapes(
                 // @ts-ignore
                 intersection = turf.intersect(cp, ca);
             }
-            if (!intersection) return false;
-            return turf.area(intersection) >= turf.area(poly) * threshold;
+            if (!intersection || turf.area(intersection) < turf.area(poly) * threshold) return null;
+
+            // Extract main polygon if multipolygon is returned
+            if (intersection.geometry.type === 'MultiPolygon') {
+                const polys = turf.unkinkPolygon(intersection as any).features;
+                let largest = polys[0];
+                for (const p of polys) {
+                    if (turf.area(p) > turf.area(largest)) largest = p;
+                }
+                intersection = largest;
+            }
+
+            return intersection as Feature<Polygon>;
         } catch (e) {
-            return false;
+            return null;
         }
     }
 
@@ -893,6 +1057,7 @@ export function generateLShapes(
 
     const results: Feature<Polygon>[] = [];
     const usedAreas: Feature<Polygon>[] = [...(obstacles || [])];
+    let lIdx = 0;
 
     const maxDepthPasses = 6; // enough passes to reach center of large plots
     let depthOffset = 0;
@@ -938,29 +1103,50 @@ export function generateLShapes(
 
                 const perpBearing = edgeData.bearing + inwardTurn;
 
-                // Try slab1 sizes: dynamic based on strategy
+                // Try slab1 sizes: step down in 5m increments for best fit
                 let lPlaced = false;
-                const widthOptions = dynWidthOptions;
-                const lengthOptions: number[] = [maxAvailLen];
-                if (maxAvailLen > sMinLength + 10) lengthOptions.push(Math.round((maxAvailLen + sMinLength) / 2));
-                if (maxAvailLen > sMinLength) lengthOptions.push(sMinLength);
+
+                // Generate granular length options: from maxAvailLen down to sMinLength in 5m steps
+                const lengthOptions: number[] = [];
+                for (let l = Math.min(sMaxLength, maxAvailLen); l >= sMinLength; l -= 5) {
+                    lengthOptions.push(Math.round(l));
+                }
+                if (lengthOptions.length === 0 || lengthOptions[lengthOptions.length - 1] !== sMinLength) {
+                    lengthOptions.push(sMinLength);
+                }
+
+                // Generate granular width options: from sMaxWidth down to sMinWidth in 1m steps
+                const widthOptions: number[] = [];
+                for (let w = sMaxWidth; w >= sMinWidth; w -= 1) {
+                    widthOptions.push(w);
+                }
+                if (widthOptions.length === 0 || widthOptions[widthOptions.length - 1] !== sMinWidth) {
+                    widthOptions.push(sMinWidth);
+                }
 
                 for (const s1Len of lengthOptions) {
                     if (lPlaced) break;
                     for (const s1W of widthOptions) {
                         if (lPlaced) break;
 
-                        const slab1 = createRect(pStart, edgeData.bearing, s1Len, s1W, inwardTurn);
+                        // Add clearance buffer (matches slab generator) to counteract applyCornerClearance
+                        const clearance = 3.5;
+                        const compLen = s1Len + clearance;
+                        const compW = s1W + clearance;
+
+                        const slab1Raw = createRect(pStart, edgeData.bearing, compLen, compW, inwardTurn);
 
                         // Slab1 must be fully contained (relax for deeper passes)
-                        const containThreshold = depthPass <= 1 ? 0.95 : 0.85;
-                        if (!isFullyContained(slab1, containThreshold)) continue;
+                        const containThreshold = depthPass <= 1 ? 0.90 : 0.80;
+                        const slab1 = clipToValidArea(slab1Raw, containThreshold);
+                        if (!slab1) continue;
 
                         // Slab1 must not collide
                         if (checkCollision(slab1, usedAreas)) continue;
 
                         // â”€â”€â”€ Now try to attach slab2 perpendicular â”€â”€â”€
                         let slab2: Feature<Polygon> | null = null;
+                        let validTurn = null;
 
                         for (const end of attachEnds) {
                             if (slab2) break;
@@ -971,16 +1157,16 @@ export function generateLShapes(
                             if (end === 'start') {
                                 // Arm from inner corner at START end
                                 const innerCorner = turf.destination(
-                                    turf.point(pStart), s1W, perpBearing, { units: 'meters' }
+                                    turf.point(pStart), compW, perpBearing, { units: 'meters' }
                                 );
                                 armOrigin = innerCorner.geometry.coordinates;
                                 armDepthTurn = -inwardTurn;
                             } else {
                                 // Arm from inner corner at FAR end
                                 const farEnd = turf.destination(
-                                    turf.point(pStart), s1Len, edgeData.bearing, { units: 'meters' }
+                                    turf.point(pStart), compLen, edgeData.bearing, { units: 'meters' }
                                 );
-                                const innerCorner = turf.destination(farEnd, s1W, perpBearing, { units: 'meters' });
+                                const innerCorner = turf.destination(farEnd, compW, perpBearing, { units: 'meters' });
                                 armOrigin = innerCorner.geometry.coordinates;
                                 armDepthTurn = inwardTurn;
                             }
@@ -990,20 +1176,29 @@ export function generateLShapes(
                                 turf.point(armOrigin), armGap, perpBearing, { units: 'meters' }
                             ).geometry.coordinates;
 
-                            // Try arm sizes: dynamic based on strategy
-                            const computedArmOptions = [sMaxLength, 45, 35, sMinLength].filter(l => l <= sMaxLength && l >= sMinLength);
-                            const armLengthOptions = strategyVariant === 1 ? computedArmOptions.sort((a,b)=>a-b) : computedArmOptions.sort((a,b)=>b-a);
-                            const armWidthOptions = dynWidthOptions;
+                            // Try arm sizes: step down in 5m increments for best fit
+                            const armLengthOptions: number[] = [];
+                            for (let al = sMaxLength; al >= sMinLength; al -= 5) {
+                                armLengthOptions.push(Math.round(al));
+                            }
+                            if (armLengthOptions.length === 0 || armLengthOptions[armLengthOptions.length - 1] !== sMinLength) {
+                                armLengthOptions.push(sMinLength);
+                            }
+                            const armWidthOptions = widthOptions; // Same granular widths
 
                             for (const aLen of armLengthOptions) {
                                 if (slab2) break;
                                 for (const aW of armWidthOptions) {
                                     if (slab2) break;
 
-                                    const armRect = createRect(armStart, perpBearing, aLen, aW, armDepthTurn);
+                                    const compALen = aLen + clearance;
+                                    const compAW = aW + clearance;
+
+                                    const armRectRaw = createRect(armStart, perpBearing, compALen, compAW, armDepthTurn);
 
                                     // Arm must be fully contained
-                                    if (!isFullyContained(armRect, containThreshold)) continue;
+                                    const armRect = clipToValidArea(armRectRaw, containThreshold);
+                                    if (!armRect) continue;
 
                                     // Arm must not collide with existing buildings
                                     if (checkCollision(armRect, usedAreas)) continue;
@@ -1039,7 +1234,7 @@ export function generateLShapes(
                                 const area = planarArea(arm);
                                 const layout = generateBuildingLayout(arm, {
                                     ...params,
-                                    subtype: 'lshaped',
+                                    subtype: 'slab', // Treat arm as standard slab for core/unit layout
                                     unitMix: params.unitMix,
                                     alignmentRotation: bearing,
                                     selectedUtilities: params.selectedUtilities
@@ -1047,14 +1242,14 @@ export function generateLShapes(
 
                                 arm.properties = {
                                     type: 'generated',
-                                    subtype: 'lshaped',
+                                    subtype: 'slab',
                                     area,
                                     cores: layout.cores,
                                     units: layout.units,
                                     entrances: layout.entrances,
                                     internalUtilities: layout.utilities,
                                     alignmentRotation: bearing,
-                                    scenarioId: `L-${results.length}`,
+                                    scenarioId: `L-${lIdx}`,
                                     score: area
                                 };
 
@@ -1067,6 +1262,7 @@ export function generateLShapes(
                         console.log(`[L-Gen] L-shape at dist=${currentDist.toFixed(0)}: slab1=${s1Len}x${s1W}m, slab2=${turf.area(slab2).toFixed(0)}m2`);
                         lPlaced = true;
                         placedThisPass++;
+                        lIdx++;
                         currentDist += s1Len + lShapeSpacing; // generous spacing for L-shapes
                     }
                 }
@@ -1080,7 +1276,7 @@ export function generateLShapes(
         depthOffset += maxBuildingWidth + Math.max(sideSetback, 3); // tighter rows to fill center
     }
 
-    console.log(`[L-Gen] Done: ${results.length} buildings (${Math.round(results.length / 2)} L-shapes)`);
+    console.log(`[L-Gen] Done: ${results.length} buildings (${lIdx} L-shapes)`);
 
     return applyCornerClearance(results, 3);
 }
@@ -1098,206 +1294,275 @@ export function generateHShapes(
     plotGeometry: Feature<Polygon | MultiPolygon>,
     params: GeometricTypologyParams
 ): Feature<Polygon>[] {
-    const { wingDepth, setback, obstacles } = params;
-    console.log(`[generateHShapes] Setbacks -> setback: ${setback}, sideSetback: ${params.sideSetback}`);
+    const {
+        obstacles,
+        minBuildingWidth = 20, maxBuildingWidth = 25,
+        minBuildingLength = 25, maxBuildingLength = 55,
+        seed = 0
+    } = params;
 
-    // Valid Area
+    const globalSetback = params.setback ?? 3;
+    const sideSetback  = Math.max(params.sideSetback  ?? globalSetback, 3);
+    const frontSetback = Math.max(params.frontSetback ?? globalSetback, 3);
+    const rearSetback  = Math.max(params.rearSetback  ?? frontSetback, 3);
+    const cornerMargin = Math.min(Math.max(sideSetback, 3), 5); // Moderate buffer — plot already shrunk by setback extras
+    const rowGap       = frontSetback + rearSetback;
+
+    const strategyVariant = seed % 3;
+    let sMinLength = minBuildingLength;
+    let sMaxLength = maxBuildingLength;
+    let sMinWidth  = minBuildingWidth;
+    let sMaxWidth  = maxBuildingWidth;
+
+    // Seed diversity: vary crossbar position
+    const crossbarPosition = strategyVariant === 0 ? 'center' : strategyVariant === 1 ? 'lower' : 'upper';
+
+    const hShapeSpacing = Math.max(rowGap, sideSetback * 2, 6);
+
+    console.log(`[H-Gen] seed=${seed} variant=${strategyVariant} W[${sMinWidth}-${sMaxWidth}] L[${sMinLength}-${sMaxLength}] setbacks: F=${frontSetback} R=${rearSetback} S=${sideSetback} crossbar=${crossbarPosition}`);
+
     const validArea = plotGeometry as Feature<Polygon | MultiPolygon>;
     // @ts-ignore
-    const simplified = turf.simplify(validArea, { tolerance: 0.00005, highQuality: true });
-
-    // Coords
+    const simplified = turf.simplify(validArea, { tolerance: 0.000001, highQuality: true });
     const coords = (simplified.geometry.type === 'Polygon')
         ? simplified.geometry.coordinates[0]
         : (simplified.geometry as MultiPolygon).coordinates[0][0];
+    if (coords.length < 4) return [];
 
-    // Depth
-    const bbox = turf.bbox(validArea);
-    const widthM = turf.distance([bbox[0], bbox[1]], [bbox[2], bbox[1]], { units: 'meters' });
-    const heightM = turf.distance([bbox[0], bbox[1]], [bbox[0], bbox[3]], { units: 'meters' });
-    const minDim = Math.min(widthM, heightM);
-    const targetDepth = Math.max(wingDepth || 14, params.minBuildingWidth || 20); // Default to at least minBuildingWidth
-    const safeDepth = Math.min(targetDepth, minDim * 0.35);
-
-    const candidates: { feature: Feature<Polygon | MultiPolygon>, score: number, pairId?: string, parts?: Feature<Polygon>[] }[] = [];
-
+    const validEdges: { edge: any; length: number; bearing: number; idx: number }[] = [];
     for (let i = 0; i < coords.length - 1; i++) {
-        for (let j = i + 2; j < coords.length - 1; j++) {
-            try {
-                const p1 = coords[i];
-                const p2 = coords[i + 1];
-                const p3 = coords[j];
-                const p4 = coords[j + 1];
-
-                const bearing1 = turf.bearing(p1, p2);
-                const bearing2 = turf.bearing(p3, p4);
-
-                let angleDiff = Math.abs(bearing1 - bearing2);
-                if (angleDiff > 180) angleDiff = 360 - angleDiff;
-
-                const isOpposite = Math.abs(angleDiff - 180) < 45 || Math.abs(angleDiff) < 45;
-
-                if (isOpposite) {
-                    const edge1 = turf.lineString([p1, p2]);
-                    const edge2 = turf.lineString([p3, p4]);
-
-                    const mid1 = turf.midpoint(p1, p2);
-                    const mid2 = turf.midpoint(p3, p4);
-
-                    const distCheck = turf.distance(mid1, mid2, { units: 'meters' });
-                    if (distCheck > minDim * 0.3) {
-
-                        // Define Variations to Generate Variety
-                        const variations = [
-                            { name: 'Standard', offset: 0, depthFactor: 1.0 },
-                            { name: 'Thick', offset: 0, depthFactor: 1.5 },   
-                            { name: 'Thin', offset: 0, depthFactor: 0.75 },   
-                            { name: 'Offset Low', offset: -0.2, depthFactor: 1.0 },
-                            { name: 'Offset High', offset: 0.2, depthFactor: 1.0 }
-                        ];
-
-                        variations.forEach(v => {
-                            try {
-                                const currentDepth = safeDepth * v.depthFactor;
-
-                                // Construct Wings (Perimeter: Buffer full depth)
-                                // @ts-ignore
-                                const rawWing1 = turf.buffer(edge1, currentDepth, { units: 'meters', steps: 1 });
-                                // @ts-ignore
-                                const rawWing2 = turf.buffer(edge2, currentDepth, { units: 'meters', steps: 1 });
-                                // @ts-ignore
-                                const wing1 = turf.intersect(rawWing1, validArea);
-                                // @ts-ignore
-                                const wing2 = turf.intersect(rawWing2, validArea);
-
-                                if (wing1 && wing2) {
-                                    // Construct Crossbar (Internal: Buffer HALF depth)
-                                    const len1 = turf.length(edge1, { units: 'meters' });
-                                    const len2 = turf.length(edge2, { units: 'meters' }); 
-
-                                    const secureOffset = Math.max(-0.35, Math.min(0.35, v.offset));
-                                    const pt1 = turf.along(edge1, len1 * (0.5 + secureOffset), { units: 'meters' }); 
-                                    const pt2 = turf.nearestPointOnLine(edge2, pt1);
-
-                                    const crossLine = turf.lineString([pt1.geometry.coordinates, pt2.geometry.coordinates]);
-                                    // @ts-ignore
-                                    const rawCross = turf.buffer(crossLine, currentDepth / 2, { units: 'meters', steps: 1 });
-                                    // @ts-ignore
-                                    const cross = turf.intersect(rawCross, validArea);
-
-                                    if (cross) {
-                                        const hParts: Feature<Polygon>[] = [];
-
-                                        // Segment Wing 1 (axis p1->p2)
-                                        if (wing1) {
-                                            const segs = segmentWing(wing1 as Feature<Polygon>, turf.point(p1), turf.point(p2), params, false);
-                                            segs.forEach(s => s.properties = { ...s.properties, subtype: 'hshaped', type: 'generated' });
-                                            hParts.push(...segs);
-                                        }
-
-                                        // Segment Wing 2 (axis p3->p4)
-                                        if (wing2) {
-                                            const segs = segmentWing(wing2 as Feature<Polygon>, turf.point(p3), turf.point(p4), params, false);
-                                            segs.forEach(s => s.properties = { ...s.properties, subtype: 'hshaped', type: 'generated' });
-                                            hParts.push(...segs);
-                                        }
-
-                                        // Segment Crossbar (Trimmed with Gaps)
-                                        const gap = params.sideSetback ?? params.setback ?? 6;
-                                        // @ts-ignore
-                                        const wing1Buffered = turf.buffer(wing1, gap, { units: 'meters' });
-                                        // @ts-ignore
-                                        const wing2Buffered = turf.buffer(wing2, gap, { units: 'meters' });
-                                        // @ts-ignore
-                                        const wingsExclusion = turf.union(wing1Buffered, wing2Buffered);
-                                        // @ts-ignore
-                                        const crossTrimmed = turf.difference(cross, wingsExclusion);
-
-                                        if (crossTrimmed) {
-                                        
-                                            const segs = segmentWing(crossTrimmed as Feature<Polygon>, pt1, pt2, params, false);
-                                            segs.forEach(s => s.properties = { ...s.properties, subtype: 'hshaped', type: 'generated' });
-                                            hParts.push(...segs);
-                                        }
-
-                                        if (hParts.length > 0) {
-                            
-                                            const clearedParts = applyCornerClearance(hParts, 3);
-
-                                            let shape = turf.multiPolygon(clearedParts.map(p => p.geometry.coordinates));
-
-                                
-                                            // @ts-ignore
-                                            if (params.maxFootprint) {
-                                                const startArea = turf.area(shape);
-                                                // @ts-ignore
-                                                if (startArea > params.maxFootprint) {
-                                                    // @ts-ignore
-                                                    const constrained = enforceMaxFootprint(shape, params.maxFootprint);
-                                                    if (constrained) {
-                                                        // @ts-ignore
-                                                        shape = constrained;
-                                                    } else {
-                                                        return;
-                                                    }
-                                                }
-                                            }
-
-                                            if (shape && turf.area(shape) > 400 && !checkCollision(shape as unknown as Feature<Polygon>, obstacles)) {
-                                                let score = 100 + (turf.area(shape) / 100);
-                                                if (v.name === 'Standard') score += 10;
-
-                                                // @ts-ignore
-                                                const unionForLayout = turf.union(wing1, wing2, crossTrimmed || cross);
-
-                                                const layout = generateBuildingLayout(unionForLayout as unknown as Feature<Polygon>, {
-                                                    ...params,
-                                                    subtype: 'hshaped',
-                                                    unitMix: params.unitMix,
-                                                    alignmentRotation: 0,
-                                                    selectedUtilities: params.selectedUtilities
-                                                });
-
-                                                shape.properties = {
-                                                    type: 'generated', subtype: 'hshaped', area: planarArea(shape),
-                                                    cores: layout.cores, units: layout.units, entrances: layout.entrances, internalUtilities: layout.utilities,
-                                                    scenarioId: `H-Pair-${i}-${j}-${v.name}`,
-                                                    pairId: `${i}-${j}`,
-                                                    variant: v.name,
-                                                    isSplit: true,
-                                                    score
-                                                };
-                                                candidates.push({
-                                                    feature: shape,
-                                                    score,
-                                                    pairId: `${i}-${j}`,
-                                                    // @ts-ignore
-                                                    parts: hParts
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (e) {
-                                console.error('[H-Shape Debug] Error in candidate loop:', e);
-                            }
-                        });
-                    }
-                }
-            } catch (e) { }
+        const p1 = turf.point(coords[i]);
+        const p2 = turf.point(coords[i + 1]);
+        const length = turf.distance(p1, p2, { units: 'meters' });
+        if (length >= sMinLength) {
+            validEdges.push({ edge: turf.lineString([coords[i], coords[i + 1]]), length, bearing: turf.bearing(p1, p2), idx: i });
         }
     }
+    if (validEdges.length === 0) return [];
+    validEdges.sort((a, b) => b.length - a.length);
+    const edgeRotation = seed % validEdges.length;
+    const rotatedEdges = [...validEdges.slice(edgeRotation), ...validEdges.slice(0, edgeRotation)];
+    console.log(`[H-Gen] ${validEdges.length} valid edges, rotation=${edgeRotation}`);
 
+    const results: Feature<Polygon>[] = [];
+    const usedAreas: Feature<Polygon>[] = [...(obstacles || [])];
+    let hIdx = 0;
 
-
-    if (candidates.length > 0) {
-        // @ts-ignore
-        const result = selectDiverseCandidate(candidates, params.seed ?? 0);
-
-        return result;
+    function checkContainment(poly: Feature<Polygon>, threshold = 0.80): Feature<Polygon> | null {
+        try {
+            let intersection: any = null;
+            try {
+                // @ts-ignore
+                intersection = turf.intersect(poly, validArea);
+            } catch {
+                // @ts-ignore
+                intersection = turf.intersect(turf.buffer(poly, 0), turf.buffer(validArea, 0));
+            }
+            if (!intersection || turf.area(intersection) < turf.area(poly) * threshold) return null;
+            return poly;
+        } catch { return null; }
     }
 
-    return [];
+    const clearance = 0;
+    const hGap = Math.max(sideSetback, 6);
+
+    let depthOffset = 0;
+    for (let depthPass = 0; depthPass < 4; depthPass++) {
+        let placedThisPass = 0;
+
+        for (const edgeData of rotatedEdges) {
+            const limitDist = edgeData.length - cornerMargin;
+            const midDist = edgeData.length / 2;
+            const scanPositions: number[] = [];
+            for (let offset = 0; offset < edgeData.length / 2; offset += 5) {
+                const leftPos = midDist - offset;
+                const rightPos = midDist + offset;
+                if (leftPos >= cornerMargin && leftPos + sMinLength <= limitDist) scanPositions.push(leftPos);
+                if (offset > 0 && rightPos >= cornerMargin && rightPos + sMinLength <= limitDist) scanPositions.push(rightPos);
+            }
+            let scanIdx = 0;
+
+            while (scanIdx < scanPositions.length) {
+                const currentDist = scanPositions[scanIdx];
+                const maxAvailLen = limitDist - currentDist;
+                if (maxAvailLen < sMinWidth * 2 + sMinWidth) { scanIdx++; continue; }
+
+                const edgeStart = turf.along(edgeData.edge, currentDist, { units: 'meters' });
+
+                let inwardTurn: number | null = null;
+                for (const turn of [90, -90]) {
+                    try {
+                        const probe = createRect(edgeStart.geometry.coordinates, edgeData.bearing, sMinLength, sMinWidth, turn);
+                        // @ts-ignore
+                        const inter = turf.intersect(turf.buffer(probe, 0), turf.buffer(validArea, 0));
+                        if (inter && turf.area(inter) >= turf.area(probe) * 0.30) { inwardTurn = turn; break; }
+                    } catch { }
+                }
+                if (inwardTurn === null) { scanIdx++; continue; }
+
+                const perpBearing = edgeData.bearing + inwardTurn;
+
+                let pStart: number[];
+                if (depthOffset > 0) {
+                    const deeper = turf.destination(edgeStart, depthOffset, perpBearing, { units: 'meters' });
+                    pStart = deeper.geometry.coordinates;
+                } else {
+                    pStart = edgeStart.geometry.coordinates;
+                }
+
+                const containThreshold = depthPass <= 1 ? 0.85 : 0.70;
+                const armContainThreshold = 0.30;
+                let hPlaced = false;
+                let dbgArm1Fail = 0, dbgArm2Fail = 0, dbgCrossFail = 0;
+
+                // H-SHAPE: ARM1 + CROSSBAR (middle) + ARM2
+                // +------+                          +------+
+                // | ARM1 |                           | ARM2 |
+                // |      |  +--------------------+   |      |
+                // |      |  | CROSSBAR (middle)  |   |      |
+                // |      |  +--------------------+   |      |
+                // +------+                           +------+
+                // =========== PLOT EDGE ===========================
+
+                const widthOptions: number[] = [];
+                for (let w = sMaxWidth; w >= sMinWidth; w -= 1) widthOptions.push(w);
+                if (widthOptions.length === 0 || widthOptions[widthOptions.length - 1] !== sMinWidth) widthOptions.push(sMinWidth);
+
+                const armLenOpts: number[] = [];
+                for (let al = sMaxLength; al >= sMinLength; al -= 5) armLenOpts.push(Math.round(al));
+                if (armLenOpts.length === 0 || armLenOpts[armLenOpts.length - 1] !== sMinLength) armLenOpts.push(sMinLength);
+
+                const crossDepthOpts: number[] = [];
+                for (let cd = sMaxWidth; cd >= sMinWidth; cd -= 1) crossDepthOpts.push(cd);
+                if (crossDepthOpts.length === 0 || crossDepthOpts[crossDepthOpts.length - 1] !== sMinWidth) crossDepthOpts.push(sMinWidth);
+
+                const minCourt = sMinLength;
+                const maxCourt = Math.min(maxAvailLen - 2 * (sMinWidth + hGap + clearance), sMaxLength);
+
+                for (const armW of widthOptions) {
+                    if (hPlaced) break;
+                    const compArmW = armW + clearance;
+                    for (let court = minCourt; court <= maxCourt; court += 5) {
+                        if (hPlaced) break;
+                        const totalEdgeSpan = compArmW + hGap + court + hGap + compArmW;
+                        if (totalEdgeSpan > maxAvailLen + clearance) continue;
+                        for (const armLen of armLenOpts) {
+                            if (hPlaced) break;
+                            const compArmLen = armLen + clearance;
+
+                            // ARM1
+                            const arm1Raw = createRect(pStart, perpBearing, compArmLen, compArmW, -inwardTurn);
+                            const arm1 = checkContainment(arm1Raw, armContainThreshold);
+                            if (!arm1) { dbgArm1Fail++; continue; }
+                            if (checkCollision(arm1, usedAreas)) { dbgArm1Fail++; continue; }
+
+                            // ARM2
+                            const arm2Origin = turf.destination(turf.point(pStart), compArmW + hGap + court + hGap, edgeData.bearing, { units: 'meters' }).geometry.coordinates;
+                            const arm2Raw = createRect(arm2Origin, perpBearing, compArmLen, compArmW, -inwardTurn);
+                            const arm2 = checkContainment(arm2Raw, armContainThreshold);
+                            if (!arm2) { dbgArm2Fail++; continue; }
+                            if (checkCollision(arm2, usedAreas)) { dbgArm2Fail++; continue; }
+
+                            try { // @ts-ignore
+                                const ov = turf.intersect(arm1, arm2);
+                                if (ov && turf.area(ov) > 1) continue;
+                            } catch { }
+
+                            // CROSSBAR: in the MIDDLE of arms (key difference from U-shape)
+                            const crossEdgeOrigin = turf.destination(turf.point(pStart), compArmW + hGap, edgeData.bearing, { units: 'meters' }).geometry.coordinates;
+
+                            let crossbar: Feature<Polygon> | null = null;
+                            for (const crossDepth of crossDepthOpts) {
+                                if (crossbar) break;
+                                if (armLen < crossDepth + 15) continue;
+
+                                let crossInwardOffset: number;
+                                if (crossbarPosition === 'center') {
+                                    crossInwardOffset = (armLen - crossDepth) / 2;
+                                } else if (crossbarPosition === 'lower') {
+                                    crossInwardOffset = (armLen - crossDepth) / 3;
+                                } else {
+                                    crossInwardOffset = (armLen - crossDepth) * 2 / 3;
+                                }
+
+                                const crossStartPoint = turf.destination(
+                                    turf.point(crossEdgeOrigin),
+                                    crossInwardOffset,
+                                    perpBearing,
+                                    { units: 'meters' }
+                                ).geometry.coordinates;
+
+                                const compCrossDepth = crossDepth + clearance;
+                                const crossRaw = createRect(crossStartPoint, edgeData.bearing, court, compCrossDepth, inwardTurn);
+                                const clipped = checkContainment(crossRaw, containThreshold);
+                                if (!clipped) continue;
+                                if (checkCollision(clipped, usedAreas)) continue;
+
+                                try { // @ts-ignore
+                                    const o1 = turf.intersect(clipped, arm1);
+                                    if (o1 && turf.area(o1) > 1) continue;
+                                    // @ts-ignore
+                                    const o2 = turf.intersect(clipped, arm2);
+                                    if (o2 && turf.area(o2) > 1) continue;
+                                } catch { }
+                                crossbar = clipped;
+                            }
+                            if (!crossbar) { dbgCrossFail++; continue; }
+
+                            usedAreas.push(arm1, crossbar, arm2);
+                            const slabs: [Feature<Polygon>, number][] = [
+                                [arm1, perpBearing],
+                                [crossbar, edgeData.bearing],
+                                [arm2, perpBearing]
+                            ];
+                            for (const [slab, bearing] of slabs) {
+                                try {
+                                    const area = planarArea(slab);
+                                    const layout = generateBuildingLayout(slab, {
+                                        ...params,
+                                        subtype: 'slab',
+                                        unitMix: params.unitMix,
+                                        alignmentRotation: bearing,
+                                        selectedUtilities: params.selectedUtilities
+                                    });
+                                    slab.properties = {
+                                        type: 'generated',
+                                        subtype: 'slab',
+                                        area,
+                                        cores: layout.cores,
+                                        units: layout.units,
+                                        entrances: layout.entrances,
+                                        internalUtilities: layout.utilities,
+                                        alignmentRotation: bearing,
+                                        scenarioId: `H-${hIdx}`,
+                                        score: area
+                                    };
+                                    results.push(slab);
+                                } catch (e) { console.warn('[H-Gen] Layout failed:', e); }
+                            }
+                            console.log(`[H-Gen] Placed H: arms=${armLen}x${armW}m, crossbar=${crossbarPosition}, court=${court}m, span=${totalEdgeSpan.toFixed(0)}m`);
+                            hPlaced = true;
+                            placedThisPass++;
+                            hIdx++;
+                            const placedEnd = currentDist + totalEdgeSpan + hShapeSpacing;
+                            while (scanIdx < scanPositions.length && scanPositions[scanIdx] < placedEnd) scanIdx++;
+                        }
+                    }
+                }
+                if (!hPlaced) {
+                    if (dbgArm1Fail + dbgArm2Fail + dbgCrossFail > 0) {
+                        console.log(`[H-Gen] edge=${edgeData.idx} dist=${currentDist.toFixed(0)}: arm1Fail=${dbgArm1Fail} arm2Fail=${dbgArm2Fail} crossFail=${dbgCrossFail}`);
+                    }
+                    scanIdx++;
+                }
+            }
+        }
+        console.log(`[H-Gen] Depth pass ${depthPass}: placed ${placedThisPass} H-shapes`);
+        if (placedThisPass === 0) break;
+        depthOffset += sMaxWidth + Math.max(rowGap, 5);
+    }
+    console.log(`[H-Gen] Done: ${results.length} parts (${hIdx} H-shapes)`);
+    return results;
 }
 
 
@@ -1328,9 +1593,13 @@ export function generateSlabShapes(
         wingDepth, setback, obstacles,
         minBuildingWidth = 20, maxBuildingWidth = 25,
         minBuildingLength = 25, maxBuildingLength = 55,
-        sideSetback = 6, frontSetback = 12, // Default spacing
         seed = 0
     } = params;
+
+    // Enforce minimum 3m internal margins — plot boundary is already shrunk by mainSetback
+    const globalSetback = params.setback ?? 3;
+    const sideSetback = Math.max(params.sideSetback ?? globalSetback, 3);
+    const frontSetback = Math.max(params.frontSetback ?? globalSetback, 3);
 
     // DIVERSITY: Strategy based on seed
     const strategy = seed % 3; // 0=Balanced, 1=Dense, 2=Heavy
@@ -1431,7 +1700,7 @@ export function generateSlabShapes(
         const totalDist = edgeData.length;
 
         const rowGap = (frontSetback ?? 6) + (params.rearSetback ?? 6);
-        const cornerMargin = Math.max(sideSetback ?? 6, 3); 
+        const cornerMargin = Math.min(Math.max(frontSetback ?? 6, 3), 5); // Moderate buffer — plot already shrunk by setback extras 
         currentDist = cornerMargin;
 
         const limitDist = totalDist - cornerMargin;
@@ -1471,7 +1740,7 @@ export function generateSlabShapes(
                     const probeArea = turf.area(probe);
                     const intersectArea = intersect ? turf.area(intersect) : 0;
 
-                    if (intersect && intersectArea >= probeArea * 0.60) {
+                    if (intersect && intersectArea >= probeArea * 0.85) {
                         validTurn = turn;
                         break;
                     } else {
@@ -1520,15 +1789,33 @@ export function generateSlabShapes(
                             }
 
                             const polyArea = turf.area(poly);
-                            if (intersect && turf.area(intersect) >= polyArea * 0.70) {
+                            if (intersect && turf.area(intersect) >= polyArea * 0.90) {
                                 if (!checkCollision(poly, usedAreas)) {
                                     const clipped = turf.intersect(poly, validArea);
                                     if (clipped) {
-                                        const bbox = turf.bbox(clipped);
-                                        const clippedW = turf.distance([bbox[0], bbox[1]], [bbox[2], bbox[1]], { units: 'meters' });
-                                        const clippedH = turf.distance([bbox[0], bbox[1]], [bbox[0], bbox[3]], { units: 'meters' });
-                                        const clippedMinDim = Math.min(clippedW, clippedH);
-                                        const clippedMaxDim = Math.max(clippedW, clippedH);
+                                        // Use area+perimeter to get rotation-independent dimensions
+                                        // (axis-aligned bbox shrinks on rotated edges and gives wrong readings)
+                                        const clippedArea = turf.area(clipped);
+                                        const clippedPerim = turf.length(clipped, { units: 'meters' });
+                                        const semiP = clippedPerim / 2;
+                                        const disc = semiP * semiP - 4 * clippedArea;
+                                        let clippedMinDim: number, clippedMaxDim: number;
+                                        if (disc >= 0) {
+                                            const sq = Math.sqrt(disc);
+                                            clippedMinDim = (semiP - sq) / 2;
+                                            clippedMaxDim = (semiP + sq) / 2;
+                                        } else {
+                                            // Fallback to bbox if formula fails
+                                            const bbox = turf.bbox(clipped);
+                                            clippedMinDim = Math.min(
+                                                turf.distance([bbox[0], bbox[1]], [bbox[2], bbox[1]], { units: 'meters' }),
+                                                turf.distance([bbox[0], bbox[1]], [bbox[0], bbox[3]], { units: 'meters' })
+                                            );
+                                            clippedMaxDim = Math.max(
+                                                turf.distance([bbox[0], bbox[1]], [bbox[2], bbox[1]], { units: 'meters' }),
+                                                turf.distance([bbox[0], bbox[1]], [bbox[0], bbox[3]], { units: 'meters' })
+                                            );
+                                        }
                                         if (clippedMinDim >= strategyMinWidth && clippedMaxDim >= strategyMinLength) {
                                             validPoly = clipped as Feature<Polygon>;
                                             winningDepth = d;
@@ -1585,6 +1872,7 @@ export function generateSlabShapes(
 
 
     const slabFeatures = candidates.map(c => c.feature);
+    slabFeatures.forEach(r => { if (!r.properties) r.properties = {}; r.properties.subtype = 'slab'; });
     return applyCornerClearance(slabFeatures, 3);
 }
 
@@ -2261,6 +2549,256 @@ export function generateLargeFootprint(
 
     console.log(`[LargeFootprint] FINAL: ${finalBuildings.length}/${buildingCount} buildings. Total footprint: ${finalBuildings.reduce((s, b) => s + turf.area(b), 0).toFixed(0)}mÃ‚Â²`);
 
+    return finalBuildings;
+}
+
+/**
+ * Commercial Block Generator — Produces clean square / rectangle buildings
+ * that fit within the plot's buildable envelope. Unlike generateLargeFootprint
+ * which clips the plot shape, this always outputs axis-aligned rectangles.
+ */
+export function generateCommercialBlocks(
+    plotGeometry: Feature<Polygon | MultiPolygon>,
+    params: GeometricTypologyParams & { buildingCount?: number; mainSetback?: number }
+): Feature<Polygon>[] {
+    const {
+        sideSetback = 6,
+        frontSetback = 6,
+        rearSetback = 6,
+        roadAccessSides = [],
+        maxFootprint,
+        seed = 0
+    } = params;
+
+    const buildingCount = Math.max(1, Math.min(4, params.buildingCount ?? 1));
+
+    let workArea: Feature<Polygon>;
+    if (plotGeometry.geometry.type === 'MultiPolygon') {
+        const largest = ensurePolygonFeature(plotGeometry);
+        if (!largest) { console.warn('[CommBlocks] Could not extract Polygon'); return []; }
+        workArea = largest;
+    } else {
+        workArea = plotGeometry as Feature<Polygon>;
+    }
+
+    // Setbacks are already applied to the chunk (by use-building-store.ts)
+    // Apply a small internal margin so buildings don't touch the workArea edge
+    const internalMargin = 3; // meters
+    if (internalMargin > 0) {
+        const buffered = turf.buffer(workArea, -internalMargin / 1000, { units: 'kilometers' });
+        if (buffered) { const p = ensurePolygonFeature(buffered); if (p) workArea = p; }
+    }
+
+    console.log(`[CommBlocks] Work area after margin: ${turf.area(workArea).toFixed(0)}m²`);
+
+    const bbox = turf.bbox(workArea);
+    const [minLng, minLat, maxLng, maxLat] = bbox;
+    const widthM = turf.distance([minLng, minLat], [maxLng, minLat], { units: 'meters' });
+    const heightM = turf.distance([minLng, minLat], [minLng, maxLat], { units: 'meters' });
+    if (widthM < 15 || heightM < 15) { console.warn('[CommBlocks] Plot too narrow after setbacks'); return []; }
+
+    const degPerMLng = (maxLng - minLng) / widthM;
+    const degPerMLat = (maxLat - minLat) / heightM;
+    const workAreaSqm = turf.area(workArea);
+
+    // Target footprint: use maxFootprint if given but cap to 70% of the REDUCED work area
+    // This ensures buildings don't fill the entire post-setback area
+    const totalTarget = Math.min(maxFootprint ?? (workAreaSqm * 0.6), workAreaSqm * 0.7);
+    const gapM = Math.max(sideSetback, 6); // Gap between buildings
+
+    // Seed-based variation
+    const sr = (offset: number) => { const x = Math.sin((seed + offset) * 9.8765) * 10000; return x - Math.floor(x); };
+
+    // Decide split axis: prefer splitting along the LONGER axis
+    const splitAlongWidth = widthM >= heightM;
+
+    console.log(`[CommBlocks] START: count=${buildingCount}, workArea=${widthM.toFixed(0)}×${heightM.toFixed(0)}m (${workAreaSqm.toFixed(0)}m²), target=${totalTarget.toFixed(0)}m², gap=${gapM}m, axis=${splitAlongWidth ? 'W' : 'H'}`);
+
+    const results: Feature<Polygon>[] = [];
+    const centroid = turf.centroid(workArea);
+    const [cLng, cLat] = centroid.geometry.coordinates;
+
+    // Internal building margin from work area edges (buildings sit inset from the workArea boundary)
+    const buildingInset = 3; // meters
+    const effectiveW = widthM - buildingInset * 2;
+    const effectiveH = heightM - buildingInset * 2;
+
+    const createRect = (cx: number, cy: number, wM: number, hM: number): Feature<Polygon> => {
+        const halfW = (wM / 2) * degPerMLng;
+        const halfH = (hM / 2) * degPerMLat;
+        return turf.polygon([[
+            [cx - halfW, cy - halfH],
+            [cx + halfW, cy - halfH],
+            [cx + halfW, cy + halfH],
+            [cx - halfW, cy + halfH],
+            [cx - halfW, cy - halfH],
+        ]]);
+    };
+
+    if (buildingCount === 1) {
+        // Single large rectangle centered in the work area
+        const variation = seed % 4;
+        let bW: number, bH: number;
+
+        if (variation === 0) {
+            // Square-ish: use shorter axis as guide
+            const side = Math.min(effectiveW, effectiveH) * 0.75;
+            bW = side; bH = side;
+        } else if (variation === 1) {
+            // Wide rectangle
+            bW = effectiveW * 0.8;
+            bH = Math.min(effectiveH * 0.6, totalTarget / bW);
+        } else if (variation === 2) {
+            // Deep rectangle
+            bH = effectiveH * 0.8;
+            bW = Math.min(effectiveW * 0.6, totalTarget / bH);
+        } else {
+            // Golden ratio
+            const ratio = 1.618;
+            bW = Math.sqrt(totalTarget * ratio);
+            bH = totalTarget / bW;
+        }
+
+        // Clamp to effective bounds
+        bW = Math.min(bW, effectiveW * 0.85); bH = Math.min(bH, effectiveH * 0.85);
+        bW = Math.max(bW, 20); bH = Math.max(bH, 20);
+
+        // Scale down if exceeding target
+        const area = bW * bH;
+        if (area > totalTarget * 1.05) {
+            const scale = Math.sqrt(totalTarget / area);
+            bW *= scale; bH *= scale;
+        }
+
+        const rect = createRect(cLng, cLat, bW, bH);
+        results.push(rect);
+        console.log(`[CommBlocks] Single block: ${bW.toFixed(0)}×${bH.toFixed(0)}m = ${(bW * bH).toFixed(0)}m²`);
+
+    } else if (buildingCount <= 3) {
+        // 2-3 buildings split along primary axis
+        const perBuilding = totalTarget / buildingCount;
+        const totalGap = gapM * (buildingCount - 1);
+
+        if (splitAlongWidth) {
+            const availW = effectiveW - totalGap;
+            const eachW = Math.max(availW / buildingCount, 15);
+            const eachH = Math.min(effectiveH * 0.75, perBuilding / eachW);
+            const clampedW = Math.min(eachW * 0.9, effectiveW / buildingCount * 0.85);
+            const clampedH = Math.max(Math.min(eachH, effectiveH * 0.75), 15);
+
+            for (let i = 0; i < buildingCount; i++) {
+                // Position each building evenly along width
+                const stripW = effectiveW / buildingCount;
+                const cx = minLng + (buildingInset + stripW * (i + 0.5)) * degPerMLng;
+                const rect = createRect(cx, cLat, clampedW, clampedH);
+                results.push(rect);
+                console.log(`[CommBlocks] Block ${i}: ${clampedW.toFixed(0)}×${clampedH.toFixed(0)}m at strip ${i}`);
+            }
+        } else {
+            const availH = effectiveH - totalGap;
+            const eachH = Math.max(availH / buildingCount, 15);
+            const eachW = Math.min(effectiveW * 0.75, perBuilding / eachH);
+            const clampedH = Math.min(eachH * 0.9, effectiveH / buildingCount * 0.85);
+            const clampedW = Math.max(Math.min(eachW, effectiveW * 0.75), 15);
+
+            for (let i = 0; i < buildingCount; i++) {
+                const stripH = effectiveH / buildingCount;
+                const cy = minLat + (buildingInset + stripH * (i + 0.5)) * degPerMLat;
+                const rect = createRect(cLng, cy, clampedW, clampedH);
+                results.push(rect);
+                console.log(`[CommBlocks] Block ${i}: ${clampedW.toFixed(0)}×${clampedH.toFixed(0)}m at strip ${i}`);
+            }
+        }
+    } else {
+        // 4 buildings: 2×2 grid
+        const quadW = (effectiveW - gapM) / 2;
+        const quadH = (effectiveH - gapM) / 2;
+        const bW = Math.max(quadW * 0.8, 15);
+        const bH = Math.max(quadH * 0.8, 15);
+
+        const insetLng = buildingInset * degPerMLng;
+        const insetLat = buildingInset * degPerMLat;
+        const halfGapLng = (gapM / 2) * degPerMLng;
+        const halfGapLat = (gapM / 2) * degPerMLat;
+
+        const quadrants = [
+            { cx: (minLng + insetLng + cLng - halfGapLng) / 2, cy: (minLat + insetLat + cLat - halfGapLat) / 2, label: 'SW' },
+            { cx: (cLng + halfGapLng + maxLng - insetLng) / 2, cy: (minLat + insetLat + cLat - halfGapLat) / 2, label: 'SE' },
+            { cx: (minLng + insetLng + cLng - halfGapLng) / 2, cy: (cLat + halfGapLat + maxLat - insetLat) / 2, label: 'NW' },
+            { cx: (cLng + halfGapLng + maxLng - insetLng) / 2, cy: (cLat + halfGapLat + maxLat - insetLat) / 2, label: 'NE' },
+        ];
+
+        for (const q of quadrants) {
+            const rect = createRect(q.cx, q.cy, bW, bH);
+            results.push(rect);
+            console.log(`[CommBlocks] Block ${q.label}: ${bW.toFixed(0)}×${bH.toFixed(0)}m`);
+        }
+    }
+
+    // Clip each building to the workArea and assign properties + layout
+    const finalBuildings: Feature<Polygon>[] = [];
+    results.forEach((rect, idx) => {
+        try {
+            // @ts-ignore
+            let clipped = turf.intersect(rect, workArea);
+            if (!clipped) { clipped = rect; }
+            let poly: Feature<Polygon>;
+            if (clipped.geometry.type === 'MultiPolygon') {
+                const p = ensurePolygonFeature(clipped);
+                if (!p) return;
+                poly = p;
+            } else {
+                poly = clipped as Feature<Polygon>;
+            }
+
+            const area = turf.area(poly);
+            if (area < 50) return;
+
+            // Find alignment
+            const coords = poly.geometry.coordinates[0];
+            let maxEdgeLen = 0, alignBearing = 0;
+            for (let j = 0; j < coords.length - 1; j++) {
+                const len = turf.distance(coords[j], coords[j + 1], { units: 'meters' });
+                if (len > maxEdgeLen) { maxEdgeLen = len; alignBearing = turf.bearing(coords[j], coords[j + 1]); }
+            }
+
+            poly.properties = {
+                type: 'generated',
+                subtype: 'commercial-block',
+                area,
+                cores: [],
+                units: [],
+                entrances: [],
+                internalUtilities: [],
+                alignmentRotation: alignBearing,
+                scenarioId: `CommBlock-${buildingCount}-${idx}`,
+                score: area
+            };
+
+            try {
+                const layout = generateBuildingLayout(poly, {
+                    ...params,
+                    subtype: 'commercial-block',
+                    unitMix: params.unitMix,
+                    alignmentRotation: alignBearing
+                });
+                if (layout) {
+                    poly.properties.cores = layout.cores;
+                    poly.properties.units = layout.units;
+                    poly.properties.entrances = layout.entrances;
+                    poly.properties.internalUtilities = layout.utilities;
+                }
+            } catch (e) {
+                console.warn(`[CommBlocks] Layout gen failed for building ${idx}`);
+            }
+
+            finalBuildings.push(poly);
+        } catch (e) {
+            console.error(`[CommBlocks] Error for building ${idx}:`, e);
+        }
+    });
+
+    console.log(`[CommBlocks] FINAL: ${finalBuildings.length}/${buildingCount} buildings. Total footprint: ${finalBuildings.reduce((s, b) => s + turf.area(b), 0).toFixed(0)}m²`);
     return finalBuildings;
 }
 
