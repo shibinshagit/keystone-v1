@@ -14,6 +14,7 @@ export enum BuildingIntendedUse {
   Office = 'Office',
   MixedUse = 'Mixed-Use',
   Industrial = 'Industrial',
+  Institutional = 'Institutional',
   Public = 'Public',
   Utility = 'Utility',
   Hospitality = 'Hospitality',

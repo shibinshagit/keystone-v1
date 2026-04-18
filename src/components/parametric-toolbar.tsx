@@ -82,7 +82,7 @@ const parkingIcons = {
 
 type BuildingTypology = 'point' | 'slab' | 'lshaped' | 'ushaped' | 'oshaped' | 'tshaped' | 'hshaped';
 type ParkingTypology = 'none' | 'ug' | 'pod' | 'surface';
-type LandUseType = 'residential' | 'commercial' | 'mixed' | 'institutional';
+type LandUseType = 'residential' | 'commercial' | 'mixed' | 'institutional' | 'industrial';
 
 // Height-wise setback table (NBC / highrise norms)
 // Each entry: maxHeightM = upper bound (inclusive), setbackM = min setback on all sides
@@ -164,6 +164,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
     const [shuffleUnits, setShuffleUnits] = useState(false);
     const [exactTypologyAllocation, setExactTypologyAllocation] = useState(true); // DEFAULT ON
     const [allocationMode, setAllocationMode] = useState<'floor' | 'plot'>('floor');
+    const [commercialShape, setCommercialShape] = useState<'large-footprint' | 'block'>('block');
     const [selectedUtilities, setSelectedUtilities] = useState<string[]>(['Roads', 'Water', 'Electrical', 'HVAC', 'STP', 'WTP', 'Solar PV', 'EV Charging']);
 
     // Constraints
@@ -190,6 +191,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
         if (landUse === 'residential') setProgramMix({ residential: 100, commercial: 0, institutional: 0, hospitality: 0 });
         else if (landUse === 'commercial') setProgramMix({ residential: 0, commercial: 100, institutional: 0, hospitality: 0 });
         else if (landUse === 'institutional') setProgramMix({ residential: 0, commercial: 0, institutional: 100, hospitality: 0 });
+        else if (landUse === 'industrial') setProgramMix({ residential: 0, commercial: 100, institutional: 0, hospitality: 0 });
         else if (landUse === 'mixed') setProgramMix({ residential: 40, commercial: 40, institutional: 10, hospitality: 10 });
     }, [landUse]);
 
@@ -397,7 +399,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
             } else if (regType.includes('commercial') || regType.includes('shopping') || regType.includes('retail') || regType.includes('office')) {
                 setLandUse('commercial');
             } else if (regType.includes('industrial') || regType.includes('warehouse') || regType.includes('storage') || regType.includes('manufacturing')) {
-                setLandUse('commercial');
+                setLandUse('industrial');
             } else if (regType.includes('institutional') || regType.includes('public') || regType.includes('civic') || regType.includes('government')) {
                 setLandUse('institutional');
             } else if (regType.includes('residential') || regType.includes('housing') || regType.includes('plotted')) {
@@ -417,15 +419,17 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
         const effectiveSetback = useHeightBasedSetback
             ? Math.max(setback, heightDerivedSetback)
             : setback;
-        // Only override variable setbacks if they were explicitly provided
-        const effectiveFront = useHeightBasedSetback && frontSetback !== undefined
-            ? Math.max(frontSetback, heightDerivedSetback)
+        // When height-based setback is ON, ALWAYS enforce the height-derived minimum
+        // for all directional setbacks — even if the user hasn't manually overridden them.
+        // This ensures arms, gaps, and spacing all respect the height constraint.
+        const effectiveFront = useHeightBasedSetback
+            ? Math.max(frontSetback ?? heightDerivedSetback, heightDerivedSetback)
             : frontSetback;
-        const effectiveRear = useHeightBasedSetback && rearSetback !== undefined
-            ? Math.max(rearSetback, heightDerivedSetback)
+        const effectiveRear = useHeightBasedSetback
+            ? Math.max(rearSetback ?? heightDerivedSetback, heightDerivedSetback)
             : rearSetback;
-        const effectiveSide = useHeightBasedSetback && sideSetback !== undefined
-            ? Math.max(sideSetback, heightDerivedSetback)
+        const effectiveSide = useHeightBasedSetback
+            ? Math.max(sideSetback ?? heightDerivedSetback, heightDerivedSetback)
             : sideSetback;
 
         const params: any = {
@@ -462,8 +466,14 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
             programMix,
             commercialMix,
             allocationMode,
+            commercialShape,
             selectedUtilities,
-            setback: effectiveSetback,
+            // params.setback = user's base setback (for mainSetback / boundary shrink).
+            // Height-based values go into directional setbacks only (front/rear/side).
+            // This ensures extras = frontSetback - mainSetback > 0, pushing buildings inward
+            // — same behavior as manually increasing front setback.
+            // When height-based is ON, use the saved manual setback (before override).
+            setback: useHeightBasedSetback ? manualSetbackRef.current : setback,
             frontSetback: effectiveFront,
             rearSetback: effectiveRear,
             sideSetback: effectiveSide,
@@ -586,17 +596,43 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                             ) : (
                                 <div className="space-y-1.5">
                                     <Label className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">Typology</Label>
-                                    <div className="flex bg-muted/30 p-2 rounded-lg border items-center gap-3">
-                                        <div className="flex-shrink-0 w-10 h-10 rounded-md border border-primary bg-primary/20 text-primary flex items-center justify-center p-1.5">
-                                            <svg viewBox="0 0 40 40" className="w-full h-full fill-current">
-                                                <rect x="5" y="5" width="30" height="30" rx="4" className="stroke-current stroke-2 fill-current/30" />
-                                            </svg>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-xs font-semibold text-foreground">Large Footprint</span>
-                                            <span className="text-[10px] text-muted-foreground leading-tight">Optimized block generation for commercial/industrial zones</span>
-                                        </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button
+                                            onClick={() => setCommercialShape('large-footprint')}
+                                            className={cn(
+                                                'flex flex-col items-center gap-1.5 p-2.5 rounded-md border transition-all',
+                                                commercialShape === 'large-footprint'
+                                                    ? 'border-primary bg-primary/20 text-primary ring-1 ring-primary/50 shadow-sm'
+                                                    : 'border-border bg-background hover:bg-muted/80 hover:border-primary/50 text-muted-foreground hover:text-foreground'
+                                            )}
+                                        >
+                                            <div className="w-8 h-8 flex items-center justify-center">
+                                                <svg viewBox="0 0 40 40" className="w-full h-full">
+                                                    <path d="M5,8 L18,5 L35,10 L32,35 L8,32 Z" className="stroke-current stroke-2 fill-current/20" />
+                                                </svg>
+                                            </div>
+                                            <span className="text-[10px] font-medium">Plot Shape</span>
+                                        </button>
+                                        <button
+                                            onClick={() => setCommercialShape('block')}
+                                            className={cn(
+                                                'flex flex-col items-center gap-1.5 p-2.5 rounded-md border transition-all',
+                                                commercialShape === 'block'
+                                                    ? 'border-primary bg-primary/20 text-primary ring-1 ring-primary/50 shadow-sm'
+                                                    : 'border-border bg-background hover:bg-muted/80 hover:border-primary/50 text-muted-foreground hover:text-foreground'
+                                            )}
+                                        >
+                                            <div className="w-8 h-8 flex items-center justify-center">
+                                                <svg viewBox="0 0 40 40" className="w-full h-full">
+                                                    <rect x="5" y="8" width="30" height="24" rx="2" className="stroke-current stroke-2 fill-current/20" />
+                                                </svg>
+                                            </div>
+                                            <span className="text-[10px] font-medium">Block</span>
+                                        </button>
                                     </div>
+                                    <p className="text-[9px] text-muted-foreground/70 italic px-1">
+                                        {commercialShape === 'block' ? 'Clean square/rectangle footprints' : 'Buildings follow the plot boundary shape'}
+                                    </p>
                                 </div>
                             )}
 
@@ -1232,7 +1268,7 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                 <div className="h-px flex-1 bg-border/50"></div>
                             </div>
                             {/* Building Dimensions / Building Count */}
-                            {(landUse === 'commercial' || landUse === 'institutional') ? (
+                            {(['commercial', 'institutional', 'industrial', 'public'].includes(landUse?.toLowerCase() || '')) ? (
                                 /* --- BUILDING COUNT for Commercial/Industrial/Public --- */
                                 <div className="space-y-3 pt-2">
                                     <Label className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">Number of Buildings</Label>
@@ -1261,16 +1297,44 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                 <div className="space-y-3 pt-2">
                                     <Label className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">Building Dimensions</Label>
 
+                                    {/* Height-Based Arm Constraint Badge */}
+                                    {useHeightBasedSetback && (() => {
+                                        const estH = floorRange[1] * floorHeight;
+                                        const hSb = getHeightBasedSetback(estH);
+                                        const minArmLen = hSb + 15; // arm must be deeper than setback + 15m min buildable
+                                        const tooShort = buildingLengthRange[0] < minArmLen;
+                                        return (
+                                            <div className={cn(
+                                                "rounded-md border px-2.5 py-1.5 text-[10px] space-y-0.5",
+                                                tooShort
+                                                    ? "bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-400"
+                                                    : "bg-primary/10 border-primary/30"
+                                            )}>
+                                                <div className="flex items-center justify-between">
+                                                    <span className="font-semibold">Height-Arm Constraint</span>
+                                                    <span className={cn("font-bold", tooShort ? "text-amber-500" : "text-primary")}>
+                                                        Min arm ≥ {minArmLen}m
+                                                    </span>
+                                                </div>
+                                                <p className="text-muted-foreground leading-tight">
+                                                    Setback {hSb}m + 15m min depth. {tooShort
+                                                        ? `⚠ Arm length ${buildingLengthRange[0]}m may be too short.`
+                                                        : "✓ Arm length is sufficient."}
+                                                </p>
+                                            </div>
+                                        );
+                                    })()}
+
                                     {/* Width Range */}
                                     <div className="space-y-1">
                                         <div className="flex justify-between text-[10px]">
-                                            <span className="text-muted-foreground">Building Width</span>
-                                            <span className={cn(buildingWidthRange[0] < 20 || buildingWidthRange[1] > 25 ? "text-destructive font-bold" : "")}>{buildingWidthRange[0]}m - {buildingWidthRange[1]}m</span>
+                                            <span className="text-muted-foreground">Arm Width</span>
+                                            <span className={cn(buildingWidthRange[0] < 10 || buildingWidthRange[1] > 40 ? "text-destructive font-bold" : "")}>{buildingWidthRange[0]}m – {buildingWidthRange[1]}m</span>
                                         </div>
                                         <Slider
                                             value={buildingWidthRange}
-                                            min={20}
-                                            max={25}
+                                            min={10}
+                                            max={40}
                                             step={0.5}
                                             minStepsBetweenThumbs={1}
                                             onValueChange={(val) => setBuildingWidthRange(val as [number, number])}
@@ -1278,21 +1342,48 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                         />
                                     </div>
 
-                                    {/* Length Range */}
+                                    {/* Length (Arm Depth) Range */}
                                     <div className="space-y-1">
-                                        <div className="flex justify-between text-[10px]">
-                                            <span className="text-muted-foreground">Building Length</span>
-                                            <span className={cn(buildingLengthRange[0] < 25 || buildingLengthRange[1] > 55 ? "text-destructive font-bold" : "")}>{buildingLengthRange[0]}m - {buildingLengthRange[1]}m</span>
-                                        </div>
-                                        <Slider
-                                            value={buildingLengthRange}
-                                            min={25}
-                                            max={55}
-                                            step={1}
-                                            minStepsBetweenThumbs={5}
-                                            onValueChange={(val) => setBuildingLengthRange(val as [number, number])}
-                                            className="[&_.relative]:h-1.5 [&_.absolute]:bg-primary/20 [&_span]:h-3 [&_span]:w-3"
-                                        />
+                                        {(() => {
+                                            const estH = floorRange[1] * floorHeight;
+                                            const hSb = getHeightBasedSetback(estH);
+                                            const minArmLen = useHeightBasedSetback ? hSb + 15 : 15;
+                                            const tooShort = useHeightBasedSetback && buildingLengthRange[0] < minArmLen;
+                                            return (
+                                                <>
+                                                    <div className="flex justify-between text-[10px]">
+                                                        <span className="text-muted-foreground">Arm Length</span>
+                                                        <span className={cn(
+                                                            tooShort ? "text-amber-500 font-bold" :
+                                                            buildingLengthRange[0] < 15 || buildingLengthRange[1] > 100 ? "text-destructive font-bold" : ""
+                                                        )}>
+                                                            {buildingLengthRange[0]}m – {buildingLengthRange[1]}m
+                                                            {tooShort && <span className="ml-1">⚠</span>}
+                                                        </span>
+                                                    </div>
+                                                    <Slider
+                                                        value={buildingLengthRange}
+                                                        min={useHeightBasedSetback ? Math.max(minArmLen, 15) : 15}
+                                                        max={100}
+                                                        step={1}
+                                                        minStepsBetweenThumbs={5}
+                                                        onValueChange={(val) => {
+                                                            const clamped: [number, number] = [
+                                                                Math.max(val[0], minArmLen),
+                                                                val[1]
+                                                            ];
+                                                            setBuildingLengthRange(clamped);
+                                                        }}
+                                                        className={cn(
+                                                            "[&_.relative]:h-1.5 [&_span]:h-3 [&_span]:w-3",
+                                                            tooShort
+                                                                ? "[&_.absolute]:bg-amber-500/60"
+                                                                : "[&_.absolute]:bg-primary/20"
+                                                        )}
+                                                    />
+                                                </>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
                             )}
@@ -1410,10 +1501,11 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                                 <Input
                                                     type="number"
                                                     step="0.5"
-                                                    value={frontSetback ?? ''}
+                                                    value={useHeightBasedSetback ? Math.max(frontSetback ?? 0, getHeightBasedSetback(floorRange[1] * floorHeight)) : (frontSetback ?? '')}
+                                                    disabled={useHeightBasedSetback}
                                                     onChange={e => setFrontSetback(e.target.value ? Number(e.target.value) : undefined)}
-                                                    placeholder="Auto"
-                                                    className="h-7 text-[10px] bg-muted/20 border-border"
+                                                    placeholder={useHeightBasedSetback ? "Override" : "Auto"}
+                                                    className={cn("h-7 text-[10px] bg-muted/20 border-border", useHeightBasedSetback && "opacity-60 cursor-not-allowed")}
                                                 />
                                             </div>
                                             <div className="space-y-1">
@@ -1421,10 +1513,11 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                                 <Input
                                                     type="number"
                                                     step="0.5"
-                                                    value={rearSetback ?? ''}
+                                                    value={useHeightBasedSetback ? Math.max(rearSetback ?? 0, getHeightBasedSetback(floorRange[1] * floorHeight)) : (rearSetback ?? '')}
+                                                    disabled={useHeightBasedSetback}
                                                     onChange={e => setRearSetback(e.target.value ? Number(e.target.value) : undefined)}
-                                                    placeholder="Auto"
-                                                    className="h-7 text-[10px] bg-muted/20 border-border"
+                                                    placeholder={useHeightBasedSetback ? "Override" : "Auto"}
+                                                    className={cn("h-7 text-[10px] bg-muted/20 border-border", useHeightBasedSetback && "opacity-60 cursor-not-allowed")}
                                                 />
                                             </div>
                                             <div className="space-y-1">
@@ -1432,10 +1525,11 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                                 <Input
                                                     type="number"
                                                     step="0.5"
-                                                    value={sideSetback ?? ''}
+                                                    value={useHeightBasedSetback ? Math.max(sideSetback ?? 0, getHeightBasedSetback(floorRange[1] * floorHeight)) : (sideSetback ?? '')}
+                                                    disabled={useHeightBasedSetback}
                                                     onChange={e => setSideSetback(e.target.value ? Number(e.target.value) : undefined)}
-                                                    placeholder="Auto"
-                                                    className="h-7 text-[10px] bg-muted/20 border-border"
+                                                    placeholder={useHeightBasedSetback ? "Override" : "Auto"}
+                                                    className={cn("h-7 text-[10px] bg-muted/20 border-border", useHeightBasedSetback && "opacity-60 cursor-not-allowed")}
                                                 />
                                             </div>
                                         </div>

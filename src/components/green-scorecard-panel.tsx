@@ -10,6 +10,7 @@ import {
 import { GRIHA_SCHEMA } from "@/lib/scoring/griha.schema";
 import { IGBC_SCHEMA } from "@/lib/scoring/igbc.schema";
 import { LEED_SCHEMA } from "@/lib/scoring/leed.schema";
+import { useGreenScorecardStore } from "@/hooks/use-green-scorecard-store";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, ChevronDown, Leaf } from "lucide-react";
 
@@ -455,6 +456,34 @@ export function GreenScorecard({ certificateType }: GreenScorecardProps) {
   const progress = activeSchema.maxScore
     ? Math.min((totalScore / activeSchema.maxScore) * 100, 100)
     : 0;
+
+  const setScorecardData = useGreenScorecardStore((state) => state.setScorecardData);
+
+  useEffect(() => {
+    const displayItems: any[] = [];
+    activeSchema.categories.forEach((cat) => {
+      cat.items.forEach((item) => {
+        const isChecked = Boolean(toggleState[item.id]);
+        const evalData = evaluations[item.id];
+        
+        displayItems.push({
+          label: `${cat.name} — ${item.name}`,
+          value: isChecked ? "Provided" : "Not provided",
+          status: isChecked ? "pass" : "fail",
+           score: evalData?.countedScore || 0,
+          maxScore: item.maxScore
+        });
+      });
+    });
+
+    setScorecardData({
+      totalScore,
+      maxScore: activeSchema.maxScore,
+      progress,
+      certificateType,
+      items: displayItems
+    });
+  }, [totalScore, activeSchema.maxScore, progress, certificateType, setScorecardData, activeSchema, toggleState, evaluations]);
 
   const handleToggle = (item: ScorecardItem, checked: boolean) => {
     setToggleState((current) => ({

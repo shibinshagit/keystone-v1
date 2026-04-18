@@ -17,6 +17,8 @@ import {
   useProjectData,
   useSelectedPlot,
 } from "@/hooks/use-building-store";
+import { useGreenScorecardStore } from "@/hooks/use-green-scorecard-store";
+import { Progress } from "@/components/ui/progress";
 import {
   AreaChart,
   Scale,
@@ -3440,6 +3442,7 @@ function MultiBuildingBudgetTab({
 
 function FeasibilityTab() {
   const activeProject = useProjectData();
+  const greenScorecard = useGreenScorecardStore();
 
   const metrics = useDevelopmentMetrics(activeProject);
   const { regulations, greenStandards, vastuRules } =
@@ -3588,30 +3591,13 @@ function FeasibilityTab() {
       ),
     },
     {
-      label: activeProject?.greenCertification?.[0]
-        ? `Green Building (${
-            activeProject.greenCertification[0].toLowerCase().includes("griha")
-              ? "GRIHA"
-              : activeProject.greenCertification[0]
-                    .toLowerCase()
-                    .includes("leed")
-                ? "LEED"
-                : activeProject.greenCertification[0]
-                      .toLowerCase()
-                      .includes("igbc")
-                  ? "IGBC"
-                  : activeProject.greenCertification[0]
-          })`
-        : "Green Building",
-      // UI: prefer the summary percentage if available (presentation-only). Do not change engine logic.
-      score:
-        metrics.compliance.greenScoreSummary &&
-        typeof metrics.compliance.greenScoreSummary.percentage === "number"
-          ? metrics.compliance.greenScoreSummary.percentage
-          : metrics.compliance.green,
-      summary: metrics.compliance.greenScoreSummary,
+      label: greenScorecard.certificateType 
+         ? `Green Building (${greenScorecard.certificateType})`
+         : "Green Building",
+      score: greenScorecard.certificateType ? greenScorecard.totalScore : (metrics.compliance.greenScoreSummary?.percentage || metrics.compliance.green),
+      summary: greenScorecard.certificateType ? { maxScore: greenScorecard.maxScore } : metrics.compliance.greenScoreSummary,
       icon: CheckCircle,
-      items: (metrics.compliance.greenItems || []).filter(
+      items: greenScorecard.certificateType ? greenScorecard.items : (metrics.compliance.greenItems || []).filter(
         (i: any) => i.status !== "na",
       ),
     },
