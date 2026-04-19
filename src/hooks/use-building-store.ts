@@ -2467,37 +2467,26 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             case 'lshaped':
                                 chunkGenerated = generateLShapes(adjustedChunk, genParams);
                                 if (chunkGenerated.length === 0) {
-                                    chunkGenerated = generateSlabShapes(adjustedChunk, genParams);
-                                    if (chunkGenerated.length === 0) {
-                                        chunkGenerated = generatePointShapes(adjustedChunk, genParams);
-                                    }
+                                    // Only fall back to point towers — no slabs to preserve typology purity
+                                    chunkGenerated = generatePointShapes(adjustedChunk, genParams);
                                 }
                                 break;
                             case 'ushaped':
                                 chunkGenerated = generateUShapes(adjustedChunk, genParams);
                                 if (chunkGenerated.length === 0) {
-                                    chunkGenerated = generateSlabShapes(adjustedChunk, genParams);
-                                    if (chunkGenerated.length === 0) {
-                                        chunkGenerated = generatePointShapes(adjustedChunk, genParams);
-                                    }
+                                    chunkGenerated = generatePointShapes(adjustedChunk, genParams);
                                 }
                                 break;
                             case 'tshaped':
                                 chunkGenerated = generateTShapes(adjustedChunk, genParams);
                                 if (chunkGenerated.length === 0) {
-                                    chunkGenerated = generateSlabShapes(adjustedChunk, genParams);
-                                    if (chunkGenerated.length === 0) {
-                                        chunkGenerated = generatePointShapes(adjustedChunk, genParams);
-                                    }
+                                    chunkGenerated = generatePointShapes(adjustedChunk, genParams);
                                 }
                                 break;
                             case 'hshaped':
                                 chunkGenerated = generateHShapes(adjustedChunk, genParams);
                                 if (chunkGenerated.length === 0) {
-                                    chunkGenerated = generateSlabShapes(adjustedChunk, genParams);
-                                    if (chunkGenerated.length === 0) {
-                                        chunkGenerated = generatePointShapes(adjustedChunk, genParams);
-                                    }
+                                    chunkGenerated = generatePointShapes(adjustedChunk, genParams);
                                 }
                                 break;
                             case 'oshaped':
@@ -2575,11 +2564,133 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                 // ============================================================
                 // GFA MAXIMIZATION: INFILL LOOP
-                // When autoMaxGFA is enabled, attempt to fill remaining open area
-                // with additional buildings using the selected typologies until
-                // GFA target is reached or site utilization limit is hit.
+                // Runs when autoMaxGFA is enabled OR when the primary generation
+                // pass produced insufficient footprint to reach GFA target.
+                // This ensures L/U/T/H typologies (which have arm gaps and spacing)
+                // get additional buildings to match slab/point GFA output.
+                // ============================================================
+
+                // ============================================================
+                // STAGE 1: PERIPHERAL FILL
+                // After L/U/T/H primary pass, fill remaining peripheral edge
+                // space with slabs/points (respecting setbacks) before doing
+                // internal ring infill. This is the natural way to maximize GFA.
+                // ============================================================
+                const primaryFootprintTotal = geomFeatures.reduce((sum, f) => sum + turf.area(f), 0);
+                const primaryMaxGFA = primaryFootprintTotal * effectiveMaxFloors;
+                const gfaShortfall = primaryMaxGFA < effectiveMaxGFA * 0.90; // >10% short of target
+                const isComplexTypology = sortedTypologies.some((t: string) =>
+                    ['lshaped', 'ushaped', 'tshaped', 'hshaped'].includes(t)
+                );
+
+                // ============================================================
+                // GFA MAXIMIZATION (only when autoMaxGFA toggle is ON)
+                // STAGE 1: Peripheral Fill — slabs/points in remaining edges
+                // STAGE 2: Ring Infill — internal ring placement if still short
                 // ============================================================
                 if (params.autoMaxGFA) {
+
+                    // Block courtyard areas between L/U/T/H arms for ALL infill stages
+                    if (isComplexTypology) {
+                        const hullGroups: Record<string, Feature<Polygon>[]> = {};
+                        for (const f of geomFeatures) {
+                            const sid = f.properties?.scenarioId || 'ungrouped';
+                            if (!hullGroups[sid]) hullGroups[sid] = [];
+                            hullGroups[sid].push(f);
+                        }
+                        for (const [gid, parts] of Object.entries(hullGroups)) {
+                            if (parts.length >= 2) {
+                                try {
+                                    // @ts-ignore
+                                    const combined = turf.featureCollection(parts);
+                                    const hull = turf.convex(combined);
+                                    if (hull && hull.geometry.type === 'Polygon') {
+                                        const bufferedHull = turf.buffer(hull, 3 / 1000, { units: 'kilometers' });
+                                        if (bufferedHull) {
+                                            builtObstacles.push(bufferedHull as Feature<Polygon>);
+                                            console.log(`[Courtyard Block] Group ${gid}: hull ${turf.area(hull).toFixed(0)}m² + 3m buffer added as obstacle`);
+                                        }
+                                    }
+                                } catch (e) { /* skip */ }
+                            }
+                        }
+                    }
+
+                    // --- STAGE 1: PERIPHERAL FILL (for L/U/T/H only) ---
+                    if (gfaShortfall && isComplexTypology) {
+                        console.log(`[Peripheral Fill] Primary ${sortedTypologies[0]} pass: ${geomFeatures.length} buildings, footprint=${primaryFootprintTotal.toFixed(0)}m², GFA=${primaryMaxGFA.toFixed(0)}/${effectiveMaxGFA.toFixed(0)}m² (${((1 - primaryMaxGFA/effectiveMaxGFA)*100).toFixed(0)}% short)`);
+
+                        for (const chunk of validChunks) {
+                            const currentFpCheck = geomFeatures.reduce((sum, f) => sum + turf.area(f), 0);
+                            if (currentFpCheck * effectiveMaxFloors >= effectiveMaxGFA * 0.95) break;
+                            if (currentFpCheck >= effectiveMaxFootprint) break;
+
+                            // Apply setback buffer matching the primary pass
+                            let peripheralChunk = chunk;
+                            const peripheralBuffer = (hasPeripheralRoad || hasSurfaceParking) ? 3 : 0;
+                            const pExtraFront = Math.max(peripheralBuffer, (p.frontSetback ?? Math.max(mainSetback, 6)) - mainSetback);
+                            const pExtraRear = Math.max(peripheralBuffer, (p.rearSetback ?? (p.frontSetback ?? Math.max(mainSetback, 6))) - mainSetback);
+                            const pExtraSide = Math.max(peripheralBuffer, (p.sideSetback ?? Math.max(mainSetback, 6)) - mainSetback);
+                            const pMaxExtra = Math.max(pExtraFront, pExtraRear, pExtraSide);
+                            if (pMaxExtra > 0) {
+                                // @ts-ignore
+                                const pBuffered = turf.buffer(peripheralChunk, -pMaxExtra / 1000, { units: 'kilometers' });
+                                const pCleaned = ensurePolygon(pBuffered);
+                                if (pCleaned) peripheralChunk = pCleaned;
+                            }
+
+                            const project = get().projects.find(prj => prj.id === get().activeProjectId);
+                            const projectUnitMix = project?.feasibilityParams?.unitMix || DEFAULT_FEASIBILITY_PARAMS.unitMix;
+
+                            const peripheralParams: AlgoParams = {
+                                ...p,
+                                obstacles: [...builtObstacles],
+                                unitMix: projectUnitMix,
+                                maxFootprint: effectiveMaxFootprint,
+                                minFootprint: effectiveMinFootprint,
+                                maxFloors: effectiveMaxFloors,
+                                minBuildingWidth: p.minBuildingWidth ?? 20,
+                                maxBuildingWidth: p.maxBuildingWidth ?? 25,
+                                minBuildingLength: p.minBuildingLength ?? 25,
+                                maxBuildingLength: p.maxBuildingLength ?? 55,
+                                frontSetback: p.frontSetback ?? Math.max(mainSetback, 3),
+                                rearSetback: p.rearSetback ?? Math.max(mainSetback, 3),
+                                sideSetback: p.sideSetback ?? Math.max(mainSetback, 3),
+                                setback: mainSetback,
+                                seed: (p.seed ?? 0) + 100
+                            };
+
+                            // Fill peripheral gaps: slabs first (better coverage), then points for remaining space
+                            let peripheralBuildings: Feature<Polygon>[] = [];
+                            try {
+                                peripheralBuildings = generateSlabShapes(peripheralChunk, peripheralParams);
+                                // Also try points in remaining space
+                                const pointParams = { ...peripheralParams, obstacles: [...peripheralParams.obstacles, ...peripheralBuildings], seed: (peripheralParams.seed ?? 0) + 50 };
+                                const extraPoints = generatePointShapes(peripheralChunk, pointParams);
+                                peripheralBuildings = [...peripheralBuildings, ...extraPoints];
+                            } catch (e) {
+                                console.warn('[Peripheral Fill] Generator error:', e);
+                            }
+
+                            let peripheralAdded = 0;
+                            for (const pb of peripheralBuildings) {
+                                const curFp = geomFeatures.reduce((sum, f) => sum + turf.area(f), 0);
+                                if (curFp * effectiveMaxFloors >= effectiveMaxGFA * 0.95) break;
+                                if (curFp + turf.area(pb) > effectiveMaxFootprint) continue;
+
+                                if (!checkCollision(pb, builtObstacles)) {
+                                    builtObstacles.push(pb);
+                                    geomFeatures.push(pb);
+                                    peripheralAdded++;
+                                }
+                            }
+
+                            const afterFp = geomFeatures.reduce((sum, f) => sum + turf.area(f), 0);
+                            console.log(`[Peripheral Fill] Added ${peripheralAdded} slab/point buildings. Footprint: ${afterFp.toFixed(0)}m², GFA: ${(afterFp * effectiveMaxFloors).toFixed(0)}/${effectiveMaxGFA.toFixed(0)}m²`);
+                        }
+                    }
+
+                    // --- STAGE 2: RING INFILL (if still short after peripheral fill) ---
                     const totalFootprintSoFar = geomFeatures.reduce((sum, f) => sum + turf.area(f), 0);
                     const userMaxFloors = effectiveMaxFloors; // Use SAME value as floor assignment
                     const maxPrimaryGFA = totalFootprintSoFar * userMaxFloors;
@@ -2615,7 +2726,36 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     // For ALL infill modes, only check collision against ACTUAL BUILDINGS
                     // (not green areas, road buffers, parking zones, etc. which are in builtObstacles)
                     const infillObstacles: Feature<Polygon>[] = [...geomFeatures]; // buildings only
-                    console.log(`[GFA Infill] builtObstacles=${builtObstacles.length} (includes green/road/parking), infillObstacles=${infillObstacles.length} (buildings only)`);
+
+                    // For L/U/T/H: also block the courtyard areas between arms
+                    // by adding buffered convex hulls of each building group
+                    if (isComplexTypology) {
+                        const groups: Record<string, Feature<Polygon>[]> = {};
+                        for (const f of geomFeatures) {
+                            const sid = f.properties?.scenarioId || 'ungrouped';
+                            if (!groups[sid]) groups[sid] = [];
+                            groups[sid].push(f);
+                        }
+                        for (const [gid, parts] of Object.entries(groups)) {
+                            if (parts.length >= 2) {
+                                try {
+                                    // @ts-ignore
+                                    const combined = turf.featureCollection(parts);
+                                    const hull = turf.convex(combined);
+                                    if (hull && hull.geometry.type === 'Polygon') {
+                                        // Buffer slightly to add spacing around the shape
+                                        const bufferedHull = turf.buffer(hull, 3 / 1000, { units: 'kilometers' });
+                                        if (bufferedHull) {
+                                            infillObstacles.push(bufferedHull as Feature<Polygon>);
+                                            console.log(`[GFA Infill] Added courtyard hull for group ${gid} (${parts.length} parts, ${turf.area(hull).toFixed(0)}m²)`);
+                                        }
+                                    }
+                                } catch (e) { /* hull failed, individual arms still block */ }
+                            }
+                        }
+                    }
+
+                    console.log(`[GFA Infill] builtObstacles=${builtObstacles.length} (includes green/road/parking), infillObstacles=${infillObstacles.length} (buildings + hulls)`);
 
                     // ============ HELPER: RING INFILL PASS ============
                     const runRingInfill = () => {
@@ -2704,10 +2844,10 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                     maxBuildingWidth: p.maxBuildingWidth ?? 25,
                                     minBuildingLength: p.minBuildingLength ?? 25,
                                     maxBuildingLength: p.maxBuildingLength ?? 55,
-                                    setback: 0,
-                                    frontSetback: 0,
-                                    rearSetback: 0,
-                                    sideSetback: p.sideSetback ?? 3,
+                                    setback: mainSetback,
+                                    frontSetback: p.frontSetback ?? Math.max(mainSetback, 3),
+                                    rearSetback: p.rearSetback ?? Math.max(mainSetback, 3),
+                                    sideSetback: p.sideSetback ?? Math.max(mainSetback, 3),
                                     roadAccessSides: p.roadAccessSides ?? [],
                                     seed: (p.seed ?? 0) + ringIdx + 1
                                 };
@@ -2724,24 +2864,18 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                             if (generated.length === 0) generated = generatePointShapes(outerPoly, infillParams);
                                             break;
                                         case 'lshaped':
-                                            generated = generateLShapes(outerPoly, infillParams);
-                                            if (generated.length === 0) generated = generateSlabShapes(outerPoly, infillParams);
-                                            break;
                                         case 'ushaped':
-                                            generated = generateUShapes(outerPoly, infillParams);
-                                            if (generated.length === 0) generated = generateSlabShapes(outerPoly, infillParams);
-                                            break;
                                         case 'tshaped':
-                                            generated = generateTShapes(outerPoly, infillParams);
-                                            if (generated.length === 0) generated = generateSlabShapes(outerPoly, infillParams);
-                                            break;
                                         case 'hshaped':
-                                            generated = generateHShapes(outerPoly, infillParams);
-                                            if (generated.length === 0) generated = generateSlabShapes(outerPoly, infillParams);
+                                            // Slabs first (better coverage), then points for gaps
+                                            generated = generateSlabShapes(outerPoly, infillParams);
+                                            const ptParams = { ...infillParams, obstacles: [...(infillParams.obstacles || []), ...generated], seed: (infillParams.seed ?? 0) + 50 };
+                                            const pts = generatePointShapes(outerPoly, ptParams);
+                                            generated = [...generated, ...pts];
                                             break;
                                         case 'oshaped':
                                             generated = generatePerimeter(outerPoly, infillParams);
-                                            if (generated.length === 0) generated = generateSlabShapes(outerPoly, infillParams);
+                                            if (generated.length === 0) generated = generatePointShapes(outerPoly, infillParams);
                                             break;
                                         default:
                                             generated = generatePointShapes(outerPoly, infillParams);
@@ -2890,7 +3024,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                                 const useClipped = turf.area(bestPoly) < fullArea * 0.95;
                                 const candidate = (useClipped ? bestPoly : poly) as Feature<Polygon>;
-                                candidate.properties = { typology: 'slab', subtype: 'slab', type: 'generated', isGridInfill: true };
+                                const gridSubtype = sortedTypologies.some((t: string) => t === 'slab' || t === 'plot') ? 'slab' : 'point';
+                                candidate.properties = { typology: gridSubtype, subtype: gridSubtype, type: 'generated', isGridInfill: true };
 
                                 if (!wouldExceedCoverage(candidate) && !checkCollision(candidate, infillObstacles)) {
                                     infillObstacles.push(candidate);
@@ -2957,7 +3092,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
 
                                     const useClip2 = turf.area(bestPoly2) < fullArea2 * 0.95;
                                     const cand2 = (useClip2 ? bestPoly2 : poly2) as Feature<Polygon>;
-                                    cand2.properties = { typology: 'slab', subtype: 'slab', type: 'generated', isGridInfill: true };
+                                    const gridSubtype2 = sortedTypologies.some((t: string) => t === 'slab' || t === 'plot') ? 'slab' : 'point';
+                                    cand2.properties = { typology: gridSubtype2, subtype: gridSubtype2, type: 'generated', isGridInfill: true };
 
                                     if (!wouldExceedCoverage(cand2) && !checkCollision(cand2, infillObstacles)) {
                                         infillObstacles.push(cand2);
