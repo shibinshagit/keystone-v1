@@ -1,7 +1,14 @@
 import * as turf from "@turf/turf";
 
+import { DEFAULT_COST_PARAMETERS } from "@/lib/default-data/cost-parameters";
+import { DEFAULT_PLANNING_PARAMETERS } from "@/lib/default-data/planning-parameters";
 import { applyVariableSetbacks } from "@/lib/generators/setback-utils";
-import type { Plot, RegulationData, RegulationValue } from "@/lib/types";
+import type {
+  BuildingIntendedUse,
+  Plot,
+  RegulationData,
+  RegulationValue,
+} from "@/lib/types";
 
 export interface SellableAreaBreakdown {
   plotArea: number;
@@ -15,6 +22,8 @@ export interface SellableAreaBreakdown {
   areaLostToSetbacks: number;
   setbackAdjustedMaxGfa: number;
   estimatedSellableArea: number;
+  estimatedSellableRatio: number;
+  sellableRatioSource: string;
   usedSetbackMethod: string;
   hasPlotGeometry: boolean;
   hasRegulationMatch: boolean;
@@ -40,16 +49,78 @@ function getNumericRegulationValue(
   return undefined;
 }
 
+function mapIntendedUseToBuildingType(intendedUse: BuildingIntendedUse | undefined) {
+  switch (intendedUse) {
+    case "Residential":
+    case "Hospitality":
+      return "Residential";
+    case "Commercial":
+    case "Retail":
+    case "Office":
+    case "Mixed-Use":
+    case "Public":
+    case "Utility":
+      return "Commercial";
+    default:
+      return undefined;
+  }
+}
+
+function getEstimatedSellableRatio(intendedUse: BuildingIntendedUse | undefined) {
+  const buildingType = mapIntendedUseToBuildingType(intendedUse);
+
+  if (buildingType) {
+    const matchingCostRows = DEFAULT_COST_PARAMETERS.filter(
+      (row) => row.building_type === buildingType && row.sellable_ratio > 0,
+    );
+
+    if (matchingCostRows.length > 0) {
+      const averageRatio =
+        matchingCostRows.reduce((sum, row) => sum + row.sellable_ratio, 0) /
+        matchingCostRows.length;
+
+      return {
+        ratio: averageRatio,
+        source: `${buildingType} default sellable ratio`,
+      };
+    }
+
+    const matchingPlanningRows = DEFAULT_PLANNING_PARAMETERS.filter(
+      (row) => row.building_type === buildingType && row.efficiency_target > 0,
+    );
+
+    if (matchingPlanningRows.length > 0) {
+      const averageRatio =
+        matchingPlanningRows.reduce(
+          (sum, row) => sum + row.efficiency_target,
+          0,
+        ) / matchingPlanningRows.length;
+
+      return {
+        ratio: averageRatio,
+        source: `${buildingType} planning efficiency target`,
+      };
+    }
+  }
+
+  return {
+    ratio: 0.7,
+    source: "Default fallback ratio",
+  };
+}
+
 export function calculateSellableAreaBreakdown({
   selectedPlot,
   plots,
   matchedRegulation,
   typedLandSize,
+  intendedUse,
 }: {
   selectedPlot: Plot | null;
   plots: Plot[];
   matchedRegulation: RegulationData | null;
   typedLandSize: string;
+  intendedUse?: BuildingIntendedUse;
 }): SellableAreaBreakdown {
   const plotForAnalysis = selectedPlot || plots[0] || null;
   const numericLandSize = Number(typedLandSize);
@@ -144,8 +215,11 @@ export function calculateSellableAreaBreakdown({
     plotArea > 0 ? Math.max(0, plotArea - netBuildableArea) : 0;
   const setbackAdjustedMaxGfa =
     far && netBuildableArea > 0 ? far * netBuildableArea : 0;
+  const sellableEstimate = getEstimatedSellableRatio(intendedUse);
   const estimatedSellableArea =
-    setbackAdjustedMaxGfa > 0 ? setbackAdjustedMaxGfa * 0.7 : 0;
+    setbackAdjustedMaxGfa > 0
+      ? setbackAdjustedMaxGfa * sellableEstimate.ratio
+      : 0;
 
   return {
     plotArea,
@@ -159,6 +233,8 @@ export function calculateSellableAreaBreakdown({
     areaLostToSetbacks,
     setbackAdjustedMaxGfa,
     estimatedSellableArea,
+    estimatedSellableRatio: sellableEstimate.ratio,
+    sellableRatioSource: sellableEstimate.source,
     usedSetbackMethod,
     hasPlotGeometry: Boolean(plotForAnalysis?.geometry),
     hasRegulationMatch: Boolean(matchedRegulation),

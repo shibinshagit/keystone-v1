@@ -17,6 +17,8 @@ export interface BuildabilityVerdict {
   title: string;
   summary: string;
   suggestedAction: string;
+  confidence: "high" | "medium" | "low";
+  confidenceSummary: string;
   reasons: string[];
   signals: string[];
 }
@@ -175,6 +177,12 @@ export function evaluateBuildabilityVerdict({
   const regulationBlocked = regulationBlocksUse(regulation);
   const convertible = canPotentiallyConvert(regulation);
   const { zoneDisplay, conversionDisplay } = getRegulationFields(regulation);
+  const isNationalFallback = regulationSource === "national-fallback";
+  const hasLocalRegulation =
+    regulationSource === "specific-id" ||
+    regulationSource === "generic-id" ||
+    regulationSource === "location-query";
+  const hasExplicitZoningRule = Boolean(zoneDisplay);
 
   signals.push(`Bhuvan land use: ${bhuvan?.primaryLandUse || "Unavailable"}`);
   signals.push(`Matched zoning: ${zoneDisplay || "Unavailable"}`);
@@ -214,6 +222,12 @@ export function evaluateBuildabilityVerdict({
     reasons.push("No matching zoning rule was found in the regulation set.");
   }
 
+  if (isNationalFallback) {
+    reasons.push("The zoning rule is coming from a National (NBC) fallback, not a clearly matched local regulation.");
+  } else if (hasLocalRegulation) {
+    reasons.push("The verdict is backed by a location-matched regulation record.");
+  }
+
   const hardBlock = regulationBlocked || bhuvanCategory === "water" || bhuvanCategory === "protected";
   const mismatchedLandUse =
     !["unknown", "built-up"].includes(bhuvanCategory) &&
@@ -229,6 +243,9 @@ export function evaluateBuildabilityVerdict({
       summary: "Current zoning signals indicate a hard conflict for the selected use.",
       suggestedAction:
         "Do not treat this plot as directly buildable until the parcel boundary and statutory land-use status are formally confirmed.",
+      confidence: "high",
+      confidenceSummary:
+        "High confidence because the land-use signal indicates a strong blocker such as protected / water class or an explicit no-development restriction.",
       reasons,
       signals,
     };
@@ -241,6 +258,9 @@ export function evaluateBuildabilityVerdict({
       summary: "The plot cannot be cleared automatically because one or more zoning signals are missing or unclear.",
       suggestedAction:
         "Review the Bhuvan classification and attach a clearer zoning rule before treating this land as buildable.",
+      confidence: "low",
+      confidenceSummary:
+        "Low confidence because one or more core inputs are missing, fallback-only, or not classifiable.",
       reasons,
       signals,
     };
@@ -253,12 +273,31 @@ export function evaluateBuildabilityVerdict({
       intendedCategory === bhuvanCategory ||
       preferenceCategory === bhuvanCategory)
   ) {
+    if (isNationalFallback || !hasExplicitZoningRule) {
+      return {
+        status: "conditional",
+        title: "Conditional / Local Zoning Needed",
+        summary:
+          "The current signals look favorable, but the zoning evidence is not specific enough to clear the plot as fully buildable.",
+        suggestedAction:
+          "Confirm a city- or locality-specific zoning record before treating this parcel as a clean buildable site.",
+        confidence: "medium",
+        confidenceSummary:
+          "Medium confidence because the land-use signal is supportive, but the zoning evidence is fallback-based or too generic.",
+        reasons,
+        signals,
+      };
+    }
+
     return {
       status: "can-build",
       title: "Can Build",
       summary: "The intended use is supported by the current Bhuvan land-use signal and the matched zoning rule.",
       suggestedAction:
         "Proceed with the plot as buildable and keep this result as the pre-project zoning check.",
+      confidence: "high",
+      confidenceSummary:
+        "High confidence because both Bhuvan land use and a location-matched zoning rule support the selected use.",
       reasons,
       signals,
     };
@@ -271,6 +310,10 @@ export function evaluateBuildabilityVerdict({
       summary: "The plot may be developable, but the current land-use signal does not fully match the intended use.",
       suggestedAction:
         "Treat the plot as conditional until CLU / conversion approval or a stronger zoning confirmation is available.",
+      confidence: isNationalFallback ? "low" : "medium",
+      confidenceSummary: isNationalFallback
+        ? "Low confidence because the available rule is only a national fallback and the current land-use signal does not fully align."
+        : "Medium confidence because there is enough evidence to flag a mismatch, but not enough to call the parcel a hard no-build case.",
       reasons,
       signals,
     };
@@ -282,6 +325,10 @@ export function evaluateBuildabilityVerdict({
     summary: "The matched zoning rule does not support the selected intended use.",
     suggestedAction:
       "Choose a different intended use or verify whether the parcel falls under a different zoning regulation.",
+    confidence: hasLocalRegulation ? "medium" : "low",
+    confidenceSummary: hasLocalRegulation
+      ? "Medium confidence because the available zoning rule does not support the selected use."
+      : "Low confidence because the verdict is relying on incomplete or fallback zoning evidence.",
     reasons,
     signals,
   };

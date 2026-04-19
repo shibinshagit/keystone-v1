@@ -181,7 +181,7 @@ export function LandIntelligencePanel() {
   const [error, setError] = useState<string | null>(null);
 
   // Fetch existing regulations from admin panel (Firestore)
-  const { regulations } = useRegulations(project);
+  const { regulations, isLoading: regsLoading } = useRegulations(project);
 
   // Get coordinates from the project or selected plot center
   const getCoordinates = useCallback((): [number, number] | null => {
@@ -226,7 +226,10 @@ export function LandIntelligencePanel() {
         }
       }
     }
-    const regulationLocation = regulations.find((reg) => typeof reg.location === "string" && reg.location.trim())?.location;
+    const regulationLocation =
+      typeof regulations?.location === "string" && regulations.location.trim()
+        ? regulations.location
+        : null;
     return regulationLocation || "Location unavailable";
   }, [project, regulations, selectedPlot]);
 

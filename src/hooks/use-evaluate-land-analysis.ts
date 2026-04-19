@@ -38,6 +38,16 @@ interface AnalysisTargetSnapshot {
   coordinates: [number, number];
 }
 
+interface RegulationMatchSnapshot {
+  source:
+    | "specific-id"
+    | "generic-id"
+    | "location-query"
+    | "national-fallback"
+    | "not-found";
+  matchedLocation: string | null;
+}
+
 interface BhuvanAnalysisResponse {
   success: boolean;
   report: BhuvanLandUseSummary;
@@ -48,6 +58,7 @@ export function useEvaluateLandAnalysis({
   selectedPlot,
   plots,
   typedLandSize,
+  intendedUse,
   getAnalysisCoordinates,
   getInputValues,
   validateRequired,
@@ -55,6 +66,7 @@ export function useEvaluateLandAnalysis({
   selectedPlot: Plot | null;
   plots: Plot[];
   typedLandSize: string;
+  intendedUse: BuildingIntendedUse;
   getAnalysisCoordinates: () => [number, number] | null;
   getInputValues: () => {
     location: string;
@@ -73,6 +85,8 @@ export function useEvaluateLandAnalysis({
   const [buildVerdict, setBuildVerdict] = useState<BuildabilityVerdict | null>(null);
   const [analysisTarget, setAnalysisTarget] =
     useState<AnalysisTargetSnapshot | null>(null);
+  const [regulationMatch, setRegulationMatch] =
+    useState<RegulationMatchSnapshot | null>(null);
 
   const clearAnalysisResults = useCallback(() => {
     setScoreData(null);
@@ -80,6 +94,7 @@ export function useEvaluateLandAnalysis({
     setMatchedRegulation(null);
     setBuildVerdict(null);
     setAnalysisTarget(null);
+    setRegulationMatch(null);
   }, []);
 
   const resetAnalysis = useCallback(() => {
@@ -183,6 +198,14 @@ export function useEvaluateLandAnalysis({
 
       setBhuvanData(nextBhuvan);
       setMatchedRegulation(nextRegulation);
+      setRegulationMatch(
+        regulationRes.status === "fulfilled"
+          ? {
+              source: regulationRes.value.source,
+              matchedLocation: regulationRes.value.matchedLocation,
+            }
+          : null,
+      );
 
       if (!nextBhuvan) {
         errors.push(
@@ -234,8 +257,9 @@ export function useEvaluateLandAnalysis({
         plots,
         matchedRegulation,
         typedLandSize,
+        intendedUse,
       }),
-    [matchedRegulation, plots, selectedPlot, typedLandSize],
+    [intendedUse, matchedRegulation, plots, selectedPlot, typedLandSize],
   );
 
   return {
@@ -244,6 +268,7 @@ export function useEvaluateLandAnalysis({
     scoreData,
     bhuvanData,
     matchedRegulation,
+    regulationMatch,
     buildVerdict,
     analysisTarget,
     sellableAreaBreakdown,
