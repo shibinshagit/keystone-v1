@@ -7406,7 +7406,9 @@ const useProjectData = () => {
         const consumedBuildableArea = plots
             .flatMap(p => p.buildings)
             .reduce((acc, b) => {
-                const effectiveFloors = b.numFloors ?? b.floors.filter(f => f.type !== 'Parking').length;
+                let parkingFloorsCount = b.floors.filter(f => f.type === 'Parking').length;
+                let actualFsiFloors = b.floors.length - parkingFloorsCount;
+                let effectiveFloors = b.numFloors ?? (actualFsiFloors > 0 ? actualFsiFloors : 1);
                 return acc + b.area * effectiveFloors;
             }, 0);
 
