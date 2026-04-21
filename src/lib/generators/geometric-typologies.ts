@@ -204,12 +204,15 @@ export function generateUShapes(
         seed = 0
     } = params;
 
+    // NOTE: The plot chunk is ALREADY shrunk by front/rear/side setbacks
+    // in use-building-store.ts. cornerMargin is fixed (boundary handled).
+    // Inter-building gaps use SINGLE setback value (not doubled).
     const globalSetback = params.setback ?? 3;
     const sideSetback  = Math.max(params.sideSetback  ?? globalSetback, 3);
     const frontSetback = Math.max(params.frontSetback ?? globalSetback, 3);
     const rearSetback  = Math.max(params.rearSetback  ?? frontSetback, 3);
-    const cornerMargin = Math.min(Math.max(sideSetback, 3), 5); // Moderate buffer — plot already shrunk by setback extras
-    const rowGap       = frontSetback + rearSetback;
+    const cornerMargin = 5; // Fixed — boundary setback already applied
+    const rowGap       = Math.max(sideSetback, 6); // Single setback for inter-building gap
     const armGap       = 0;
 
     const strategyVariant = seed % 3;
@@ -222,7 +225,7 @@ export function generateUShapes(
     // Keep multipliers conservative so all variants can fit on typical plots
     const courtPreference = strategyVariant === 0 ? 'compact' : strategyVariant === 1 ? 'medium' : 'wide';
 
-    const uShapeSpacing = Math.max(rowGap, sideSetback * 2, 6);
+    const uShapeSpacing = Math.max(sideSetback, 6); // Single setback between shapes
 
     console.log(`[U-Gen] seed=${seed} variant=${strategyVariant} W[${sMinWidth}-${sMaxWidth}] L[${sMinLength}-${sMaxLength}] setbacks: F=${frontSetback} R=${rearSetback} S=${sideSetback} uGap=${Math.max(sideSetback, 6)}`);
 
@@ -487,17 +490,17 @@ export function generateTShapes(
         seed = 0
     } = params;
 
-    // Use at least 3m internal margins regardless of what setback values were passed
-    // (the plot boundary has already been shrunk by mainSetback in the store)
+    // NOTE: The plot chunk is ALREADY shrunk by front/rear/side setbacks
+    // in use-building-store.ts. Internal spacing uses fixed minimum gaps.
     const globalSetback = params.setback ?? 3;
     const sideSetback = Math.max(params.sideSetback ?? globalSetback, 3);
     const frontSetback = Math.max(params.frontSetback ?? globalSetback, 3);
     const rearSetback = Math.max(params.rearSetback ?? frontSetback, 3);
 
-    // cornerMargin: moderate buffer — plot already shrunk by setback extras
-    const cornerMargin = Math.min(Math.max(sideSetback, 3), 5);
-    // armGap: physical gap between the bar's inner face and the stem start (prevents merging)
-    const armGap = Math.max(rearSetback, 3);
+    // cornerMargin: fixed — boundary setback already applied
+    const cornerMargin = 5;
+    // armGap: single setback for gap between bar and stem
+    const armGap = Math.max(Math.min(rearSetback, 6), 3); // Cap at 6m — boundary already handles setback
 
     // --- DIVERSITY LOGIC ---
     const strategyVariant = seed % 3; // 0: Balanced, 1: Dense, 2: Heavy
@@ -517,7 +520,7 @@ export function generateTShapes(
 
     const dynWidthOptions = strategyVariant === 1 ? [sMinWidth, sMaxWidth] : [sMaxWidth, sMinWidth];
 
-    const tShapeSpacing = Math.max(sideSetback, 3);
+    const tShapeSpacing = Math.max(Math.min(sideSetback, 6), 3); // Single setback, capped
 
     console.log(`[T-Gen] ===== Integrated T-Gen (seed=${seed}) =====`);
     console.log(`[T-Gen] Dims: W[${sMinWidth}-${sMaxWidth}] L[${sMinLength}-${sMaxLength}]`);
@@ -943,10 +946,13 @@ export function generateLShapes(
         seed = 0
     } = params;
 
+    // NOTE: The plot chunk is ALREADY shrunk by front/rear/side setbacks
+    // in use-building-store.ts. cornerMargin is fixed (boundary handled).
+    // Inter-building gaps use SINGLE setback value (not doubled).
     const rearSetback = params.rearSetback ?? frontSetback;
-    const cornerMargin = Math.min(Math.max(sideSetback, 3), 5); // Moderate buffer — plot already shrunk by setback extras
-    const rowGap = frontSetback + rearSetback;
-    const armGap = rearSetback; // arm uses rear setback as gap between L-shape arms
+    const cornerMargin = 5; // Fixed — boundary setback already applied
+    const rowGap = Math.max(sideSetback, 6); // Single setback for inter-building gap
+    const armGap = Math.max(Math.min(rearSetback, 6), 3); // Single setback, capped at 6m
     
     // --- DIVERSITY LOGIC ---
     const strategyVariant = seed % 3; // 0: Balanced, 1: Dense, 2: Heavy
@@ -964,7 +970,7 @@ export function generateLShapes(
 
     const dynWidthOptions = strategyVariant === 1 ? [sMinWidth, sMaxWidth] : [sMaxWidth, sMinWidth];
 
-    const lShapeSpacing = Math.max(rowGap, sideSetback * 2, 6);
+    const lShapeSpacing = Math.max(sideSetback, 6); // Single setback between shapes
 
     console.log(`[L-Gen] ===== Integrated L-Gen (seed=${seed}) =====`);
     console.log(`[L-Gen] Dims: W[${sMinWidth}-${sMaxWidth}] L[${sMinLength}-${sMaxLength}]`);
@@ -1301,12 +1307,15 @@ export function generateHShapes(
         seed = 0
     } = params;
 
+    // NOTE: The plot chunk is ALREADY shrunk by front/rear/side setbacks
+    // in use-building-store.ts. We use setback values for logging only.
+    // Internal spacing uses fixed minimum gaps to avoid double-application.
     const globalSetback = params.setback ?? 3;
     const sideSetback  = Math.max(params.sideSetback  ?? globalSetback, 3);
     const frontSetback = Math.max(params.frontSetback ?? globalSetback, 3);
     const rearSetback  = Math.max(params.rearSetback  ?? frontSetback, 3);
-    const cornerMargin = Math.min(Math.max(sideSetback, 3), 5); // Moderate buffer — plot already shrunk by setback extras
-    const rowGap       = frontSetback + rearSetback;
+    const cornerMargin = 5; // Fixed — boundary setback already applied
+    const rowGap       = Math.max(sideSetback, 6); // Single setback for inter-building gap
 
     const strategyVariant = seed % 3;
     let sMinLength = minBuildingLength;
@@ -1317,7 +1326,7 @@ export function generateHShapes(
     // Seed diversity: vary crossbar position
     const crossbarPosition = strategyVariant === 0 ? 'center' : strategyVariant === 1 ? 'lower' : 'upper';
 
-    const hShapeSpacing = Math.max(rowGap, sideSetback * 2, 6);
+    const hShapeSpacing = Math.max(sideSetback, 6); // Single setback between shapes
 
     console.log(`[H-Gen] seed=${seed} variant=${strategyVariant} W[${sMinWidth}-${sMaxWidth}] L[${sMinLength}-${sMaxLength}] setbacks: F=${frontSetback} R=${rearSetback} S=${sideSetback} crossbar=${crossbarPosition}`);
 
@@ -1364,7 +1373,7 @@ export function generateHShapes(
     }
 
     const clearance = 0;
-    const hGap = Math.max(sideSetback, 6);
+    const hGap = Math.max(sideSetback, 6); // Single setback for arm gap
 
     let depthOffset = 0;
     for (let depthPass = 0; depthPass < 4; depthPass++) {
@@ -1699,8 +1708,9 @@ export function generateSlabShapes(
         let currentDist = 0;
         const totalDist = edgeData.length;
 
-        const rowGap = (frontSetback ?? 6) + (params.rearSetback ?? 6);
-        const cornerMargin = Math.min(Math.max(frontSetback ?? 6, 3), 5); // Moderate buffer — plot already shrunk by setback extras 
+        // NOTE: chunk boundary already shrunk by setbacks — use single setback for gaps
+        const rowGap = Math.max(frontSetback, 6); // Single setback for inter-row gap
+        const cornerMargin = 5; // Fixed — boundary setback already applied
         currentDist = cornerMargin;
 
         const limitDist = totalDist - cornerMargin;
@@ -1860,7 +1870,7 @@ export function generateSlabShapes(
                 }
 
                 if (rowsAdded > 0) {
-                    currentDist += actualLength + sideSetback;
+                    currentDist += actualLength + Math.max(sideSetback, 6); // Single setback for along-edge gap
                 } else {
                     currentDist += 5;
                 }
@@ -1920,9 +1930,10 @@ export function generatePointShapes(
 
     const candidates: { feature: Feature<Polygon>, score: number, variantId?: string }[] = [];
     const usedAreas: Feature<Polygon>[] = [...(obstacles || [])];
-    const spacing = params.sideSetback ?? 6;
+    // NOTE: chunk boundary already shrunk by setbacks — use single setback for gaps
+    const spacing = Math.max(params.sideSetback ?? 6, 6); // Single setback between buildings
     
-    const cornerMargin = Math.max(spacing, 6);
+    const cornerMargin = 5; // Fixed — boundary setback already applied
 
     // --- Corners ---
     for (let i = 0; i < coords.length - 1; i++) {

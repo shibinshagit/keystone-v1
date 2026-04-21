@@ -583,11 +583,11 @@ export function ParametricToolbar({ embedded = false }: { embedded?: boolean }) 
                                                         )}
                                                     >
                                                         <div className="h-5 w-5">{typologyIcons[type]}</div>
-                                                        <span className="text-[10px] font-medium capitalize truncate w-full text-center">{type === 'lshaped' ? 'L-Shape' : type === 'ushaped' ? 'U-Shape' : type === 'oshaped' ? 'O-Shape' : type}</span>
+                                                        <span className="text-[10px] font-medium capitalize truncate w-full text-center">{type === 'lshaped' ? 'L-Shape' : type === 'ushaped' ? 'U-Shape' : type === 'tshaped' ? 'T-Shape' : type === 'hshaped' ? 'H-Shape' : type === 'oshaped' ? 'O-Shape' : type}</span>
                                                     </button>
                                                 </TooltipTrigger>
                                                 <TooltipContent side="bottom">
-                                                    <p>{type === 'lshaped' ? 'L-Shaped Building' : type === 'ushaped' ? 'U-Shaped Building' : type === 'point' ? 'Point Block' : type === 'slab' ? 'Linear Slab' : `${type.charAt(0).toUpperCase() + type.slice(1)} Shape`}</p>
+                                                    <p>{type === 'lshaped' ? 'L-Shaped Building' : type === 'ushaped' ? 'U-Shaped Building' : type === 'point' ? 'Point Block' : type === 'slab' ? 'Linear Slab' : type === 'tshaped' ? 'T-Shaped Building' : type === 'hshaped' ? 'H-Shaped Building' : `${type.charAt(0).toUpperCase() + type.slice(1)} Shape`}</p>
                                                 </TooltipContent>
                                             </Tooltip>
                                         ))}

@@ -2116,18 +2116,6 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
     }
   }, [landCostValue, project?.id]);
 
-  // Calculate revenue and profit ranges based on cost ranges (including land)
-  // Revenue is typically fixed; profit varies inversely with cost
-  const totalCostWithLand_p10 = sim.cost_p10 + landCostWithStamp;
-  const totalCostWithLand_p90 = sim.cost_p90 + landCostWithStamp;
-
-  const profit_p10 = totalRev - totalCostWithLand_p90; // Lowest profit (highest cost)
-  const profit_p90 = totalRev - totalCostWithLand_p10; // Highest profit (lowest cost)
-
-  // Calculate ROI ranges: ROI = (Profit / Total Cost incl. Land) × 100
-  const roi_p10 = totalCostWithLand_p90 > 0 ? (profit_p10 / totalCostWithLand_p90) * 100 : 0;
-  const roi_p90 = totalCostWithLand_p10 > 0 ? (profit_p90 / totalCostWithLand_p10) * 100 : 0;
-
   // Calculations (reactive)
   const roadMin = Math.round(5000 * roadArea);
   const roadMax = Math.round(10000 * roadArea);
@@ -2153,6 +2141,18 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
     ? sim.cost_p90 + roadMin + parkingMin + boundaryMin
     : 0;
 
+  // Calculate revenue and profit ranges based on cost ranges (including land)
+  // Revenue is typically fixed; profit varies inversely with cost
+  const totalCostWithLand_p10 = adj_cost_p10 + landCostWithStamp;
+  const totalCostWithLand_p90 = adj_cost_p90 + landCostWithStamp;
+
+  const profit_p10 = totalRev - totalCostWithLand_p90; // Lowest profit (highest cost)
+  const profit_p90 = totalRev - totalCostWithLand_p10; // Highest profit (lowest cost)
+
+  // Calculate ROI ranges: ROI = (Profit / Total Cost incl. Land) × 100
+  const roi_p10 = totalCostWithLand_p90 > 0 ? (profit_p10 / totalCostWithLand_p90) * 100 : 0;
+  const roi_p90 = totalCostWithLand_p10 > 0 ? (profit_p90 / totalCostWithLand_p10) * 100 : 0;
+
   return (
     <div className="space-y-4 pb-4">
       {/* Summary Hero — Range-based */}
@@ -2171,6 +2171,9 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
           </div>
           <div className="text-base font-bold text-emerald-400">
             {fmtCr(profit_p10)} – {fmtCr(profit_p90)}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-0.5">
+            Est. Revenue: {fmtCr(totalRev)}
           </div>
         </div>
         <div
@@ -3440,7 +3443,12 @@ function MultiBuildingBudgetTab({
   );
 }
 
-function FeasibilityTab() {
+interface FeasibilityTabProps {
+  estimates: any;
+  isLoadingEstimates: boolean;
+}
+
+function FeasibilityTab({ estimates, isLoadingEstimates }: FeasibilityTabProps) {
   const activeProject = useProjectData();
   const greenScorecard = useGreenScorecardStore();
 
@@ -3491,11 +3499,6 @@ function FeasibilityTab() {
       setIsGeneratingGates(false);
     }
   };
-
-  const { estimates, isLoading: isLoadingEstimates } = useProjectEstimates(
-    activeProject,
-    metrics,
-  );
 
   // Totals for building breakdown used in headers (prefer selected plot)
   const totalBuildings = selectedPlot
@@ -3768,15 +3771,49 @@ function FeasibilityTab() {
 
   const sim = estimates?.simulation;
 
-  // Calculate ROI ranges based on cost ranges (including land cost)
+  // Calculate ROI ranges based on cost ranges (including land cost and site costs)
+  const dashRoadArea = metrics?.roadArea || 0;
+  const dashParkingArea = (activeProject?.plots || [])
+    .flatMap((p) => p.parkingAreas || [])
+    .reduce((s, pa) => s + (pa.area || 0), 0);
+  const dashTotalPerimeter = (activeProject?.plots || []).reduce((s, p) => {
+    try {
+      const coords = (p.geometry as any)?.geometry?.coordinates?.[0];
+      if (!coords || coords.length === 0) return s;
+      const line = turf.lineString(coords);
+      const len = turf.length(line as any, { units: "meters" }) || 0;
+      return s + len;
+    } catch (e) {
+      return s;
+    }
+  }, 0);
+
+  const dashRoadMin = Math.round(5000 * dashRoadArea);
+  const dashParkingMin = Math.round(5000 * dashParkingArea);
+  const dashBoundaryMin = Math.round(9000 * dashTotalPerimeter);
+
+  const dashAdjCostP10 = sim ? sim.cost_p10 + dashRoadMin + dashParkingMin + dashBoundaryMin : 0;
+  const dashAdjCostP90 = sim ? sim.cost_p90 + dashRoadMin + dashParkingMin + dashBoundaryMin : 0;
+
   const totalRev = estimates?.total_revenue || 0;
   const dashLandCost = (activeProject?.underwriting?.actualLandPurchaseCost || 0) * 1.065;
-  const roi_p10 = sim?.cost_p90
-    ? ((totalRev - sim.cost_p90 - dashLandCost) / (sim.cost_p90 + dashLandCost)) * 100
+  
+  const dashTotalCostWithLand_p10 = dashAdjCostP10 + dashLandCost;
+  const dashTotalCostWithLand_p90 = dashAdjCostP90 + dashLandCost;
+
+  const dashProfit_p10 = totalRev - dashTotalCostWithLand_p90;
+  const dashProfit_p90 = totalRev - dashTotalCostWithLand_p10;
+
+  const roi_p10 = dashTotalCostWithLand_p90 > 0
+    ? (dashProfit_p10 / dashTotalCostWithLand_p90) * 100
     : 0;
-  const roi_p90 = sim?.cost_p10
-    ? ((totalRev - sim.cost_p10 - dashLandCost) / (sim.cost_p10 + dashLandCost)) * 100
+  const roi_p90 = dashTotalCostWithLand_p10 > 0
+    ? (dashProfit_p90 / dashTotalCostWithLand_p10) * 100
     : 0;
+
+  const dashEstTotalCost = (estimates?.total_construction_cost || 0) + dashRoadMin + dashParkingMin + dashBoundaryMin + dashLandCost;
+  const dashEstProfit = (estimates?.potential_profit || 0) - dashRoadMin - dashParkingMin - dashBoundaryMin - dashLandCost;
+  const dashRoiEst = dashEstTotalCost > 0 ? (dashEstProfit / dashEstTotalCost) * 100 : (estimates?.roi_percentage || 0);
 
   return (
     <div className="space-y-4 pb-4">
@@ -4155,13 +4192,13 @@ function FeasibilityTab() {
               </span>
               <Badge
                 variant={
-                  (estimates.roi_percentage || 0) > 15 ? "default" : "secondary"
+                  (sim ? roi_p10 : dashRoiEst) > 15 ? "default" : "secondary"
                 }
                 className="ml-auto text-xs"
               >
                 {sim
                   ? `ROI: ${roi_p10.toFixed(1)}% – ${roi_p90.toFixed(1)}%`
-                  : `ROI: ~${(estimates.roi_percentage || 0).toFixed(1)}% (est.)`}
+                  : `ROI: ~${dashRoiEst.toFixed(1)}% (est.)`}
               </Badge>
             </div>
             <div className="grid grid-cols-2 gap-4 text-center">
@@ -4171,12 +4208,12 @@ function FeasibilityTab() {
                 </div>
                 <div className="text-lg font-bold">
                   {sim
-                    ? `₹${((sim.cost_p10 + dashLandCost) / 10000000).toFixed(1)} – ${((sim.cost_p90 + dashLandCost) / 10000000).toFixed(1)} Cr`
-                    : `~₹${(((estimates.total_construction_cost || 0) + dashLandCost) / 10000000).toFixed(2)} Cr`}
+                    ? `₹${(dashTotalCostWithLand_p10 / 10000000).toFixed(1)} – ${(dashTotalCostWithLand_p90 / 10000000).toFixed(1)} Cr`
+                    : `~₹${(dashEstTotalCost / 10000000).toFixed(2)} Cr`}
                 </div>
                 <div className="text-[10px] text-muted-foreground">
                   {sim
-                    ? `Median: ₹${((sim.cost_p50 + dashLandCost) / 10000000).toFixed(2)} Cr`
+                    ? `Median: ₹${((sim.cost_p50 + dashRoadMin + dashParkingMin + dashBoundaryMin + dashLandCost) / 10000000).toFixed(2)} Cr`
                     : "Run simulation for range"}
                 </div>
               </div>
@@ -4186,8 +4223,8 @@ function FeasibilityTab() {
                 </div>
                 <div className="text-lg font-bold text-emerald-500">
                   {sim
-                    ? `₹${(((estimates.total_revenue || 0) - sim.cost_p90 - dashLandCost) / 10000000).toFixed(1)} – ${(((estimates.total_revenue || 0) - sim.cost_p10 - dashLandCost) / 10000000).toFixed(1)} Cr`
-                    : `~₹${(((estimates.potential_profit || 0) - dashLandCost) / 10000000).toFixed(2)} Cr`}
+                    ? `₹${(dashProfit_p10 / 10000000).toFixed(1)} – ${(dashProfit_p90 / 10000000).toFixed(1)} Cr`
+                    : `~₹${(dashEstProfit / 10000000).toFixed(2)} Cr`}
                 </div>
                 <div className="text-[10px] text-muted-foreground">
                   Est. Revenue: ₹
@@ -4668,7 +4705,7 @@ export function FeasibilityDashboard() {
                     value="feasibility"
                     className="h-full m-0 p-4 pt-2 overflow-y-auto scrollbar-thin"
                   >
-                    <FeasibilityTab />
+                    <FeasibilityTab estimates={simEstimates} isLoadingEstimates={simLoading} />
                   </TabsContent>
                   <TabsContent
                     value="metrics"

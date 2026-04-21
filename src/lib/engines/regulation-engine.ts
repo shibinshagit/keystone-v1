@@ -82,8 +82,9 @@ export class RegulationEngine {
                 groundCoverageArea += b.area;
 
                 // Total Built-up (GFA) - Excluding parking floors if needed
-                let fsiFloors = b.floors.filter(f => f.type !== 'Parking').length;
-                if (fsiFloors === 0) fsiFloors = b.numFloors; // Fallback
+                let parkingFloorsCount = b.floors.filter(f => f.type === 'Parking').length;
+                let actualFsiFloors = b.floors.length - parkingFloorsCount;
+                let fsiFloors = b.numFloors ?? (actualFsiFloors > 0 ? actualFsiFloors : 1);
 
                 totalBuiltUpArea += (b.area * fsiFloors);
 
