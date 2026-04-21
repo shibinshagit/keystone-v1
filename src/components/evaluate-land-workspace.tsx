@@ -28,6 +28,7 @@ import {
 import { DrawingToolbar } from "@/components/drawing-toolbar";
 import { MapEditor } from "@/components/map-editor";
 import { MapSearch } from "@/components/map-search";
+import { DevelopabilityScoreOverview } from "@/components/developability-score-overview";
 import { DrawingStatus } from "@/components/drawing-status";
 import { AnalysisMode } from "@/components/solar-controls";
 import { Badge } from "@/components/ui/badge";
@@ -69,7 +70,12 @@ import { cn } from "@/lib/utils";
 const PLOT_TYPE_OPTIONS = Object.values(LandPlotType);
 const PROXIMITY_OPTIONS = Object.values(LandProximity);
 const ZONING_OPTIONS = Object.values(LandZoningPreference);
-const INTENDED_USE_OPTIONS = Object.values(BuildingIntendedUse);
+const INTENDED_USE_OPTIONS = [
+  BuildingIntendedUse.Residential,
+  BuildingIntendedUse.Commercial,
+  BuildingIntendedUse.Industrial,
+  BuildingIntendedUse.MixedUse,
+] as const;
 const DEFAULT_SIDEBAR_WIDTH = 380;
 const ANALYSIS_SIDEBAR_WIDTH = 500;
 
@@ -84,7 +90,7 @@ const evaluateLandFormSchema = z.object({
       const numeric = Number(value);
       return Number.isFinite(numeric) && numeric > 0;
     }, "Land size must be a positive number."),
-  intendedUse: z.nativeEnum(BuildingIntendedUse, {
+  intendedUse: z.enum(INTENDED_USE_OPTIONS, {
     errorMap: () => ({ message: "Select an intended use case." }),
   }),
   priceRange: z.string().trim().min(1, "Enter a price range or land value."),
@@ -175,37 +181,6 @@ function ScoreSummary({
         <Badge variant="outline" className="text-[11px] font-semibold">
           {rating}
         </Badge>
-      </div>
-    </div>
-  );
-}
-
-function CategoryBar({
-  label,
-  earned,
-  max,
-  color,
-}: {
-  label: string;
-  earned: number;
-  max: number;
-  color: string;
-}) {
-  const pct = max > 0 ? (earned / max) * 100 : 0;
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-3 text-[11px]">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-semibold tabular-nums">
-          {earned}/{max}
-        </span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-border/30">
-        <div
-          className="h-full rounded-full transition-all duration-700 ease-out"
-          style={{ width: `${pct}%`, backgroundColor: color }}
-        />
       </div>
     </div>
   );
@@ -993,128 +968,11 @@ export function EvaluateLandWorkspace() {
                         rating={scoreData.score.rating}
                       />
 
-                      <div className="rounded-xl border border-border/60 bg-background/80 p-4">
-                        <div>
-                          <h3 className="text-sm font-bold">
-                            Category Breakdown
-                          </h3>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Data completeness:{" "}
-                            {Math.round(scoreData.score.dataCompleteness * 100)}
-                            %
-                          </p>
-                        </div>
-                        <div className="mt-4 space-y-2">
-                          <CategoryBar
-                            label="Growth Potential"
-                            earned={
-                              scoreData.score.categories.growthPotential.score
-                            }
-                            max={
-                              scoreData.score.categories.growthPotential
-                                .maxScore
-                            }
-                            color="#3b82f6"
-                          />
-                          <CategoryBar
-                            label="Legal & Regulatory"
-                            earned={
-                              scoreData.score.categories.legalRegulatory.score
-                            }
-                            max={
-                              scoreData.score.categories.legalRegulatory
-                                .maxScore
-                            }
-                            color="#f59e0b"
-                          />
-                          <CategoryBar
-                            label="Location & Connectivity"
-                            earned={
-                              scoreData.score.categories.locationConnectivity
-                                .score
-                            }
-                            max={
-                              scoreData.score.categories.locationConnectivity
-                                .maxScore
-                            }
-                            color="#8b5cf6"
-                          />
-                          <CategoryBar
-                            label="Market & Economics"
-                            earned={
-                              scoreData.score.categories.marketEconomics.score
-                            }
-                            max={
-                              scoreData.score.categories.marketEconomics
-                                .maxScore
-                            }
-                            color="#10b981"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-1.5">
-                        {[
-                          { key: "census", label: "Census", icon: Users },
-                          { key: "fdi", label: "FDI", icon: DollarSign },
-                          { key: "sez", label: "SEZ", icon: Building2 },
-                          {
-                            key: "satellite",
-                            label: "Satellite",
-                            icon: Satellite,
-                          },
-                          {
-                            key: "regulation",
-                            label: "Regulation",
-                            icon: CheckCircle2,
-                          },
-                          {
-                            key: "googlePlaces",
-                            label: "Google Places",
-                            icon: MapPin,
-                          },
-                          {
-                            key: "googleRoads",
-                            label: "Google Roads",
-                            icon: MapPin,
-                          },
-                          {
-                            key: "proposedInfrastructure",
-                            label: "Proposed Infra",
-                            icon: TrendingUp,
-                          },
-                        ].map(({ key, label, icon: Icon }) => {
-                          const ds =
-                            scoreData.dataSources[
-                              key as keyof typeof scoreData.dataSources
-                            ];
-                          const available = ds?.available;
-
-                          return (
-                            <Badge
-                              key={key}
-                              variant="outline"
-                              className={cn(
-                                "gap-1 text-[10px] font-medium",
-                                available
-                                  ? "border-emerald-500/40 text-emerald-600"
-                                  : "border-border text-muted-foreground",
-                              )}
-                            >
-                              {available ? (
-                                <CheckCircle2 className="h-3 w-3" />
-                              ) : (
-                                <XCircle className="h-3 w-3" />
-                              )}
-                              <Icon className="h-3 w-3" />
-                              {label}
-                              {"count" in ds && ds.count > 0
-                                ? ` (${ds.count})`
-                                : ""}
-                            </Badge>
-                          );
-                        })}
-                      </div>
+                      <DevelopabilityScoreOverview
+                        score={scoreData.score}
+                        dataSources={scoreData.dataSources}
+                        nearbyAmenities={scoreData.nearbyAmenities}
+                      />
 
                       <div className="rounded-lg border border-border/50 bg-background/70 p-3">
                         <div className="flex items-start gap-2">

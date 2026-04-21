@@ -1262,12 +1262,28 @@ export interface DevelopabilityScore {
   overallScore: number;           // 0-1000
   rating: 'Excellent' | 'Good' | 'Moderate' | 'Poor' | 'Not Viable';
   categories: {
-    growthPotential: { score: number; maxScore: number; details: string[] };
-    legalRegulatory: { score: number; maxScore: number; details: string[] };
-    locationConnectivity: { score: number; maxScore: number; details: string[] };
-    marketEconomics: { score: number; maxScore: number; details: string[] };
+    growthPotential: DevelopabilityScoreCategory;
+    legalRegulatory: DevelopabilityScoreCategory;
+    locationConnectivity: DevelopabilityScoreCategory;
+    marketEconomics: DevelopabilityScoreCategory;
   };
   recommendation: string;
   dataCompleteness: number;       // 0-1: how much data was available
   timestamp: string;
+}
+
+export interface DevelopabilityScoreCategory {
+  score: number;
+  maxScore: number;
+  details: string[];
+  items: DevelopabilityScoreItem[];
+}
+
+export interface DevelopabilityScoreItem {
+  id: string;
+  title: string;
+  score: number;
+  maxScore: number;
+  status: 'pass' | 'fail' | 'pending';
+  detail?: string;
 }

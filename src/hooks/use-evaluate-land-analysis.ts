@@ -18,6 +18,32 @@ import type {
 
 interface ScoreResult {
   score: DevelopabilityScore;
+  nearbyAmenities: {
+    transit: {
+      label: string;
+      count: number;
+      nearestDistanceMeters: number | null;
+      sampleNames: string[];
+    };
+    schools: {
+      label: string;
+      count: number;
+      nearestDistanceMeters: number | null;
+      sampleNames: string[];
+    };
+    hospitals: {
+      label: string;
+      count: number;
+      nearestDistanceMeters: number | null;
+      sampleNames: string[];
+    };
+    malls: {
+      label: string;
+      count: number;
+      nearestDistanceMeters: number | null;
+      sampleNames: string[];
+    };
+  };
   dataSources: {
     census: { count: number; available: boolean };
     fdi: { count: number; available: boolean };

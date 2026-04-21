@@ -3,11 +3,13 @@
 import React, { useState, useCallback } from "react";
 import { useProjectData, useSelectedPlot } from "@/hooks/use-building-store";
 import { useRegulations } from "@/hooks/use-regulations";
+import { DevelopabilityScoreOverview } from "./developability-score-overview";
 import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import { ScrollArea } from "./ui/scroll-area";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { cn } from "@/lib/utils";
+import type { DevelopabilityScore } from "@/lib/types";
 import * as turf from "@turf/turf";
 import {
   Loader2,
@@ -30,18 +32,32 @@ import {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ScoreResult {
-  score: {
-    overallScore: number;
-    rating: string;
-    categories: {
-      growthPotential: { score: number; maxScore: number; details: string[] };
-      legalRegulatory: { score: number; maxScore: number; details: string[] };
-      locationConnectivity: { score: number; maxScore: number; details: string[] };
-      marketEconomics: { score: number; maxScore: number; details: string[] };
+  score: DevelopabilityScore;
+  nearbyAmenities: {
+    transit: {
+      label: string;
+      count: number;
+      nearestDistanceMeters: number | null;
+      sampleNames: string[];
     };
-    recommendation: string;
-    dataCompleteness: number;
-    timestamp: string;
+    schools: {
+      label: string;
+      count: number;
+      nearestDistanceMeters: number | null;
+      sampleNames: string[];
+    };
+    hospitals: {
+      label: string;
+      count: number;
+      nearestDistanceMeters: number | null;
+      sampleNames: string[];
+    };
+    malls: {
+      label: string;
+      count: number;
+      nearestDistanceMeters: number | null;
+      sampleNames: string[];
+    };
   };
   dataSources: {
     census: { count: number; available: boolean };
@@ -400,35 +416,11 @@ export function LandIntelligencePanel() {
             </div>
 
             {/* ── Data Sources Status ── */}
-            <div className="flex flex-wrap gap-1.5">
-              {[ 
-                { key: "census", label: "Census", icon: Users },
-                { key: "fdi", label: "FDI", icon: DollarSign },
-                { key: "sez", label: "SEZ", icon: Building2 },
-                { key: "satellite", label: "Satellite", icon: Satellite },
-                { key: "regulation", label: "Regulation", icon: ShieldCheck },
-                { key: "googlePlaces", label: "Google Places", icon: MapPin },
-                { key: "googleRoads", label: "Google Roads", icon: MapPin },
-                { key: "proposedInfrastructure", label: "Proposed Infra", icon: TrendingUp },
-              ].map(({ key, label, icon: Icon }) => {
-                const ds = scoreData.dataSources[key as keyof typeof scoreData.dataSources];
-                const available = ds?.available;
-                return (
-                  <Badge
-                    key={key}
-                    variant="outline"
-                    className={cn(
-                      "text-[10px] gap-1 font-medium",
-                      available ? "border-emerald-500/40 text-emerald-500" : "border-border text-muted-foreground"
-                    )}
-                  >
-                    {available ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                    {label}
-                    {"count" in ds && ds.count > 0 && ` (${ds.count})`}
-                  </Badge>
-                );
-              })}
-            </div>
+            <DevelopabilityScoreOverview
+              score={scoreData.score}
+              dataSources={scoreData.dataSources}
+              nearbyAmenities={scoreData.nearbyAmenities}
+            />
 
             {/* ── Recommendation ── */}
             {scoreData.score.recommendation && (

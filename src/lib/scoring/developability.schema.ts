@@ -38,7 +38,7 @@ export const DEVELOPABILITY_SCHEMA = {
       items: [
         { id: 'LC1', title: 'Metro / rail station distance', maxScore: 60 },
         { id: 'LC2', title: 'Highway / arterial road access', maxScore: 50 },
-        { id: 'LC3', title: 'Amenity density (schools, hospitals, parks)', maxScore: 60 },
+        { id: 'LC3', title: 'Amenity density (schools, hospitals, malls, parks)', maxScore: 60 },
         { id: 'LC4', title: 'Road width / frontage quality', maxScore: 40 },
         { id: 'LC5', title: 'Airport distance', maxScore: 40 },
       ],

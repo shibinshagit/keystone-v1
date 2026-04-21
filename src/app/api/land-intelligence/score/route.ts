@@ -24,6 +24,13 @@ interface AmenityRecord {
   distanceMeters?: number;
 }
 
+interface NearbyAmenitySummaryItem {
+  label: string;
+  count: number;
+  nearestDistanceMeters: number | null;
+  sampleNames: string[];
+}
+
 const DEFAULT_COORDS: Coordinates = [77.209, 28.6139];
 const EMPTY_PROPOSED_INFRA_SIGNAL = {
   available: false,
@@ -33,6 +40,7 @@ const EMPTY_PROPOSED_INFRA_SIGNAL = {
 };
 const TRANSIT_PLACE_TYPES = ['bus_station', 'train_station', 'subway_station'];
 const SCHOOL_PLACE_TYPES = ['school', 'primary_school', 'secondary_school', 'university'];
+const MALL_PLACE_TYPES = ['shopping_mall', 'department_store'];
 const AIRPORT_DISTANCE_OPTIMAL_RANGE: [number, number] = [5000, 40000];
 
 function normalizeText(value: unknown): string {
@@ -160,6 +168,26 @@ function getNearestDistance(
     .filter((distance): distance is number => distance != null);
 
   return [...storedDistances, ...liveDistances].sort((a, b) => a - b)[0] ?? null;
+}
+
+function buildNearbyAmenitySummaryItem(
+  label: string,
+  liveAmenities: Array<{ name: string; distanceMeters: number }>,
+): NearbyAmenitySummaryItem {
+  const sortedAmenities = [...liveAmenities].sort(
+    (a, b) => a.distanceMeters - b.distanceMeters,
+  );
+
+  return {
+    label,
+    count: sortedAmenities.length,
+    nearestDistanceMeters:
+      sortedAmenities.length > 0 ? sortedAmenities[0].distanceMeters : null,
+    sampleNames: sortedAmenities
+      .slice(0, 3)
+      .map((amenity) => amenity.name)
+      .filter(Boolean),
+  };
 }
 
 function countUniqueNearbyAmenities(
@@ -291,6 +319,7 @@ export async function POST(request: NextRequest) {
       transitData,
       schoolData,
       hospitalData,
+      mallData,
       parkData,
       airportData,
       roadSnapData,
@@ -320,6 +349,11 @@ export async function POST(request: NextRequest) {
         maxResultCount: 10,
       }),
       GoogleMapsServerService.searchNearbyPlaces(coords, {
+        includedTypes: MALL_PLACE_TYPES,
+        radius: 5000,
+        maxResultCount: 10,
+      }),
+      GoogleMapsServerService.searchNearbyPlaces(coords, {
         includedTypes: ['park'],
         radius: 2500,
         maxResultCount: 10,
@@ -346,6 +380,7 @@ export async function POST(request: NextRequest) {
     const transitPlaces = transitData.status === 'fulfilled' ? transitData.value : [];
     const schools = schoolData.status === 'fulfilled' ? schoolData.value : [];
     const hospitals = hospitalData.status === 'fulfilled' ? hospitalData.value : [];
+    const malls = mallData.status === 'fulfilled' ? mallData.value : [];
     const parks = parkData.status === 'fulfilled' ? parkData.value : [];
     const airports = airportData.status === 'fulfilled' ? airportData.value : [];
     const snappedRoads = roadSnapData.status === 'fulfilled' ? roadSnapData.value : [];
@@ -396,6 +431,16 @@ export async function POST(request: NextRequest) {
       3000,
       hospitals,
       'stored-hospital',
+    );
+    const nearbyMallCount = countUniqueNearbyAmenities(
+      storedAmenities,
+      (amenity) =>
+        amenity.category === 'mall' ||
+        amenity.category === 'shopping' ||
+        String(amenity.name || '').toLowerCase().includes('mall'),
+      4000,
+      malls,
+      'stored-mall',
     );
     const nearbyParkCount = countUniqueNearbyAmenities(
       storedAmenities,
@@ -462,8 +507,9 @@ export async function POST(request: NextRequest) {
       60,
       nearbySchoolCount * 8 +
         nearbyHospitalCount * 14 +
+        nearbyMallCount * 8 +
         nearbyParkCount * 8 +
-        (nearbySchoolCount > 0 && nearbyHospitalCount > 0 && nearbyParkCount > 0 ? 8 : 0),
+        (nearbySchoolCount > 0 && nearbyHospitalCount > 0 && nearbyMallCount > 0 ? 8 : 0),
     );
     if (amenityScore > 0) {
       results['LC3'] = {
@@ -472,6 +518,7 @@ export async function POST(request: NextRequest) {
         value: {
           schools: nearbySchoolCount,
           hospitals: nearbyHospitalCount,
+          malls: nearbyMallCount,
           parks: nearbyParkCount,
         },
       };
@@ -697,6 +744,12 @@ export async function POST(request: NextRequest) {
 
     const engineOutput = evaluateDevelopability(results);
     const developabilityScore = toDevelopabilityScore(engineOutput, results);
+    const nearbyAmenities = {
+      transit: buildNearbyAmenitySummaryItem('Metro / Transit', transitPlaces),
+      schools: buildNearbyAmenitySummaryItem('Schools', schools),
+      hospitals: buildNearbyAmenitySummaryItem('Hospitals', hospitals),
+      malls: buildNearbyAmenitySummaryItem('Malls', malls),
+    };
 
     const { plotGeometry: _omittedPlotGeometry, ...responseQuery } = query;
 
@@ -704,6 +757,7 @@ export async function POST(request: NextRequest) {
       success: true,
       query: responseQuery,
       score: developabilityScore,
+      nearbyAmenities,
       dataSources: {
         census: { count: census.length, available: census.length > 0 },
         fdi: { count: fdi.length, available: fdi.length > 0 },
@@ -716,12 +770,14 @@ export async function POST(request: NextRequest) {
             transitPlaces.length +
             schools.length +
             hospitals.length +
+            malls.length +
             parks.length +
             airports.length,
           available:
             transitPlaces.length +
               schools.length +
               hospitals.length +
+              malls.length +
               parks.length +
               airports.length >
             0,

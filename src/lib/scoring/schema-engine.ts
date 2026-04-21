@@ -63,6 +63,8 @@ export interface EngineItemStrict {
   score: number;
   maxScore: number;
   status: 'pass' | 'fail' | 'neutral';
+  value?: any;
+  threshold?: any;
 }
 
 export interface EngineCategoryStrict {
@@ -191,7 +193,9 @@ export function evaluateSchema(schema: ScoringSchema, results: Record<string, It
         title: it.title,
         score: it.score !== null ? it.score : 0,
         maxScore: it.maxScore !== null ? it.maxScore : 0,
-        status: (it.status === true) ? 'pass' : (it.status === false) ? 'fail' : 'neutral'
+        status: (it.status === true) ? 'pass' : (it.status === false) ? 'fail' : 'neutral',
+        value: results?.[it.id]?.value,
+        threshold: results?.[it.id]?.threshold,
       }))
     })),
     fail: overallFail || false,
