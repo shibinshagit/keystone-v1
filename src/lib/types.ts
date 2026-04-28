@@ -308,6 +308,9 @@ export interface EvaluateLandInput {
   notes?: string;
 }
 
+export type GeographyMarket = 'India' | 'USA' | 'UAE';
+export type CountryCode = 'IN' | 'US' | 'AE';
+
 export interface Project {
   id: string;
   userId: string;
@@ -318,6 +321,11 @@ export interface Project {
   designOptions?: string | DesignOption[]; // JSON string for Firestore storage, or parsed object in app
   intendedUse?: BuildingIntendedUse;
   location?: string | { lat: number; lng: number }; // e.g. "Delhi", "Maharashtra" or geocoded coordinates
+  locationLabel?: string;
+  market?: GeographyMarket;
+  countryCode?: CountryCode;
+  stateOrProvince?: string;
+  city?: string;
   regulationId?: string; // Specific regulation document ID (e.g. "Delhi-Residential Group Housing")
   greenCertification?: ('IGBC' | 'GRIHA' | 'LEED' | 'Green Building')[];
   vastuCompliant?: boolean;
@@ -764,6 +772,12 @@ export interface RegulationValue {
 export interface RegulationData {
   id?: string;
   location: string;
+  market?: GeographyMarket;
+  countryCode?: CountryCode;
+  stateOrProvince?: string;
+  city?: string;
+  jurisdictionLevel?: 'national' | 'state' | 'city';
+  codeFamily?: string;
   type: string;
   geometry: { [key: string]: RegulationValue };
   facilities: { [key: string]: RegulationValue };

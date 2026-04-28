@@ -1,7 +1,11 @@
 import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
 
 import { db } from "@/lib/firebase";
-import type { BuildingIntendedUse, RegulationData } from "@/lib/types";
+import {
+  getRegulationCollectionNameForMarket,
+  shouldUseNationalIndiaFallback,
+} from "@/lib/regulation-collections";
+import type { BuildingIntendedUse, GeographyMarket, RegulationData } from "@/lib/types";
 
 export interface RegulationLookupResult {
   regulation: RegulationData | null;
@@ -29,7 +33,7 @@ function buildLocationCandidates(location: string): string[] {
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean)
-    .filter((part) => !/^india$/i.test(part));
+    .filter((part) => !/^(india|usa|us|uae)$/i.test(part));
 
   return Array.from(
     new Set([
@@ -65,16 +69,19 @@ export async function lookupRegulationForLocationAndUse({
   location,
   intendedUse,
   regulationId,
+  market,
 }: {
   location: string;
   intendedUse: BuildingIntendedUse | string;
   regulationId?: string;
+  market?: GeographyMarket;
 }): Promise<RegulationLookupResult> {
   const normalizedUse = normalizeIntendedUse(String(intendedUse || "Residential"));
   const locationCandidates = buildLocationCandidates(location);
+  const collectionName = getRegulationCollectionNameForMarket(market);
 
   if (regulationId) {
-    const specificDoc = await getDoc(doc(db, "regulations", regulationId));
+    const specificDoc = await getDoc(doc(db, collectionName, regulationId));
     if (specificDoc.exists()) {
       const regulation = specificDoc.data() as RegulationData;
       return {
@@ -86,7 +93,7 @@ export async function lookupRegulationForLocationAndUse({
   }
 
   for (const candidate of locationCandidates) {
-    const genericDoc = await getDoc(doc(db, "regulations", `${candidate}-${normalizedUse}`));
+    const genericDoc = await getDoc(doc(db, collectionName, `${candidate}-${normalizedUse}`));
     if (genericDoc.exists()) {
       return {
         regulation: genericDoc.data() as RegulationData,
@@ -98,7 +105,7 @@ export async function lookupRegulationForLocationAndUse({
 
   for (const candidate of locationCandidates) {
     const locationQuery = query(
-      collection(db, "regulations"),
+      collection(db, collectionName),
       where("location", "==", candidate),
     );
     const snapshot = await getDocs(locationQuery);
@@ -115,8 +122,16 @@ export async function lookupRegulationForLocationAndUse({
     }
   }
 
+  if (!shouldUseNationalIndiaFallback(market)) {
+    return {
+      regulation: null,
+      matchedLocation: null,
+      source: "not-found",
+    };
+  }
+
   const nationalQuery = query(
-    collection(db, "regulations"),
+    collection(db, collectionName),
     where("location", "==", "National (NBC)"),
   );
   const nationalSnapshot = await getDocs(nationalQuery);

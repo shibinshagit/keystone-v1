@@ -5,31 +5,51 @@ import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
-import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Loader2, Plus } from 'lucide-react';
-
-const INDIAN_STATES_AND_UTS = [
-    "National (NBC)", "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal"
-];
+import {
+    GEOGRAPHY_MARKETS,
+    getDefaultLocationForMarket,
+    getLocationOptionsForMarket,
+    inferRegulationGeography,
+} from '@/lib/geography';
+import type { CountryCode, GeographyMarket, RegulationData } from '@/lib/types';
 
 const REGULATION_TYPES = ["Residential", "Commercial", "Mixed Use", "Industrial", "Public"];
+
+interface NewRegulationDraft {
+    location: string;
+    market: GeographyMarket;
+    countryCode?: CountryCode;
+    stateOrProvince?: string;
+    city?: string;
+    jurisdictionLevel?: RegulationData['jurisdictionLevel'];
+    codeFamily?: string;
+    type: string;
+}
 
 interface NewRegulationDialogProps {
     isOpen: boolean;
     onOpenChange: (isOpen: boolean) => void;
-    onCreate: (location: string, type: string) => Promise<void>;
+    onCreate: (draft: NewRegulationDraft) => Promise<void>;
     isSaving: boolean;
 }
 
 export function NewRegulationDialog({ isOpen, onOpenChange, onCreate, isSaving }: NewRegulationDialogProps) {
-    const [location, setLocation] = useState('');
+    const [market, setMarket] = useState<GeographyMarket>('India');
+    const [location, setLocation] = useState(getDefaultLocationForMarket('India'));
     const [type, setType] = useState('');
-    
+    const locationOptions = getLocationOptionsForMarket(market);
+
     const handleSubmit = async () => {
         if (!location || !type) return;
-        await onCreate(location, type);
-        setLocation('');
+        await onCreate({
+            location,
+            type,
+            market,
+            ...inferRegulationGeography(location),
+        });
+        setLocation(getDefaultLocationForMarket(market));
         setType('');
     }
 
@@ -44,14 +64,34 @@ export function NewRegulationDialog({ isOpen, onOpenChange, onCreate, isSaving }
                 </DialogHeader>
                 <div className="py-4 space-y-4">
                     <div>
+                        <Label htmlFor="market">Market</Label>
+                        <Select
+                            value={market}
+                            onValueChange={(value) => {
+                                const nextMarket = value as GeographyMarket;
+                                setMarket(nextMarket);
+                                setLocation(getDefaultLocationForMarket(nextMarket));
+                            }}
+                        >
+                            <SelectTrigger id="market">
+                                <SelectValue placeholder="Select a market..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {GEOGRAPHY_MARKETS.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div>
                         <Label htmlFor="location">Location</Label>
                         <Select value={location} onValueChange={setLocation}>
                             <SelectTrigger id="location">
-                                <SelectValue placeholder="Select a state or UT..." />
+                                <SelectValue placeholder="Select a location..." />
                             </SelectTrigger>
                             <SelectContent>
-                                {INDIAN_STATES_AND_UTS.map(state => (
-                                    <SelectItem key={state} value={state}>{state}</SelectItem>
+                                {locationOptions.map(option => (
+                                    <SelectItem key={`${option.market}-${option.location}`} value={option.location}>{option.label}</SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>

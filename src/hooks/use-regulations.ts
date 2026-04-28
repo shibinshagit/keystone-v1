@@ -37,12 +37,12 @@ export function useRegulations(project: Project | null): UseRegulationsReturn {
                 // 1. Fetch Building Regulations
                 // Priority: Specific Regulation ID > Generic ID > Smart Fallback
                 // Parse location safely since it might be an object
-                let location = 'Delhi';
+                let location = project.city || project.locationLabel || project.stateOrProvince || 'Delhi';
                 if (typeof project.location === 'string') {
-                    location = project.location;
+                    location = project.city || project.locationLabel || project.location;
                 } else if (project.location && typeof project.location === 'object') {
                     // If it's a coordinate object without a resolved string name, we'll have to rely on smart fallback or NBC
-                    location = (project.location as any).name || (project.location as any).text || 'Default';
+                    location = project.city || project.locationLabel || (project.location as any).name || (project.location as any).text || 'Default';
                 }
                 
                 let intendedUse = project.intendedUse || 'Residential';
@@ -54,6 +54,7 @@ export function useRegulations(project: Project | null): UseRegulationsReturn {
                     location,
                     intendedUse,
                     regulationId: project.regulationId,
+                    market: project.market,
                 });
                 const foundReg = regulationResult.regulation;
 

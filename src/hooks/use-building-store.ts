@@ -28,6 +28,7 @@ import { ComplianceEngine } from '@/lib/engines/compliance-engine';
 import ultimateVastuChecklist from '@/data/ultimate-vastu-checklist.json';
 import { collection, doc, getDocs, setDoc, deleteDoc, writeBatch, getDoc, query, where } from 'firebase/firestore';
 import useAuthStore from './use-auth-store';
+import { getRegulationCollectionNameForMarket, shouldUseNationalIndiaFallback } from '@/lib/regulation-collections';
 
 export type DrawingObjectType = 'Plot' | 'Zone' | 'Building' | 'Road' | 'Move' | 'Select';
 
@@ -539,31 +540,57 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
     const [lon, lat] = centroid.geometry.coordinates;
     let locationName: string | null = 'Default';
     let fetchedRegulations: RegulationData[] = [];
+    const activeProject = useBuildingStore.getState().projects.find(
+        p => p.id === useBuildingStore.getState().activeProjectId,
+    );
 
     try {
-        const geoResponse = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${lon},${lat}.json?types=region&access_token=${process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN}`);
-        const geoData = await geoResponse.json();
-        const regionFeature = geoData.features[0];
-        if (regionFeature) {
-            locationName = regionFeature.text;
-        }
+        const collectionName = getRegulationCollectionNameForMarket(activeProject?.market);
+        const regulationsRef = collection(db, collectionName);
+        const preferredProjectLocations = [
+            activeProject?.city,
+            activeProject?.locationLabel,
+            typeof activeProject?.location === 'string' ? activeProject.location : undefined,
+            activeProject?.stateOrProvince,
+        ].filter((value, index, values): value is string => !!value && values.indexOf(value) === index);
 
-        if (locationName) {
-            const regulationsRef = collection(db, 'regulations');
-            const q = query(regulationsRef, where('location', '==', locationName));
-            
-            console.log(`[Store] Fetching local regulations for ${locationName}...`);
+        for (const candidate of preferredProjectLocations) {
+            const q = query(regulationsRef, where('location', '==', candidate));
             const querySnapshot = await getDocs(q);
             if (!querySnapshot.empty) {
+                locationName = candidate;
                 fetchedRegulations = querySnapshot.docs.map(doc => doc.data() as RegulationData);
-            } else {
-                // Fallback to National (NBC) if no local regulations found
-                console.log(`[Store] No local regulations for ${locationName}, fetching NBC fallback...`);
-                const nbcQ = query(regulationsRef, where('location', '==', 'National (NBC)'));
-                const nbcSnapshot = await getDocs(nbcQ);
-                if (!nbcSnapshot.empty) {
-                    fetchedRegulations = nbcSnapshot.docs.map(doc => doc.data() as RegulationData);
-                    console.log(`[Store] NBC fallback found ${fetchedRegulations.length} entries.`);
+                break;
+            }
+        }
+
+        if (fetchedRegulations.length === 0) {
+            const geoResponse = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${lon},${lat}.json?types=place,region&access_token=${process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN}`);
+            const geoData = await geoResponse.json();
+            const placeFeature = Array.isArray(geoData.features)
+                ? geoData.features.find((feature: any) => feature.place_type?.includes('place'))
+                : null;
+            const regionFeature = Array.isArray(geoData.features)
+                ? geoData.features.find((feature: any) => feature.place_type?.includes('region'))
+                : null;
+            locationName = placeFeature?.text || regionFeature?.text || locationName;
+
+            if (locationName) {
+                const q = query(regulationsRef, where('location', '==', locationName));
+
+                console.log(`[Store] Fetching local regulations for ${locationName}...`);
+                const querySnapshot = await getDocs(q);
+                if (!querySnapshot.empty) {
+                    fetchedRegulations = querySnapshot.docs.map(doc => doc.data() as RegulationData);
+                } else if (shouldUseNationalIndiaFallback(activeProject?.market)) {
+                    // Fallback to National (NBC) if no local regulations found
+                    console.log(`[Store] No local regulations for ${locationName}, fetching NBC fallback...`);
+                    const nbcQ = query(regulationsRef, where('location', '==', 'National (NBC)'));
+                    const nbcSnapshot = await getDocs(nbcQ);
+                    if (!nbcSnapshot.empty) {
+                        fetchedRegulations = nbcSnapshot.docs.map(doc => doc.data() as RegulationData);
+                        console.log(`[Store] NBC fallback found ${fetchedRegulations.length} entries.`);
+                    }
                 }
             }
         }
@@ -573,7 +600,6 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
     }
 
     // Determine regulation based on Project settings
-    const activeProject = useBuildingStore.getState().projects.find(p => p.id === useBuildingStore.getState().activeProjectId);
     let intendedUse = activeProject?.intendedUse || 'Residential';
     if (intendedUse.toLowerCase() === 'mixed use') intendedUse = 'Mixed-Use';
     else if (intendedUse.toLowerCase() === 'mixed-use') intendedUse = 'Mixed Use';
@@ -598,10 +624,10 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
     }
 
     // 3. Fallback: National (NBC) if entirely missing or no matching use case found locally
-    if (!defaultRegulation) {
+    if (!defaultRegulation && shouldUseNationalIndiaFallback(activeProject?.market)) {
         console.log(`[Store] No matching local regulations found for intended use: ${intendedUse}, fetching National (NBC) fallback...`);
         try {
-            const regulationsRef = collection(db, 'regulations');
+            const regulationsRef = collection(db, getRegulationCollectionNameForMarket(activeProject?.market));
             const nbcQ = query(regulationsRef, where('location', '==', 'National (NBC)'));
             const nbcSnapshot = await getDocs(nbcQ);
             
@@ -1259,7 +1285,14 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             location: string,
             regulationId: string,
             greenCertification: ("IGBC" | "GRIHA" | "LEED" | "Green Building")[],
-            vastuCompliant: boolean
+            vastuCompliant: boolean,
+            geographyMeta?: {
+                market?: Project['market'];
+                countryCode?: Project['countryCode'];
+                stateOrProvince?: string;
+                city?: string;
+                locationLabel?: string;
+            }
         ) => {
             console.log('[createProject] Received parameters:');
             console.log('  name:', name);
@@ -1269,6 +1302,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             console.log('  regulationId:', regulationId);
             console.log('  greenCertification:', greenCertification);
             console.log('  vastuCompliant:', vastuCompliant);
+            console.log('  geographyMeta:', geographyMeta);
 
             try {
                 const userId = useAuthStore.getState().user?.uid || 'guest';
@@ -1278,7 +1312,8 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                 if (location) {
                     try {
                         const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-                        const geocodeUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(location)}.json?access_token=${mapboxToken}&limit=1&country=IN`;
+                        const geocodeLabel = geographyMeta?.locationLabel || location;
+                        const geocodeUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(geocodeLabel)}.json?access_token=${mapboxToken}&limit=1${geographyMeta?.countryCode ? `&country=${geographyMeta.countryCode.toLowerCase()}` : ''}`;
                         const response = await fetch(geocodeUrl);
                         const data = await response.json();
 
@@ -1302,6 +1337,11 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     totalPlotArea,
                     intendedUse,
                     location: locationCoords || location, // Store coords if available, otherwise store string
+                    locationLabel: geographyMeta?.locationLabel || location,
+                    market: geographyMeta?.market,
+                    countryCode: geographyMeta?.countryCode,
+                    stateOrProvince: geographyMeta?.stateOrProvince,
+                    city: geographyMeta?.city,
                     regulationId,
                     greenCertification,
                     vastuCompliant,

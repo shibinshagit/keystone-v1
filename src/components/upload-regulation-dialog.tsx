@@ -10,10 +10,11 @@ import { Alert, AlertDescription } from './ui/alert';
 import { Badge } from './ui/badge';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-
-const INDIAN_STATES_AND_UTS = [
-    "National (NBC)", "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal"
-];
+import {
+    GEOGRAPHY_MARKETS,
+    getLocationOptionsForMarket,
+} from '@/lib/geography';
+import type { GeographyMarket } from '@/lib/types';
 
 interface UploadRegulationDialogProps {
     isOpen: boolean;
@@ -26,6 +27,8 @@ export function UploadRegulationDialog({ isOpen, onOpenChange, onExtracted }: Up
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [extractedData, setExtractedData] = useState<any[]>([]);
     const [overrideLocation, setOverrideLocation] = useState<string>('');
+    const [market, setMarket] = useState<GeographyMarket>('India');
+    const locationOptions = getLocationOptionsForMarket(market);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -42,7 +45,7 @@ export function UploadRegulationDialog({ isOpen, onOpenChange, onExtracted }: Up
         try {
             const formData = new FormData();
             formData.append('file', selectedFile);
-            if (overrideLocation) {
+            if (overrideLocation && overrideLocation !== 'none') {
                 formData.append('overrideLocation', overrideLocation);
             }
 
@@ -128,20 +131,43 @@ export function UploadRegulationDialog({ isOpen, onOpenChange, onExtracted }: Up
                             </div>
 
                             <div className="space-y-2">
+                                <Label htmlFor="override-market">Market</Label>
+                                <Select
+                                    value={market}
+                                    onValueChange={(value) => {
+                                        setMarket(value as GeographyMarket);
+                                        setOverrideLocation('');
+                                    }}
+                                >
+                                    <SelectTrigger id="override-market">
+                                        <SelectValue placeholder="Select a market..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {GEOGRAPHY_MARKETS.map(option => (
+                                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-2">
                                 <Label htmlFor="override-location">Location Override (Optional)</Label>
-                                <Select value={overrideLocation} onValueChange={setOverrideLocation}>
+                                <Select
+                                    value={overrideLocation}
+                                    onValueChange={(value) => setOverrideLocation(value === 'none' ? '' : value)}
+                                >
                                     <SelectTrigger id="override-location">
                                         <SelectValue placeholder="Let AI determine location..." />
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="none" className="text-muted-foreground italic">Let AI determine location...</SelectItem>
-                                        {INDIAN_STATES_AND_UTS.map(state => (
-                                            <SelectItem key={state} value={state}>{state}</SelectItem>
+                                        {locationOptions.map(option => (
+                                            <SelectItem key={`${option.market}-${option.location}`} value={option.location}>{option.label}</SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
                                 <p className="text-xs text-muted-foreground">
-                                    Forces the AI to tag all extracted rules under this specific location (e.g., Delhi, Haryana).
+                                    Forces the AI to tag all extracted rules under this specific pilot location.
                                 </p>
                             </div>
 

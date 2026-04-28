@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState, useMemo } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, doc, getDocs, setDoc, writeBatch, deleteDoc, getDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, setDoc, writeBatch, deleteDoc } from 'firebase/firestore';
 import type { RegulationData, GreenRegulationData, VastuRegulationData } from '@/lib/types';
 import { Button } from './ui/button';
 import { toast } from '@/hooks/use-toast';
@@ -41,8 +41,10 @@ import { PlanningParamsPanel } from './planning-params-panel';
 import { NationalCodePanel } from './national-code-panel';
 import { useBuildingStore } from '@/hooks/use-building-store';
 import ultimateVastuChecklist from '@/data/ultimate-vastu-checklist.json';
+import { compactOptionalFields, inferRegulationGeography } from '@/lib/geography';
+import { getRegulationCollectionNameForRegulation, INDIA_REGULATIONS_COLLECTION, US_REGULATIONS_COLLECTION } from '@/lib/regulation-collections';
 
-const DEFAULT_REGULATION_DATA: Omit<RegulationData, 'location' | 'type'> = {
+const DEFAULT_REGULATION_DATA: Omit<RegulationData, 'location' | 'type' | 'market' | 'countryCode' | 'stateOrProvince' | 'city' | 'jurisdictionLevel' | 'codeFamily'> = {
     geometry: {
         setback: { desc: "General setback (if uniform)", unit: "m", value: "", exampleStr: "e.g. 5" },
         front_setback: { desc: "Front setback from road", unit: "m", value: "", exampleStr: "e.g. 6" },
@@ -147,6 +149,9 @@ const DEFAULT_REGULATION_DATA: Omit<RegulationData, 'location' | 'type'> = {
     },
 };
 
+const sanitizeFirestoreData = <T,>(value: T): T =>
+    JSON.parse(JSON.stringify(value)) as T;
+
 export function AdminPanel() {
     const [regulations, setRegulations] = useState<RegulationData[]>([]);
     const [greenRegulations, setGreenRegulations] = useState<GreenRegulationData[]>([]);
@@ -166,15 +171,20 @@ export function AdminPanel() {
 
     const [deletingId, setDeletingId] = useState<string | null>(null);
 
-    const regulationsCollection = collection(db, 'regulations');
     const greenRegulationsCollection = collection(db, 'greenRegulations');
     const vastuRegulationsCollection = collection(db, 'vastuRegulations');
+    const getRegulationsCollection = (collectionName: string) => collection(db, collectionName);
+    const getRegulationDocId = (regulation: Pick<RegulationData, 'location' | 'type'>) =>
+        `${regulation.location}-${regulation.type}`.replace(/\s+/g, '-');
 
     const fetchRegulations = async () => {
         setIsLoading(true);
         try {
-            const snapshot = await getDocs(regulationsCollection);
-            const data = snapshot.docs.map(doc => doc.data() as RegulationData);
+            const [indiaSnapshot, usSnapshot] = await Promise.all([
+                getDocs(getRegulationsCollection(INDIA_REGULATIONS_COLLECTION)),
+                getDocs(getRegulationsCollection(US_REGULATIONS_COLLECTION)),
+            ]);
+            const data = [...indiaSnapshot.docs, ...usSnapshot.docs].map(doc => doc.data() as RegulationData);
             setRegulations(data);
 
             const greenSnapshot = await getDocs(greenRegulationsCollection);
@@ -216,7 +226,7 @@ export function AdminPanel() {
     const categoryDetails = useMemo(() => {
         if (!selectedRegulation || !selectedCategory) return null;
 
-        const categoryKey = selectedCategory as keyof Omit<RegulationData, 'location' | 'type'>;
+        const categoryKey = selectedCategory as keyof typeof DEFAULT_REGULATION_DATA;
         const categoryData = selectedRegulation[categoryKey];
         const defaultCategoryData = DEFAULT_REGULATION_DATA[categoryKey];
 
@@ -271,13 +281,15 @@ export function AdminPanel() {
         if (!selectedRegulation) return;
         setIsSaving(true);
         try {
-            const docId = `${selectedRegulation.location}-${selectedRegulation.type}`.replace(/\s+/g, '-');
-            const docRef = doc(regulationsCollection, docId);
-            await setDoc(docRef, selectedRegulation, { merge: true });
+            const docId = getRegulationDocId(selectedRegulation);
+            const collectionName = getRegulationCollectionNameForRegulation(selectedRegulation);
+            const docRef = doc(getRegulationsCollection(collectionName), docId);
+            const sanitizedRegulation = sanitizeFirestoreData(selectedRegulation);
+            await setDoc(docRef, sanitizedRegulation, { merge: true });
 
             setRegulations(prevRegs => prevRegs.map(reg =>
                 (reg.location === selectedRegulation.location && reg.type === selectedRegulation.type)
-                    ? selectedRegulation
+                    ? sanitizedRegulation
                     : reg
             ));
 
@@ -290,23 +302,51 @@ export function AdminPanel() {
         }
     };
 
-    const handleCreateRegulation = async (location: string, type: string) => {
+    const handleCreateRegulation = async ({
+        location,
+        type,
+        market,
+        countryCode,
+        stateOrProvince,
+        city,
+        jurisdictionLevel,
+        codeFamily,
+    }: {
+        location: string;
+        type: string;
+        market?: RegulationData['market'];
+        countryCode?: RegulationData['countryCode'];
+        stateOrProvince?: string;
+        city?: string;
+        jurisdictionLevel?: RegulationData['jurisdictionLevel'];
+        codeFamily?: string;
+    }) => {
         setIsSaving(true);
-        const docId = `${location}-${type}`.replace(/\s+/g, '-');
-        if (regulations.some(reg => `${reg.location}-${reg.type}` === docId)) {
+        const docId = getRegulationDocId({ location, type });
+        const effectiveMarket = market || inferRegulationGeography(location).market || 'India';
+        if (regulations.some(reg => getRegulationDocId(reg) === docId && (reg.market || 'India') === effectiveMarket)) {
             toast({ variant: 'destructive', title: 'Error', description: 'This regulation already exists.' });
             setIsSaving(false);
             return;
         }
 
-        const newRegulation: RegulationData = {
+        const newRegulation: RegulationData = sanitizeFirestoreData({
             ...JSON.parse(JSON.stringify(DEFAULT_REGULATION_DATA)),
             location,
             type,
-        };
+            ...compactOptionalFields({
+                market,
+                countryCode,
+                stateOrProvince,
+                city,
+                jurisdictionLevel,
+                codeFamily,
+            }),
+        } as RegulationData);
 
         try {
-            const docRef = doc(regulationsCollection, docId);
+            const collectionName = getRegulationCollectionNameForRegulation(newRegulation);
+            const docRef = doc(getRegulationsCollection(collectionName), docId);
             await setDoc(docRef, newRegulation);
             setRegulations(prev => [...prev, newRegulation]);
             setSelectedRegulation(newRegulation);
@@ -320,13 +360,22 @@ export function AdminPanel() {
         }
     };
 
-    const handleDeleteRegulation = async (location: string, type: string) => {
-        const docId = `${location}-${type}`.replace(/\s+/g, '-');
+    const handleDeleteRegulation = async (regulation: RegulationData) => {
+        const docId = getRegulationDocId(regulation);
         setDeletingId(docId);
         try {
-            await deleteDoc(doc(regulationsCollection, docId));
-            setRegulations(prev => prev.filter(reg => `${reg.location}-${reg.type}` !== docId));
-            if (selectedRegulation?.location === location && selectedRegulation?.type === type) {
+            const collectionName = getRegulationCollectionNameForRegulation(regulation);
+            await deleteDoc(doc(getRegulationsCollection(collectionName), docId));
+            setRegulations(prev =>
+                prev.filter(
+                    reg =>
+                        !(
+                            getRegulationDocId(reg) === docId &&
+                            (reg.market || 'India') === (regulation.market || 'India')
+                        ),
+                ),
+            );
+            if (selectedRegulation?.location === regulation.location && selectedRegulation?.type === regulation.type) {
                 setSelectedRegulation(null);
             }
             toast({ title: 'Success', description: 'Regulation deleted successfully.' });
@@ -346,8 +395,9 @@ export function AdminPanel() {
         try {
             const batch = writeBatch(db);
             locationRegulations.forEach(reg => {
-                const docId = `${reg.location}-${reg.type}`.replace(/\s+/g, '-');
-                batch.delete(doc(regulationsCollection, docId));
+                const docId = getRegulationDocId(reg);
+                const collectionName = getRegulationCollectionNameForRegulation(reg);
+                batch.delete(doc(getRegulationsCollection(collectionName), docId));
             });
             await batch.commit();
 
@@ -379,12 +429,13 @@ export function AdminPanel() {
                     continue;
                 }
 
-                const newRegulation: RegulationData = produce(
+                const newRegulation: RegulationData = sanitizeFirestoreData(produce(
                     JSON.parse(JSON.stringify(DEFAULT_REGULATION_DATA)) as RegulationData,
                     voidDraft => {
                         const draft = voidDraft as any;
                         draft.location = extractedData.location!;
                         draft.type = extractedData.type!;
+                        Object.assign(draft, inferRegulationGeography(extractedData.location!));
                         
                         // Deep merge properties
                         const categories = ['geometry', 'facilities', 'sustainability', 'safety_and_services', 'administration'];
@@ -393,11 +444,18 @@ export function AdminPanel() {
                                 draft[cat] = { ...draft[cat], ...(extractedData as any)[cat] };
                             }
                         });
-                    }
-                );
 
-                const regulationId = `${newRegulation.location}-${newRegulation.type}`.replace(/\s+/g, '-');
-                const regulationRef = doc(db, 'regulations', regulationId);
+                        ['market', 'countryCode', 'stateOrProvince', 'city', 'jurisdictionLevel', 'codeFamily'].forEach((key) => {
+                            if ((extractedData as any)[key] !== undefined) {
+                                draft[key] = (extractedData as any)[key];
+                            }
+                        });
+                    }
+                ));
+
+                const regulationId = getRegulationDocId(newRegulation);
+                const collectionName = getRegulationCollectionNameForRegulation(newRegulation);
+                const regulationRef = doc(db, collectionName, regulationId);
                 batch.set(regulationRef, newRegulation);
                 savedCount++;
             }
@@ -481,7 +539,7 @@ export function AdminPanel() {
         setSelectedCategory(null);
     };
 
-    const categories: { key: keyof Omit<RegulationData, 'location' | 'type' | 'id'>, icon: React.ElementType }[] = [
+    const categories: { key: keyof typeof DEFAULT_REGULATION_DATA, icon: React.ElementType }[] = [
         { key: 'geometry', icon: Scaling },
         { key: 'facilities', icon: Building },
         { key: 'sustainability', icon: Droplets },
@@ -613,7 +671,7 @@ export function AdminPanel() {
                                                                                         </AlertDialogHeader>
                                                                                         <AlertDialogFooter>
                                                                                             <AlertDialogCancel onClick={(e) => e.stopPropagation()}>Cancel</AlertDialogCancel>
-                                                                                            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={(e) => { e.stopPropagation(); handleDeleteRegulation(reg.location, reg.type); }}>
+                                                                                            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={(e) => { e.stopPropagation(); handleDeleteRegulation(reg); }}>
                                                                                                 Delete
                                                                                             </AlertDialogAction>
                                                                                         </AlertDialogFooter>

@@ -12,7 +12,13 @@ import { Input } from './ui/input';
 import { cn } from '@/lib/utils';
 import { useBuildingStore } from '@/hooks/use-building-store';
 import { useRouter } from 'next/navigation';
-import { Plus } from 'lucide-react';
+import {
+    GEOGRAPHY_MARKETS,
+    getDefaultLocationForMarket,
+    getLocationOptionsForMarket,
+} from '@/lib/geography';
+import { getRegulationCollectionNameForMarket } from '@/lib/regulation-collections';
+import type { GeographyMarket } from '@/lib/types';
 
 interface CreateProjectDialogProps {
     children?: React.ReactNode;
@@ -28,7 +34,8 @@ export function CreateProjectDialog({ children }: CreateProjectDialogProps) {
     const [step, setStep] = useState(1);
     const [newProjectName, setNewProjectName] = useState('');
     const [totalPlotArea, setTotalPlotArea] = useState<number | ''>('');
-    const [location, setLocation] = useState('Delhi');
+    const [market, setMarket] = useState<GeographyMarket>('India');
+    const [location, setLocation] = useState(getDefaultLocationForMarket('India', { projectSelectableOnly: true }));
     const [intendedUse, setIntendedUse] = useState<'Residential' | 'Commercial' | 'Mixed Use' | 'Public' | 'Industrial'>('Residential');
     const [greenCertification, setGreenCertification] = useState<('IGBC' | 'GRIHA' | 'LEED' | 'Green Building')[]>([]);
     const [vastuCompliant, setVastuCompliant] = useState(false);
@@ -41,6 +48,8 @@ export function CreateProjectDialog({ children }: CreateProjectDialogProps) {
     // Green Regulations
     const [greenRegulationsList, setGreenRegulationsList] = useState<any[]>([]);
     const [isLoadingGreenRegs, setIsLoadingGreenRegs] = useState(false);
+    const locationOptions = getLocationOptionsForMarket(market, { projectSelectableOnly: true });
+    const selectedLocationOption = locationOptions.find(option => option.location === location);
 
     useEffect(() => {
         const fetchGreenRegs = async () => {
@@ -82,7 +91,8 @@ export function CreateProjectDialog({ children }: CreateProjectDialogProps) {
                 return;
             }
             try {
-                const q = query(collection(db, 'regulations'), where('location', '==', location));
+                const collectionName = getRegulationCollectionNameForMarket(market);
+                const q = query(collection(db, collectionName), where('location', '==', location));
                 const snap = await getDocs(q);
                 if (!snap.empty) {
                     const regs = snap.docs.map(d => ({ id: d.id, ...d.data() } as RegulationData));
@@ -95,7 +105,7 @@ export function CreateProjectDialog({ children }: CreateProjectDialogProps) {
             }
         };
         fetchRegulations();
-    }, [location]);
+    }, [location, market]);
 
     // Reset selected regulation when Intended Use changes
     useEffect(() => {
@@ -106,7 +116,8 @@ export function CreateProjectDialog({ children }: CreateProjectDialogProps) {
         setStep(1);
         setNewProjectName('');
         setTotalPlotArea('');
-        setLocation('Delhi');
+        setMarket('India');
+        setLocation(getDefaultLocationForMarket('India', { projectSelectableOnly: true }));
         setIntendedUse('Residential');
         setGreenCertification([]);
         setVastuCompliant(false);
@@ -132,7 +143,14 @@ export function CreateProjectDialog({ children }: CreateProjectDialogProps) {
             location,
             (selectedRegulationId && selectedRegulationId !== 'generic') ? selectedRegulationId : undefined,
             greenCertification,
-            vastuCompliant
+            vastuCompliant,
+            {
+                market,
+                countryCode: selectedLocationOption?.countryCode,
+                stateOrProvince: selectedLocationOption?.stateOrProvince,
+                city: selectedLocationOption?.city,
+                locationLabel: selectedLocationOption?.label || location,
+            }
         );
         setIsCreating(false);
 
@@ -187,21 +205,34 @@ export function CreateProjectDialog({ children }: CreateProjectDialogProps) {
                                 />
                             </div>
                             <div className="space-y-2">
+                                <Label htmlFor="market">Market</Label>
+                                <Select
+                                    value={market}
+                                    onValueChange={(value) => {
+                                        const nextMarket = value as GeographyMarket;
+                                        setMarket(nextMarket);
+                                        setLocation(getDefaultLocationForMarket(nextMarket, { projectSelectableOnly: true }));
+                                    }}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select market" />
+                                    </SelectTrigger>
+                                    <SelectContent className="max-h-[200px]">
+                                        {GEOGRAPHY_MARKETS.map(option => (
+                                            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
                                 <Label htmlFor="location">Project Location</Label>
                                 <Select value={location} onValueChange={setLocation}>
                                     <SelectTrigger>
-                                        <SelectValue placeholder="Select State/UT" />
+                                        <SelectValue placeholder="Select location" />
                                     </SelectTrigger>
                                     <SelectContent className="max-h-[200px]">
-                                        {[
-                                            "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar",
-                                            "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi", "Goa",
-                                            "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka",
-                                            "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya",
-                                            "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu",
-                                            "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal"
-                                        ].map(state => (
-                                            <SelectItem key={state} value={state}>{state}</SelectItem>
+                                        {locationOptions.map(option => (
+                                            <SelectItem key={`${option.market}-${option.location}`} value={option.location}>{option.label}</SelectItem>
                                         ))}
                                     </SelectContent>
                                 </Select>
