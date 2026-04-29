@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
 import { RegulationData, BuildingIntendedUse } from '@/lib/types';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
@@ -17,7 +16,7 @@ import {
     getDefaultLocationForMarket,
     getLocationOptionsForMarket,
 } from '@/lib/geography';
-import { getRegulationCollectionNameForMarket } from '@/lib/regulation-collections';
+import { getAvailableRegulationsForLocation } from '@/lib/regulation-lookup';
 import type { GeographyMarket } from '@/lib/types';
 
 interface CreateProjectDialogProps {
@@ -91,15 +90,8 @@ export function CreateProjectDialog({ children }: CreateProjectDialogProps) {
                 return;
             }
             try {
-                const collectionName = getRegulationCollectionNameForMarket(market);
-                const q = query(collection(db, collectionName), where('location', '==', location));
-                const snap = await getDocs(q);
-                if (!snap.empty) {
-                    const regs = snap.docs.map(d => ({ id: d.id, ...d.data() } as RegulationData));
-                    setAvailableRegulations(regs);
-                } else {
-                    setAvailableRegulations([]);
-                }
+                const regs = await getAvailableRegulationsForLocation({ location, market });
+                setAvailableRegulations(regs);
             } catch (error) {
                 console.error("Error fetching regulations for dialog:", error);
             }

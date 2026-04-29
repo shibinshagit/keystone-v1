@@ -6,6 +6,8 @@ import {
   shouldUseNationalIndiaFallback,
 } from "@/lib/regulation-collections";
 import type { BuildingIntendedUse, GeographyMarket, RegulationData } from "@/lib/types";
+import { mergeUsaBuildingCodeBaselines } from "@/lib/usa-building-code-regulations";
+import { mergeUsaZoningBaselines } from "@/lib/usa-zoning-regulations";
 
 export interface RegulationLookupResult {
   regulation: RegulationData | null;
@@ -65,6 +67,40 @@ function findBestMatch(
   );
 }
 
+function mergeUsaPilotBaselines(
+  location: string | null | undefined,
+  regulations: RegulationData[],
+): RegulationData[] {
+  const zoningMerged = mergeUsaZoningBaselines(location, regulations);
+  return mergeUsaBuildingCodeBaselines(location, zoningMerged);
+}
+
+export async function getAvailableRegulationsForLocation({
+  location,
+  market,
+}: {
+  location: string;
+  market?: GeographyMarket;
+}): Promise<RegulationData[]> {
+  if (!location.trim()) return [];
+
+  const collectionName = getRegulationCollectionNameForMarket(market);
+  const locationQuery = query(
+    collection(db, collectionName),
+    where("location", "==", location),
+  );
+  const snapshot = await getDocs(locationQuery);
+  const firestoreRegulations = snapshot.docs.map(
+    (entry) =>
+      ({
+        id: entry.id,
+        ...entry.data(),
+      }) as RegulationData,
+  );
+
+  return mergeUsaPilotBaselines(location, firestoreRegulations);
+}
+
 export async function lookupRegulationForLocationAndUse({
   location,
   intendedUse,
@@ -84,19 +120,40 @@ export async function lookupRegulationForLocationAndUse({
     const specificDoc = await getDoc(doc(db, collectionName, regulationId));
     if (specificDoc.exists()) {
       const regulation = specificDoc.data() as RegulationData;
+      const [mergedRegulation] = mergeUsaPilotBaselines(
+        regulation.location || locationCandidates[0] || location,
+        [regulation],
+      );
       return {
-        regulation,
-        matchedLocation: regulation.location || null,
+        regulation: mergedRegulation || regulation,
+        matchedLocation: regulation.location || locationCandidates[0] || null,
         source: "specific-id",
       };
+    }
+
+    for (const candidate of locationCandidates) {
+      const regulations = await getAvailableRegulationsForLocation({
+        location: candidate,
+        market,
+      });
+      const matchedBaseline = regulations.find((reg) => reg.id === regulationId);
+      if (matchedBaseline) {
+        return {
+          regulation: matchedBaseline,
+          matchedLocation: candidate,
+          source: "specific-id",
+        };
+      }
     }
   }
 
   for (const candidate of locationCandidates) {
     const genericDoc = await getDoc(doc(db, collectionName, `${candidate}-${normalizedUse}`));
     if (genericDoc.exists()) {
+      const regulation = genericDoc.data() as RegulationData;
+      const [mergedRegulation] = mergeUsaPilotBaselines(candidate, [regulation]);
       return {
-        regulation: genericDoc.data() as RegulationData,
+        regulation: mergedRegulation || regulation,
         matchedLocation: candidate,
         source: "generic-id",
       };
@@ -104,14 +161,12 @@ export async function lookupRegulationForLocationAndUse({
   }
 
   for (const candidate of locationCandidates) {
-    const locationQuery = query(
-      collection(db, collectionName),
-      where("location", "==", candidate),
-    );
-    const snapshot = await getDocs(locationQuery);
-    if (snapshot.empty) continue;
+    const regulations = await getAvailableRegulationsForLocation({
+      location: candidate,
+      market,
+    });
+    if (regulations.length === 0) continue;
 
-    const regulations = snapshot.docs.map((entry) => entry.data() as RegulationData);
     const bestMatch = findBestMatch(regulations, normalizedUse);
     if (bestMatch) {
       return {

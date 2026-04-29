@@ -6289,6 +6289,26 @@ export function FeasibilityReport({
                 ok: true,
               },
               {
+                asp: "Stair Width",
+                req: plot.regulation?.facilities?.staircase_width?.value
+                  ? `${plot.regulation.facilities.staircase_width.value}m min`
+                  : "As per adopted building code",
+                prop: plot.regulation?.facilities?.staircase_width?.value
+                  ? `${plot.regulation.facilities.staircase_width.value}m baseline`
+                  : "Code review pending",
+                ok: true,
+              },
+              {
+                asp: "Exit Travel Distance",
+                req: plot.regulation?.safety_and_services?.fire_exits_travel_distance?.value
+                  ? `${plot.regulation.safety_and_services.fire_exits_travel_distance.value}m max`
+                  : "As per adopted building code",
+                prop: plot.regulation?.safety_and_services?.fire_exits_travel_distance?.value
+                  ? "Mapped into regulation baseline"
+                  : "Code review pending",
+                ok: true,
+              },
+              {
                 asp: "Seismic Design",
                 req: "IS 1893:2016, Zone IV",
                 prop: "SMRF (R = 5.0)",

@@ -17,6 +17,16 @@ export interface ComplianceOutput {
         side: number;
         general: number;
     };
+    buildingCode: {
+        codeFamily?: string;
+        highRiseThreshold?: number;
+        maxBuildingHeight?: number;
+        stairWidth?: number;
+        corridorWidth?: number;
+        travelDistance?: number;
+        fireAccessWidth?: number;
+        stairCount?: number;
+    };
 }
 
 export class ComplianceEngine {
@@ -32,7 +42,8 @@ export class ComplianceEngine {
         const coveragePercent = Number(regulation.geometry.max_ground_coverage?.value as any);
         const maxHeight = Number(
             regulation.geometry.max_height?.value ||
-            regulation.geometry.building_height?.value as any
+            regulation.geometry.building_height?.value ||
+            regulation.highrise?.max_building_height?.value as any
         );
 
         // Validate critical values
@@ -63,6 +74,7 @@ export class ComplianceEngine {
 
         // Floors
         const maxFloorsExplicit = Number(
+            regulation.highrise?.max_floors?.value ||
             regulation.geometry.max_floors?.value ||
             regulation.geometry.number_of_floors?.value ||
             regulation.geometry.floors?.value as any
@@ -80,7 +92,20 @@ export class ComplianceEngine {
             maxGFA,
             maxFloors,
             targetFloors: Math.min(maxFloors, Math.ceil(maxGFA / maxFootprint)), // Target if we max out footprint
-            setbacks: { front, rear, side, general }
+            setbacks: { front, rear, side, general },
+            buildingCode: {
+                codeFamily: regulation.codeFamily,
+                highRiseThreshold: Number(regulation.highrise?.highrise_threshold?.value as any) || undefined,
+                maxBuildingHeight: Number(regulation.highrise?.max_building_height?.value as any) || undefined,
+                stairWidth: Number(regulation.facilities?.staircase_width?.value as any) || undefined,
+                corridorWidth: Number(regulation.facilities?.corridor_widths?.value as any) || undefined,
+                travelDistance: Number(regulation.safety_and_services?.fire_exits_travel_distance?.value as any) || undefined,
+                fireAccessWidth: Number(regulation.safety_and_services?.fire_tender_access?.value as any) || undefined,
+                stairCount: Number(
+                    regulation.facilities?.staircase_count?.value ||
+                    regulation.safety_and_services?.staircases_by_height?.value as any
+                ) || undefined,
+            },
         };
     }
 }

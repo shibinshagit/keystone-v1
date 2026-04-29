@@ -7,7 +7,7 @@ import { ScrollArea } from './ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { Badge } from './ui/badge';
-import { BookCopy, Building, Scaling, Droplets, ShieldCheck, Banknote, AlertTriangle } from 'lucide-react';
+import { BookCopy, Building, Scaling, Droplets, ShieldCheck, Banknote, AlertTriangle, Ruler } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { useBuildingStore } from '@/hooks/use-building-store';
 
@@ -19,10 +19,25 @@ interface RegulationViewerModalProps {
 }
 
 const renderValue = (value: any) => {
+    if (value === null || value === undefined) return '-';
+    if (typeof value === 'string' && value.trim().length === 0) return '-';
     if (typeof value === 'object' && value !== null) {
         return <Badge variant="secondary">{Object.entries(value).map(([k, v]) => `${k}: ${v}`).join(', ')}</Badge>;
     }
     return String(value);
+};
+
+const getZoningBadgeValue = (regulation?: RegulationData | null) => {
+    const zoningValue = regulation?.administration?.land_use_zoning?.value;
+    if (typeof zoningValue === 'string' && zoningValue.trim().length > 0) return zoningValue.trim();
+
+    const zoningDesc = regulation?.administration?.land_use_zoning?.desc;
+    if (typeof zoningDesc === 'string') {
+        const match = zoningDesc.match(/\b([A-Z]{1,4}\d?(?:-\d+)?)\b/);
+        if (match) return match[1];
+    }
+
+    return null;
 };
 
 function RegulationCategory({ title, data, icon: Icon }: { title: string, data: { [key: string]: RegulationValue }, icon: React.ElementType }) {
@@ -102,8 +117,11 @@ export function RegulationViewerModal({ isOpen, onOpenChange, plot }: Regulation
         actions.updatePlot(plot.id, { selectedRegulationType: newType });
     }
 
+    const zoningDistrict = getZoningBadgeValue(regulation);
+
     const categories = regulation ? [
         { key: 'geometry', title: 'Geometry & Zoning', icon: Scaling, data: regulation.geometry },
+        { key: 'highrise', title: 'High-Rise & Building Code', icon: Ruler, data: regulation.highrise || {} },
         { key: 'facilities', title: 'Facilities', icon: Building, data: regulation.facilities },
         { key: 'sustainability', title: 'Sustainability', icon: Droplets, data: regulation.sustainability },
         { key: 'safety_and_services', title: 'Safety & Services', icon: ShieldCheck, data: regulation.safety_and_services },
@@ -137,6 +155,12 @@ export function RegulationViewerModal({ isOpen, onOpenChange, plot }: Regulation
                                     ))}
                                 </SelectContent>
                             </Select>
+                            {regulation?.codeFamily && (
+                                <Badge variant="outline">{regulation.codeFamily}</Badge>
+                            )}
+                            {zoningDistrict && (
+                                <Badge variant="secondary">Zone: {String(zoningDistrict)}</Badge>
+                            )}
                         </div>
 
                         {regulation && (
