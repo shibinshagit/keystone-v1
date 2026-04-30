@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DataGovService } from '@/services/land-intelligence/data-gov-service';
 import { EarthEngineService } from '@/services/land-intelligence/earth-engine-service';
+import { EnvironmentalService } from '@/services/land-intelligence/environmental-service';
 import { GoogleMapsServerService } from '@/services/land-intelligence/google-maps-server-service';
 import { PopulationMigrationService } from '@/services/land-intelligence/population-migration-service';
 import { ProposedInfraService } from '@/services/land-intelligence/proposed-infra-service';
 import { lookupRegulationForLocationAndUse } from '@/lib/regulation-lookup';
 import { evaluateDevelopability, toDevelopabilityScore } from '@/lib/scoring/developability-engine';
 import type { ItemResult } from '@/lib/scoring/schema-engine';
+import type { EnvironmentalScreeningReport } from '@/lib/land-intelligence/environmental';
 import type {
   CensusData,
   LandIntelligenceQuery,
@@ -332,6 +334,7 @@ export async function POST(request: NextRequest) {
       airportData,
       roadSnapData,
       proposedInfraData,
+      environmentalScreeningData,
     ] = await Promise.allSettled([
       DataGovService.getCensusData(state, district),
       DataGovService.getFDIData(state),
@@ -377,6 +380,14 @@ export async function POST(request: NextRequest) {
         state,
         district,
       }),
+      query.market === 'USA' || query.countryCode === 'US'
+        ? EnvironmentalService.getEnvironmentalScreening({
+            coordinates: coords,
+            location: district ? `${district}, ${state}` : state,
+            market: query.market,
+            countryCode: query.countryCode,
+          })
+        : Promise.resolve(null),
     ]);
 
     // Several current reference datasets are still partial-coverage inside the project.
@@ -397,6 +408,10 @@ export async function POST(request: NextRequest) {
       proposedInfraData.status === 'fulfilled'
         ? proposedInfraData.value
         : EMPTY_PROPOSED_INFRA_SIGNAL;
+    const environmentalScreening: EnvironmentalScreeningReport | null =
+      environmentalScreeningData.status === 'fulfilled'
+        ? environmentalScreeningData.value
+        : null;
     const underwriting = query.underwriting;
     const storedAmenities: AmenityRecord[] = Array.isArray(query.locationAmenities) ? query.locationAmenities : [];
     const roadAccessSides = Array.isArray(query.roadAccessSides)
@@ -805,6 +820,7 @@ export async function POST(request: NextRequest) {
       success: true,
       query: responseQuery,
       score: developabilityScore,
+      environmentalScreening,
       populationMigration: populationMigration as PopulationMigrationResponse | null,
       nearbyAmenities,
       dataSources: {
@@ -839,6 +855,13 @@ export async function POST(request: NextRequest) {
         proposedInfrastructure: {
           count: proposedInfra.count,
           available: proposedInfra.available,
+        },
+        environmental: {
+          count: environmentalScreening
+            ? environmentalScreening.airQuality.facilityCount +
+              environmentalScreening.waterQuality.facilityCount
+            : 0,
+          available: environmentalScreening !== null,
         },
       },
     });

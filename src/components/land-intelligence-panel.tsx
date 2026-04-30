@@ -17,6 +17,7 @@ import {
 
 import { useBuildingStore, useProjectData, useSelectedPlot } from "@/hooks/use-building-store";
 import { inferRegulationGeography } from "@/lib/geography";
+import type { EnvironmentalScreeningReport } from "@/lib/land-intelligence/environmental";
 import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import type { LandUseSummary } from "@/lib/land-intelligence/land-use";
 import type { DevelopabilityScore, PopulationMigrationAnalysis } from "@/lib/types";
@@ -30,6 +31,7 @@ import { DevelopabilityScoreOverview } from "./developability-score-overview";
 
 interface ScoreResult {
   score: DevelopabilityScore;
+  environmentalScreening: EnvironmentalScreeningReport | null;
   populationMigration: PopulationMigrationAnalysis | null;
   nearbyAmenities: {
     transit: {
@@ -67,6 +69,7 @@ interface ScoreResult {
     googlePlaces: { count: number; available: boolean };
     googleRoads: { count: number; available: boolean };
     proposedInfrastructure: { count: number; available: boolean };
+    environmental: { count: number; available: boolean };
   };
 }
 
@@ -534,6 +537,126 @@ export function LandIntelligencePanel() {
               dataSources={scoreData.dataSources}
               nearbyAmenities={scoreData.nearbyAmenities}
             />
+
+            {scoreData.environmentalScreening ? (
+              <InfoCard
+                icon={Globe}
+                title="EPA Environmental Screening"
+                color="text-emerald-500"
+              >
+                <DataRow
+                  label="Wetland Risk"
+                  value={scoreData.environmentalScreening.wetlandScreening.status}
+                  accent={
+                    scoreData.environmentalScreening.wetlandScreening.status === "high"
+                      ? "text-red-400"
+                      : scoreData.environmentalScreening.wetlandScreening.status === "moderate"
+                        ? "text-amber-400"
+                        : "text-emerald-400"
+                  }
+                />
+                <DataRow
+                  label="Air Screening"
+                  value={scoreData.environmentalScreening.airQuality.status}
+                  accent={
+                    scoreData.environmentalScreening.airQuality.status === "high"
+                      ? "text-red-400"
+                      : scoreData.environmentalScreening.airQuality.status === "moderate"
+                        ? "text-amber-400"
+                        : "text-emerald-400"
+                  }
+                />
+                <DataRow
+                  label="Water Screening"
+                  value={scoreData.environmentalScreening.waterQuality.status}
+                  accent={
+                    scoreData.environmentalScreening.waterQuality.status === "high"
+                      ? "text-red-400"
+                      : scoreData.environmentalScreening.waterQuality.status === "moderate"
+                        ? "text-amber-400"
+                        : "text-emerald-400"
+                  }
+                />
+                <DataRow
+                  label="NEPA Review"
+                  value={scoreData.environmentalScreening.nepa.status}
+                  accent={
+                    scoreData.environmentalScreening.nepa.status === "elevated-review"
+                      ? "text-red-400"
+                      : scoreData.environmentalScreening.nepa.status ===
+                          "screening-recommended"
+                        ? "text-amber-400"
+                        : "text-emerald-400"
+                  }
+                />
+
+                <div className="mt-2 rounded border border-border/40 bg-secondary/20 p-2">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Summary
+                  </div>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {scoreData.environmentalScreening.nepa.summary}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Wetlands / Land Cover
+                    </div>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      {scoreData.environmentalScreening.wetlandScreening.summary}
+                    </p>
+                  </div>
+                  <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Air
+                    </div>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      {scoreData.environmentalScreening.airQuality.summary}
+                    </p>
+                  </div>
+                  <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Water
+                    </div>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      {scoreData.environmentalScreening.waterQuality.summary}
+                    </p>
+                  </div>
+                </div>
+
+                {scoreData.environmentalScreening.nepa.triggers.length > 0 ? (
+                  <div className="space-y-1">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Review Triggers
+                    </div>
+                    {scoreData.environmentalScreening.nepa.triggers.map((trigger, index) => (
+                      <div
+                        key={`${trigger}-${index}`}
+                        className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
+                      >
+                        {trigger}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="space-y-1">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Due-Diligence Documents
+                  </div>
+                  {scoreData.environmentalScreening.nepa.recommendedDocuments.map((document, index) => (
+                    <div
+                      key={`${document}-${index}`}
+                      className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
+                    >
+                      {document}
+                    </div>
+                  ))}
+                </div>
+              </InfoCard>
+            ) : null}
 
             {scoreData.score.recommendation ? (
               <InfoCard icon={TrendingUp} title="AI Recommendation" color="text-emerald-500">

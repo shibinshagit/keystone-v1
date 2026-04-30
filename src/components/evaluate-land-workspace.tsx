@@ -16,6 +16,7 @@ import {
   DollarSign,
   Loader2,
   Crosshair,
+  Globe,
   MapPin,
   RefreshCw,
   Satellite,
@@ -1062,6 +1063,144 @@ export function EvaluateLandWorkspace() {
                         dataSources={scoreData.dataSources}
                         nearbyAmenities={scoreData.nearbyAmenities}
                       />
+
+                      {scoreData.environmentalScreening ? (
+                        <div className="rounded-lg border border-border/50 bg-background/70 p-3">
+                          <div className="flex items-start gap-2">
+                            <Globe className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                            <div>
+                              <p className="text-sm font-semibold">
+                                EPA Environmental Screening
+                              </p>
+                              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                {scoreData.environmentalScreening.nepa.summary}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 grid gap-2 md:grid-cols-2">
+                            <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                              <div className="text-xs text-muted-foreground">Wetland Risk</div>
+                              <div
+                                className={cn(
+                                  "text-sm font-semibold capitalize",
+                                  scoreData.environmentalScreening.wetlandScreening.status === "high"
+                                    ? "text-red-400"
+                                    : scoreData.environmentalScreening.wetlandScreening.status === "moderate"
+                                      ? "text-amber-400"
+                                      : "text-emerald-400",
+                                )}
+                              >
+                                {scoreData.environmentalScreening.wetlandScreening.status}
+                              </div>
+                            </div>
+                            <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                              <div className="text-xs text-muted-foreground">Air Screening</div>
+                              <div
+                                className={cn(
+                                  "text-sm font-semibold capitalize",
+                                  scoreData.environmentalScreening.airQuality.status === "high"
+                                    ? "text-red-400"
+                                    : scoreData.environmentalScreening.airQuality.status === "moderate"
+                                      ? "text-amber-400"
+                                      : "text-emerald-400",
+                                )}
+                              >
+                                {scoreData.environmentalScreening.airQuality.status}
+                              </div>
+                            </div>
+                            <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                              <div className="text-xs text-muted-foreground">Water Screening</div>
+                              <div
+                                className={cn(
+                                  "text-sm font-semibold capitalize",
+                                  scoreData.environmentalScreening.waterQuality.status === "high"
+                                    ? "text-red-400"
+                                    : scoreData.environmentalScreening.waterQuality.status === "moderate"
+                                      ? "text-amber-400"
+                                      : "text-emerald-400",
+                                )}
+                              >
+                                {scoreData.environmentalScreening.waterQuality.status}
+                              </div>
+                            </div>
+                            <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                              <div className="text-xs text-muted-foreground">NEPA Review</div>
+                              <div
+                                className={cn(
+                                  "text-sm font-semibold",
+                                  scoreData.environmentalScreening.nepa.status === "elevated-review"
+                                    ? "text-red-400"
+                                    : scoreData.environmentalScreening.nepa.status === "screening-recommended"
+                                      ? "text-amber-400"
+                                      : "text-emerald-400",
+                                )}
+                              >
+                                {scoreData.environmentalScreening.nepa.status}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 space-y-2">
+                            <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Wetlands / Land Cover
+                              </div>
+                              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                {scoreData.environmentalScreening.wetlandScreening.summary}
+                              </p>
+                            </div>
+                            <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Air
+                              </div>
+                              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                {scoreData.environmentalScreening.airQuality.summary}
+                              </p>
+                            </div>
+                            <div className="rounded border border-border/40 bg-secondary/20 p-2">
+                              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Water
+                              </div>
+                              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                {scoreData.environmentalScreening.waterQuality.summary}
+                              </p>
+                            </div>
+                          </div>
+
+                          {scoreData.environmentalScreening.nepa.triggers.length > 0 ? (
+                            <div className="mt-3 space-y-1">
+                              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Review Triggers
+                              </div>
+                              {scoreData.environmentalScreening.nepa.triggers.map((trigger, index) => (
+                                <div
+                                  key={`${trigger}-${index}`}
+                                  className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
+                                >
+                                  {trigger}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+
+                          <div className="mt-3 space-y-1">
+                            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              Due-Diligence Documents
+                            </div>
+                            {scoreData.environmentalScreening.nepa.recommendedDocuments.map(
+                              (document, index) => (
+                                <div
+                                  key={`${document}-${index}`}
+                                  className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
+                                >
+                                  {document}
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
 
                       <div className="rounded-lg border border-border/50 bg-background/70 p-3">
                         <div className="flex items-start gap-2">

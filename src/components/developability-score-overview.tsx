@@ -46,6 +46,7 @@ interface DevelopabilityOverviewProps {
     googlePlaces: DataSourceStatus;
     googleRoads: DataSourceStatus;
     proposedInfrastructure: DataSourceStatus;
+    environmental: DataSourceStatus;
   };
   nearbyAmenities?: {
     transit: NearbyAmenitySummaryItem;
@@ -73,6 +74,7 @@ const DATA_SOURCE_META = [
   { key: "googlePlaces", label: "Google Places" },
   { key: "googleRoads", label: "Google Roads" },
   { key: "proposedInfrastructure", label: "Proposed Infra" },
+  { key: "environmental", label: "Environmental" },
 ] as const;
 
 export function DevelopabilityScoreOverview({
