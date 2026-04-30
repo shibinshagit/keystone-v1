@@ -6,8 +6,6 @@ import {
   shouldUseNationalIndiaFallback,
 } from "@/lib/regulation-collections";
 import type { BuildingIntendedUse, GeographyMarket, RegulationData } from "@/lib/types";
-import { mergeUsaBuildingCodeBaselines } from "@/lib/usa-building-code-regulations";
-import { mergeUsaZoningBaselines } from "@/lib/usa-zoning-regulations";
 
 export interface RegulationLookupResult {
   regulation: RegulationData | null;
@@ -67,14 +65,6 @@ function findBestMatch(
   );
 }
 
-function mergeUsaPilotBaselines(
-  location: string | null | undefined,
-  regulations: RegulationData[],
-): RegulationData[] {
-  const zoningMerged = mergeUsaZoningBaselines(location, regulations);
-  return mergeUsaBuildingCodeBaselines(location, zoningMerged);
-}
-
 export async function getAvailableRegulationsForLocation({
   location,
   market,
@@ -98,7 +88,11 @@ export async function getAvailableRegulationsForLocation({
       }) as RegulationData,
   );
 
-  return mergeUsaPilotBaselines(location, firestoreRegulations);
+  if (firestoreRegulations.length > 0) {
+    return firestoreRegulations;
+  }
+
+  return [];
 }
 
 export async function lookupRegulationForLocationAndUse({
@@ -120,12 +114,8 @@ export async function lookupRegulationForLocationAndUse({
     const specificDoc = await getDoc(doc(db, collectionName, regulationId));
     if (specificDoc.exists()) {
       const regulation = specificDoc.data() as RegulationData;
-      const [mergedRegulation] = mergeUsaPilotBaselines(
-        regulation.location || locationCandidates[0] || location,
-        [regulation],
-      );
       return {
-        regulation: mergedRegulation || regulation,
+        regulation,
         matchedLocation: regulation.location || locationCandidates[0] || null,
         source: "specific-id",
       };
@@ -151,9 +141,8 @@ export async function lookupRegulationForLocationAndUse({
     const genericDoc = await getDoc(doc(db, collectionName, `${candidate}-${normalizedUse}`));
     if (genericDoc.exists()) {
       const regulation = genericDoc.data() as RegulationData;
-      const [mergedRegulation] = mergeUsaPilotBaselines(candidate, [regulation]);
       return {
-        regulation: mergedRegulation || regulation,
+        regulation,
         matchedLocation: candidate,
         source: "generic-id",
       };
