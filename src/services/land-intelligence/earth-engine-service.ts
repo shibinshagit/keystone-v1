@@ -7,12 +7,15 @@
  * Auth: Service Account JSON Key
  */
 
+import type { Feature, Polygon } from 'geojson';
 import ee from '@google/earthengine';
-import type { SatelliteChangeData } from '@/lib/types';
+import type { SatelliteChangeData, TerrainIntelligenceData } from '@/lib/types';
 
 function getProjectId() { return process.env.EARTH_ENGINE_PROJECT_ID; }
 function getSAKeyJSON() { return process.env.EARTH_ENGINE_SERVICE_ACCOUNT_KEY; }
 function IS_MOCK() { return !getProjectId() || !getSAKeyJSON(); }
+const SRTM_DATASET = 'USGS/SRTMGL1_003';
+const DEFAULT_TERRAIN_BUFFER_METERS = 250;
 
 // ── Auth & Initialization ─────────────────────────────────────────────────────
 
@@ -54,7 +57,188 @@ async function initGEE(): Promise<void> {
     }
   });
 
+  _initPromise = _initPromise.catch((error) => {
+    _initialized = false;
+    _initPromise = null;
+    throw error;
+  });
+
   return _initPromise;
+}
+
+function evaluateEE<T>(target: any): Promise<T> {
+  return new Promise((resolve, reject) => {
+    target.evaluate((result: T, error: any) => {
+      if (error) {
+        reject(new Error(typeof error === 'string' ? error : JSON.stringify(error)));
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+
+function round(value: number | null, digits: number = 1) {
+  if (value == null || !Number.isFinite(value)) return null;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function toNullableNumber(value: unknown) {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeDegrees(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return null;
+  const normalized = value % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
+}
+
+function aspectDirectionFromDegrees(value: number | null): TerrainIntelligenceData['aspectDirection'] {
+  const normalized = normalizeDegrees(value);
+  if (normalized == null) return null;
+  const directions: TerrainIntelligenceData['aspectDirection'][] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const index = Math.round(normalized / 45) % 8;
+  return directions[index];
+}
+
+function classifyTerrain(meanSlope: number | null, relief: number | null): TerrainIntelligenceData['terrainClass'] {
+  if ((meanSlope ?? 0) < 2 && (relief ?? 0) < 5) return 'flat';
+  if ((meanSlope ?? 0) < 5 && (relief ?? 0) < 12) return 'gentle';
+  if ((meanSlope ?? 0) < 10 && (relief ?? 0) < 30) return 'rolling';
+  if ((meanSlope ?? 0) < 18 && (relief ?? 0) < 60) return 'steep';
+  return 'very-steep';
+}
+
+function classifyRunoffRisk(meanSlope: number | null, relief: number | null): TerrainIntelligenceData['runoffRisk'] {
+  if ((meanSlope ?? 0) < 1.5 && (relief ?? 0) < 3) return 'high';
+  if ((meanSlope ?? 0) > 15 || (relief ?? 0) > 60) return 'high';
+  if ((meanSlope ?? 0) < 3 || (relief ?? 0) < 8) return 'moderate';
+  return 'low';
+}
+
+function classifyFoundationRisk(meanSlope: number | null, relief: number | null): TerrainIntelligenceData['foundationRisk'] {
+  if ((meanSlope ?? 0) > 12 || (relief ?? 0) > 35) return 'high';
+  if ((meanSlope ?? 0) > 6 || (relief ?? 0) > 15) return 'moderate';
+  return 'low';
+}
+
+function classifyBuildability(
+  runoffRisk: TerrainIntelligenceData['runoffRisk'],
+  foundationRisk: TerrainIntelligenceData['foundationRisk'],
+): TerrainIntelligenceData['buildability'] {
+  if (runoffRisk === 'high' || foundationRisk === 'high') return 'constrained';
+  if (runoffRisk === 'moderate' || foundationRisk === 'moderate') return 'conditional';
+  return 'favorable';
+}
+
+function buildDrainageNote(
+  aspectDirection: TerrainIntelligenceData['aspectDirection'],
+  runoffRisk: TerrainIntelligenceData['runoffRisk'],
+  terrainClass: TerrainIntelligenceData['terrainClass'],
+) {
+  const fallDirection = aspectDirection ? `with the primary fall trending ${aspectDirection}` : 'with no strong aspect signal';
+  if (runoffRisk === 'high' && terrainClass === 'flat') {
+    return `The land is very gentle ${fallDirection}, which can trap water during heavy rain. Ponding and stormwater outfall design should be reviewed early.`;
+  }
+  if (runoffRisk === 'high') {
+    return `The site has energetic topography ${fallDirection}. Surface runoff could accelerate and may require stepped grading, erosion control, or retaining.`;
+  }
+  if (runoffRisk === 'moderate') {
+    return `Drainage looks manageable ${fallDirection}, but grading and stormwater routing should still be coordinated early in concept planning.`;
+  }
+  return `Terrain drainage appears favorable ${fallDirection}, with enough fall to support early-stage stormwater planning without obvious topographic red flags.`;
+}
+
+function buildTerrainSummary(
+  terrainClass: TerrainIntelligenceData['terrainClass'],
+  aspectDirection: TerrainIntelligenceData['aspectDirection'],
+  meanSlope: number | null,
+  relief: number | null,
+  buildability: TerrainIntelligenceData['buildability'],
+  runoffRisk: TerrainIntelligenceData['runoffRisk'],
+) {
+  const aspectText = aspectDirection ? `${aspectDirection}-facing` : 'mixed-aspect';
+  return `SRTM indicates ${terrainClass} ${aspectText} terrain with a mean slope of ${round(meanSlope, 1) ?? 'N/A'} deg and about ${round(relief, 1) ?? 'N/A'} m of relief across the analyzed area. Overall terrain buildability looks ${buildability}, with ${runoffRisk} runoff risk at this screening stage.`;
+}
+
+function buildTerrainRegion(
+  coordinates: [number, number],
+  plotGeometry?: Feature<Polygon> | null,
+  bufferMeters: number = DEFAULT_TERRAIN_BUFFER_METERS,
+) {
+  if (plotGeometry?.geometry?.type === 'Polygon' && plotGeometry.geometry.coordinates?.length) {
+    return {
+      geometry: ee.Geometry.Polygon(plotGeometry.geometry.coordinates as any),
+      geometryMode: 'plot' as const,
+      bufferRadiusMeters: null,
+    };
+  }
+
+  return {
+    geometry: ee.Geometry.Point(coordinates).buffer(bufferMeters),
+    geometryMode: 'buffer' as const,
+    bufferRadiusMeters: bufferMeters,
+  };
+}
+
+function buildMockTerrainResult(
+  coordinates: [number, number],
+  location: string,
+  plotGeometry?: Feature<Polygon> | null,
+  bufferMeters: number = DEFAULT_TERRAIN_BUFFER_METERS,
+): TerrainIntelligenceData {
+  const [lng, lat] = coordinates;
+  const seed = Math.abs(Math.round(lng * 1000 + lat * 1000));
+  const meanElevation = 40 + Math.abs(lat * 12) + (seed % 75);
+  const relief = (plotGeometry ? 6 : 14) + (seed % (plotGeometry ? 10 : 18));
+  const meanSlope = (plotGeometry ? 1.2 : 2.5) + ((seed % 28) / 10);
+  const maxSlope = meanSlope + 2 + ((seed % 20) / 10);
+  const aspectDegrees = (seed * 17) % 360;
+  const aspectDirection = aspectDirectionFromDegrees(aspectDegrees);
+  const terrainClass = classifyTerrain(meanSlope, relief);
+  const runoffRisk = classifyRunoffRisk(meanSlope, relief);
+  const foundationRisk = classifyFoundationRisk(meanSlope, relief);
+  const buildability = classifyBuildability(runoffRisk, foundationRisk);
+  const drainageNote = buildDrainageNote(aspectDirection, runoffRisk, terrainClass);
+
+  return {
+    location,
+    coordinates,
+    analysisDate: new Date().toISOString().split('T')[0],
+    source: 'Mock SRTM terrain (set EARTH_ENGINE_PROJECT_ID for live)',
+    dataset: SRTM_DATASET,
+    resolutionMeters: 30,
+    geometryMode: plotGeometry ? 'plot' : 'buffer',
+    bufferRadiusMeters: plotGeometry ? null : bufferMeters,
+    elevationMeters: {
+      mean: round(meanElevation, 1),
+      min: round(meanElevation - relief / 2, 1),
+      max: round(meanElevation + relief / 2, 1),
+      relief: round(relief, 1),
+      centroid: round(meanElevation, 1),
+    },
+    slopeDegrees: {
+      mean: round(meanSlope, 1),
+      max: round(maxSlope, 1),
+    },
+    aspectDegrees: round(aspectDegrees, 1),
+    aspectDirection,
+    terrainClass,
+    runoffRisk,
+    foundationRisk,
+    buildability,
+    drainageNote,
+    summary: buildTerrainSummary(
+      terrainClass,
+      aspectDirection,
+      meanSlope,
+      relief,
+      buildability,
+      runoffRisk,
+    ),
+  };
 }
 
 // ── Sentinel-2 NDVI Analysis ──────────────────────────────────────────────────
@@ -224,6 +408,126 @@ export const EarthEngineService = {
       year: cur - years + 1 + i,
       ndvi: parseFloat(Math.max(0, Math.min(1, base + trend * (i - years + 1))).toFixed(3)),
     }));
+  },
+
+  async getTerrainIntelligence(
+    coordinates: [number, number],
+    options?: {
+      plotGeometry?: Feature<Polygon> | null;
+      location?: string;
+      bufferMeters?: number;
+    },
+  ): Promise<TerrainIntelligenceData> {
+    const location = options?.location || 'Selected site';
+    const bufferMeters = options?.bufferMeters ?? DEFAULT_TERRAIN_BUFFER_METERS;
+
+    if (IS_MOCK()) {
+      console.log(`[EarthEngine] MOCK MODE - returning simulated SRTM terrain for ${location}`);
+      return buildMockTerrainResult(coordinates, location, options?.plotGeometry, bufferMeters);
+    }
+
+    try {
+      await initGEE();
+
+      const regionConfig = buildTerrainRegion(coordinates, options?.plotGeometry, bufferMeters);
+      const point = ee.Geometry.Point(coordinates);
+      const dem = ee.Image(SRTM_DATASET).select('elevation');
+      const terrain = ee.Algorithms.Terrain(dem);
+      const regionArgs = {
+        geometry: regionConfig.geometry,
+        scale: 30,
+        bestEffort: true,
+        maxPixels: 1e8,
+      };
+      const elevationReducer = ee.Reducer.mean().combine({
+        reducer2: ee.Reducer.minMax(),
+        sharedInputs: true,
+      });
+      const slopeReducer = ee.Reducer.mean().combine({
+        reducer2: ee.Reducer.max(),
+        sharedInputs: true,
+      });
+
+      const [elevationStats, slopeStats, aspectStats, centroidStats] = await Promise.all([
+        evaluateEE<Record<string, number | null>>(dem.reduceRegion({
+          reducer: elevationReducer,
+          ...regionArgs,
+        })),
+        evaluateEE<Record<string, number | null>>(terrain.select('slope').reduceRegion({
+          reducer: slopeReducer,
+          ...regionArgs,
+        })),
+        evaluateEE<Record<string, number | null>>(terrain.select('aspect').reduceRegion({
+          reducer: ee.Reducer.mean(),
+          ...regionArgs,
+        })),
+        evaluateEE<Record<string, number | null>>(dem.reduceRegion({
+          reducer: ee.Reducer.mean(),
+          geometry: point.buffer(15),
+          scale: 30,
+          bestEffort: true,
+          maxPixels: 1e6,
+        })),
+      ]);
+
+      const meanElevation = toNullableNumber(elevationStats.elevation_mean);
+      const minElevation = toNullableNumber(elevationStats.elevation_min);
+      const maxElevation = toNullableNumber(elevationStats.elevation_max);
+      const meanSlope = toNullableNumber(slopeStats.slope_mean);
+      const maxSlope = toNullableNumber(slopeStats.slope_max);
+      const aspectDegrees = toNullableNumber(aspectStats.aspect);
+      const centroidElevation = toNullableNumber(centroidStats.elevation);
+      const relief =
+        meanElevation != null && minElevation != null && maxElevation != null
+          ? maxElevation - minElevation
+          : null;
+      const aspectDirection = aspectDirectionFromDegrees(aspectDegrees);
+      const terrainClass = classifyTerrain(meanSlope, relief);
+      const runoffRisk = classifyRunoffRisk(meanSlope, relief);
+      const foundationRisk = classifyFoundationRisk(meanSlope, relief);
+      const buildability = classifyBuildability(runoffRisk, foundationRisk);
+      const drainageNote = buildDrainageNote(aspectDirection, runoffRisk, terrainClass);
+
+      return {
+        location,
+        coordinates,
+        analysisDate: new Date().toISOString().split('T')[0],
+        source: `Google Earth Engine LIVE (${SRTM_DATASET}, project: ${getProjectId()})`,
+        dataset: SRTM_DATASET,
+        resolutionMeters: 30,
+        geometryMode: regionConfig.geometryMode,
+        bufferRadiusMeters: regionConfig.bufferRadiusMeters,
+        elevationMeters: {
+          mean: round(meanElevation, 1),
+          min: round(minElevation, 1),
+          max: round(maxElevation, 1),
+          relief: round(relief, 1),
+          centroid: round(centroidElevation, 1),
+        },
+        slopeDegrees: {
+          mean: round(meanSlope, 1),
+          max: round(maxSlope, 1),
+        },
+        aspectDegrees: round(aspectDegrees, 1),
+        aspectDirection,
+        terrainClass,
+        runoffRisk,
+        foundationRisk,
+        buildability,
+        drainageNote,
+        summary: buildTerrainSummary(
+          terrainClass,
+          aspectDirection,
+          meanSlope,
+          relief,
+          buildability,
+          runoffRisk,
+        ),
+      };
+    } catch (err: any) {
+      console.error('[EarthEngine] Terrain analysis failed, falling back to mock:', err?.message || err);
+      return buildMockTerrainResult(coordinates, location, options?.plotGeometry, bufferMeters);
+    }
   },
 };
 

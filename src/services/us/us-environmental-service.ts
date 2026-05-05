@@ -45,6 +45,48 @@ export interface HistoricDistrictData {
     source: 'nps-api' | 'fallback';
 }
 
+const EPA_EJSCREEN_ENDPOINT = 'https://ejscreen.epa.gov/mapper/ejscreenRESTbroker.aspx';
+const FEMA_NFHL_ENDPOINT = 'https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer/28/query';
+let hasLoggedEPAEJScreenDnsFailure = false;
+let hasLoggedFEMANetworkFailure = false;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function isDNSResolutionError(error: unknown, hostname: string): boolean {
+    if (!isObject(error)) return false;
+
+    const cause = isObject(error.cause) ? error.cause : error;
+    return cause.code === 'ENOTFOUND' && cause.hostname === hostname;
+}
+
+function isTransientNetworkError(error: unknown, hostname: string): boolean {
+    if (!isObject(error)) return false;
+
+    const cause = isObject(error.cause) ? error.cause : error;
+    return (
+        cause.hostname === hostname &&
+        (cause.code === 'ECONNRESET' || cause.code === 'ETIMEDOUT' || cause.code === 'UND_ERR_CONNECT_TIMEOUT')
+    );
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, retries: number, delayMs: number): Promise<Response> {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            return await fetch(url, init);
+        } catch (error) {
+            lastError = error;
+            if (attempt === retries) break;
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+
+    throw lastError;
+}
+
 export const USEnvironmentalService = {
     /**
      * Get all environmental data in parallel.
@@ -119,9 +161,9 @@ export const USEnvironmentalService = {
             });
 
             // Layer 28 = S_Fld_Haz_Ar (Flood Hazard Areas)
-            const url = `https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer/28/query?${params.toString()}`;
+            const url = `${FEMA_NFHL_ENDPOINT}?${params.toString()}`;
 
-            const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+            const res = await fetchWithRetry(url, { signal: AbortSignal.timeout(8000) }, 1, 300);
             if (!res.ok) {
                 console.warn(`[USEnvironmentalService] FEMA NFHL HTTP ${res.status}`);
                 return null;
@@ -159,6 +201,16 @@ export const USEnvironmentalService = {
                 source: 'fema-nfhl',
             };
         } catch (error) {
+            if (isTransientNetworkError(error, 'hazards.fema.gov')) {
+                if (!hasLoggedFEMANetworkFailure) {
+                    hasLoggedFEMANetworkFailure = true;
+                    console.warn(
+                        '[USEnvironmentalService] FEMA NFHL service is temporarily unreachable (TLS/network handshake failed at hazards.fema.gov); returning null and continuing without flood zone data.',
+                    );
+                }
+                return null;
+            }
+
             console.warn('[USEnvironmentalService] FEMA flood zone fetch failed:', error);
             return null;
         }
@@ -173,7 +225,19 @@ export const USEnvironmentalService = {
      */
     async fetchEPAEJScreen(lng: number, lat: number): Promise<EPAEJScreenData | null> {
         try {
-            const url = `https://ejscreen.epa.gov/mapper/ejscreenRESTbroker.aspx?namestr=&geometry={"x":${lng},"y":${lat},"spatialReference":{"wkid":4326}}&distance=1&unit=9035&aession=&f=json`;
+            const params = new URLSearchParams({
+                namestr: '',
+                geometry: JSON.stringify({
+                    x: lng,
+                    y: lat,
+                    spatialReference: { wkid: 4326 },
+                }),
+                distance: '1',
+                unit: '9035',
+                session: '',
+                f: 'json',
+            });
+            const url = `${EPA_EJSCREEN_ENDPOINT}?${params.toString()}`;
 
             const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
             if (!res.ok) {
@@ -210,6 +274,16 @@ export const USEnvironmentalService = {
                 source: 'epa-ejscreen',
             };
         } catch (error) {
+            if (isDNSResolutionError(error, 'ejscreen.epa.gov')) {
+                if (!hasLoggedEPAEJScreenDnsFailure) {
+                    hasLoggedEPAEJScreenDnsFailure = true;
+                    console.warn(
+                        '[USEnvironmentalService] EPA EJScreen host is unavailable (DNS lookup failed for ejscreen.epa.gov); returning null and continuing without EJScreen data.',
+                    );
+                }
+                return null;
+            }
+
             console.warn('[USEnvironmentalService] EPA EJScreen fetch failed:', error);
             return null;
         }

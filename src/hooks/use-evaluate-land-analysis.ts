@@ -19,6 +19,7 @@ import type {
   PopulationMigrationAnalysis,
   Plot,
   RegulationData,
+  TerrainIntelligenceData,
 } from "@/lib/types";
 
 interface ScoreResult {
@@ -63,6 +64,7 @@ interface ScoreResult {
     } | null;
     aiSummary?: string | null;
   } | null;
+  terrain: TerrainIntelligenceData | null;
   environmentalScreening: EnvironmentalScreeningReport | null;
   transportationScreening: TransportationScreeningReport | null;
   populationMigration: PopulationMigrationAnalysis | null;
@@ -99,6 +101,7 @@ interface ScoreResult {
     sez: { count: number; available: boolean };
     usEconomy?: { available: boolean; source: string };
     usPermits?: { available: boolean; source: string };
+    terrain: { available: boolean; isMock: boolean; source?: string };
     satellite: { available: boolean; isMock: boolean };
     regulation: { available: boolean };
     googlePlaces: { count: number; available: boolean };
@@ -254,7 +257,7 @@ export function useEvaluateLandAnalysis({
     // Build initial step list — US gets parcel step, non-US gets Bhuvan
     const baseSteps = [
       { id: 'market', label: isUS ? 'Fetching US market data' : 'Fetching census & FDI data', status: 'loading' as const },
-      { id: 'connectivity', label: 'Checking location & connectivity', status: 'pending' as const },
+      { id: 'connectivity', label: 'Checking location, connectivity & terrain', status: 'pending' as const },
       { id: 'legal', label: isUS ? 'Running legal & zoning checks' : 'Matching regulations & zoning', status: 'pending' as const },
       ...(isUS && (Boolean(plotForAnalysis) || Boolean(pointTarget))
         ? [{ id: 'parcel', label: 'Fetching parcel data', status: 'pending' as const }]
@@ -364,7 +367,7 @@ export function useEvaluateLandAnalysis({
           : null,
       );
 
-      if (!nextLandUse) {
+      if (!nextLandUse && !scoreData) {
         errors.push(
           bhuvanRes.status === "rejected"
             ? bhuvanRes.reason?.message || "Land use unavailable."
@@ -389,7 +392,7 @@ export function useEvaluateLandAnalysis({
         setBuildVerdict(null);
       }
 
-      setScoreError(errors.length > 0 ? errors.join(" ") : null);
+      setScoreError(scoreRes.status === "fulfilled" ? null : errors.length > 0 ? errors.join(" ") : null);
 
       // After score loads — fire AI summary separately (non-blocking)
       if (scoreRes.status === 'fulfilled' && isUS) {

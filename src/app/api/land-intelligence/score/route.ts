@@ -19,6 +19,7 @@ import type {
   RegulationData,
   SEZData,
   SatelliteChangeData,
+  TerrainIntelligenceData,
 } from '@/lib/types';
 
 type Coordinates = [number, number];
@@ -355,6 +356,7 @@ export async function POST(request: NextRequest) {
       fdiData,
       sezData,
       satelliteData,
+      terrainData,
       regulationData,
       transitData,
       schoolData,
@@ -370,6 +372,10 @@ export async function POST(request: NextRequest) {
       DataGovService.getFDIData(state),
       DataGovService.getSEZData(state),
       EarthEngineService.getUrbanGrowthIndex(coords, district || state),
+      EarthEngineService.getTerrainIntelligence(coords, {
+        plotGeometry: query.plotGeometry,
+        location: district || state,
+      }),
       lookupRegulationForLocationAndUse({
         location: district ? `${district}, ${state}` : state,
         intendedUse: query.intendedUse || 'Residential',
@@ -426,6 +432,8 @@ export async function POST(request: NextRequest) {
     const fdi = fdiData.status === 'fulfilled' ? fdiData.value : [];
     const sez: SEZData[] = sezData.status === 'fulfilled' ? sezData.value : [];
     const satellite: SatelliteChangeData | null = satelliteData.status === 'fulfilled' ? satelliteData.value : null;
+    const terrain: TerrainIntelligenceData | null = terrainData.status === 'fulfilled' ? terrainData.value : null;
+    const terrainIsMock = terrain?.source?.toLowerCase().includes('mock') ?? EarthEngineService.isMockMode();
     const regulation = regulationData.status === 'fulfilled' ? regulationData.value.regulation : null;
     const transitPlaces = transitData.status === 'fulfilled' ? transitData.value : [];
     const schools = schoolData.status === 'fulfilled' ? schoolData.value : [];
@@ -1057,6 +1065,7 @@ export async function POST(request: NextRequest) {
         } : null,
         aiSummary: usAiSummary,
       } : null,
+      terrain,
       environmentalScreening,
       transportationScreening,
       populationMigration: (!isUS ? populationMigration : null) as PopulationMigrationResponse | null,
@@ -1082,6 +1091,11 @@ export async function POST(request: NextRequest) {
           source: 'FEMA NFHL + EPA EJScreen + NPS NRHP',
         } : undefined,
         satellite: { available: satellite !== null, isMock: EarthEngineService.isMockMode() },
+        terrain: {
+          available: terrain !== null,
+          isMock: terrainIsMock,
+          source: terrain?.source || terrain?.dataset || 'USGS/SRTMGL1_003',
+        },
         regulation: { available: regulation !== null },
         googlePlaces: {
           count:

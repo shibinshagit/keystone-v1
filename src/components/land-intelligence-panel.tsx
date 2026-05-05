@@ -21,10 +21,14 @@ import type { EnvironmentalScreeningReport } from "@/lib/land-intelligence/envir
 import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import type { LandUseSummary } from "@/lib/land-intelligence/land-use";
 import type { TransportationScreeningReport } from "@/lib/land-intelligence/transportation";
-import type { DevelopabilityScore, PopulationMigrationAnalysis } from "@/lib/types";
+import type { DevelopabilityScore, PopulationMigrationAnalysis, TerrainIntelligenceData } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useRegulations } from "@/hooks/use-regulations";
 import { PopulationMigrationCard } from "./population-migration-card";
+import {
+  TerrainIntelligenceCard,
+  TerrainIntelligenceStateCard,
+} from "./terrain-intelligence-card";
 import { TransportationScreeningCard } from "./transportation-screening-card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -33,6 +37,7 @@ import { DevelopabilityScoreOverview } from "./developability-score-overview";
 
 interface ScoreResult {
   score: DevelopabilityScore;
+  terrain: TerrainIntelligenceData | null;
   environmentalScreening: EnvironmentalScreeningReport | null;
   transportationScreening: TransportationScreeningReport | null;
   populationMigration: PopulationMigrationAnalysis | null;
@@ -67,6 +72,7 @@ interface ScoreResult {
     populationMigration: { count: number; available: boolean };
     fdi: { count: number; available: boolean };
     sez: { count: number; available: boolean };
+    terrain: { available: boolean; isMock: boolean; source?: string };
     satellite: { available: boolean; isMock: boolean };
     regulation: { available: boolean };
     googlePlaces: { count: number; available: boolean };
@@ -481,9 +487,25 @@ export function LandIntelligencePanel() {
         </div>
 
         {error ? (
-          <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-xs text-red-400">{error}</p>
+          <div
+            className={cn(
+              "flex items-start gap-2 rounded-lg p-3",
+              scoreData
+                ? "border border-amber-500/30 bg-amber-500/5"
+                : "border border-red-500/30 bg-red-500/5",
+            )}
+          >
+            <AlertTriangle
+              className={cn(
+                "mt-0.5 h-4 w-4 shrink-0",
+                scoreData ? "text-amber-400" : "text-red-500",
+              )}
+            />
+            <p className={cn("text-xs", scoreData ? "text-amber-300" : "text-red-400")}>
+              {scoreData && /timeout|aborted/i.test(error)
+                ? `Some supplemental checks timed out, but the main land-intelligence score still loaded. ${error}`
+                : error}
+            </p>
           </div>
         ) : null}
 
@@ -541,6 +563,19 @@ export function LandIntelligencePanel() {
               dataSources={scoreData.dataSources}
               nearbyAmenities={scoreData.nearbyAmenities}
             />
+
+            {scoreData.terrain ? (
+              <TerrainIntelligenceCard terrain={scoreData.terrain} />
+            ) : (
+              <TerrainIntelligenceStateCard
+                available={scoreData.dataSources.terrain.available}
+                message={
+                  scoreData.dataSources.terrain.available
+                    ? "Terrain data source was available for this run, but the detailed terrain metrics were not attached to the current response."
+                    : "SRTM terrain metrics were not returned for this run. The chip in Data Sources is still listed for consistency, but the gray x state means terrain did not contribute to this result."
+                }
+              />
+            )}
 
             {scoreData.environmentalScreening ? (
               <InfoCard

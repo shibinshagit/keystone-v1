@@ -40,6 +40,10 @@ import { PopulationMigrationCard } from "@/components/population-migration-card"
 import { DevelopabilityScoreOverview } from "@/components/developability-score-overview";
 import { DrawingStatus } from "@/components/drawing-status";
 import { TransportationScreeningCard } from "@/components/transportation-screening-card";
+import {
+  TerrainIntelligenceCard,
+  TerrainIntelligenceStateCard,
+} from "@/components/terrain-intelligence-card";
 import { AnalysisMode } from "@/components/solar-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -532,11 +536,9 @@ export function EvaluateLandWorkspace() {
     },
     validateRequired: () =>
       trigger([
-        "projectName",
         "location",
         "landSize",
         "intendedUse",
-        "priceRange",
         "plotType",
         "zoningPreference",
       ]),
@@ -626,8 +628,8 @@ export function EvaluateLandWorkspace() {
       )}
 
       <div className="pointer-events-none absolute inset-0 z-20">
-        <div className="pointer-events-auto absolute left-3 top-3 right-3 flex items-center gap-3">
-          <div className="flex items-center gap-3 rounded-xl border bg-background/95 px-3 py-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="absolute left-3 top-3 right-3 flex items-center gap-3">
+          <div className="pointer-events-auto flex items-center gap-3 rounded-xl border bg-background/95 px-3 py-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/60">
             <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
               <Link href="/">
                 <ArrowLeft className="h-4 w-4" />
@@ -636,7 +638,7 @@ export function EvaluateLandWorkspace() {
             <h1 className="text-sm font-semibold">Evaluate a Land</h1>
           </div>
 
-          <div className="hidden md:block absolute left-1/2 -translate-x-1/2 w-full max-w-md">
+          <div className="pointer-events-auto hidden md:block absolute left-1/2 -translate-x-1/2 w-full max-w-md">
             <MapSearch />
           </div>
         </div>
@@ -742,7 +744,10 @@ export function EvaluateLandWorkspace() {
                         <FormItem>
                           <FormLabel>Project Name *</FormLabel>
                           <FormControl>
-                            <Input {...field} />
+                            <Input
+                              {...field}
+                              placeholder="e.g. East Austin Mixed-Use Opportunity"
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1174,9 +1179,20 @@ export function EvaluateLandWorkspace() {
                   </div>
 
                   {scoreError ? (
-                    <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                    <div
+                      className={cn(
+                        "flex items-start gap-2 rounded-md p-3 text-xs",
+                        scoreData
+                          ? "border border-amber-500/30 bg-amber-500/5 text-amber-300"
+                          : "border border-destructive/30 bg-destructive/5 text-destructive",
+                      )}
+                    >
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>{scoreError}</span>
+                      <span>
+                        {scoreData && /timeout|aborted/i.test(scoreError)
+                          ? `Some supplemental checks timed out, but the main land-intelligence score still loaded. ${scoreError}`
+                          : scoreError}
+                      </span>
                     </div>
                   ) : null}
 
@@ -1405,6 +1421,19 @@ export function EvaluateLandWorkspace() {
                           </div>
                           <p className="text-[9px] text-muted-foreground">Sources: US Census ACS · Bureau of Labor Statistics · Census BPS</p>
                         </div>
+                      )}
+
+                      {scoreData.terrain ? (
+                        <TerrainIntelligenceCard terrain={scoreData.terrain} />
+                      ) : (
+                        <TerrainIntelligenceStateCard
+                          available={scoreData.dataSources.terrain.available}
+                          message={
+                            scoreData.dataSources.terrain.available
+                              ? "Terrain data source was available for this run, but the detailed terrain metrics were not attached to the current response."
+                              : "SRTM terrain metrics were not returned for this run. The chip in Data Sources is still listed for consistency, but the gray x state means terrain did not contribute to this result."
+                          }
+                        />
                       )}
 
                       {scoreData.environmentalScreening ? (

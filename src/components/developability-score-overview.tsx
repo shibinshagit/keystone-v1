@@ -41,6 +41,7 @@ interface DevelopabilityOverviewProps {
     populationMigration: DataSourceStatus;
     fdi: DataSourceStatus;
     sez: DataSourceStatus;
+    terrain: { available: boolean; isMock?: boolean; source?: string };
     satellite: { available: boolean; isMock?: boolean };
     regulation: { available: boolean };
     googlePlaces: DataSourceStatus;
@@ -70,6 +71,7 @@ const DATA_SOURCE_META = [
   { key: "populationMigration", label: "Migration Model" },
   { key: "fdi", label: "FDI" },
   { key: "sez", label: "SEZ" },
+  { key: "terrain", label: "SRTM Terrain" },
   { key: "satellite", label: "Satellite" },
   { key: "regulation", label: "Regulation" },
   { key: "googlePlaces", label: "Google Places" },

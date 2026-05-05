@@ -1309,6 +1309,55 @@ export interface SatelliteChangeData {
   source: string;
 }
 
+export type TerrainGeometryMode = 'plot' | 'buffer';
+export type TerrainRiskLevel = 'low' | 'moderate' | 'high';
+export type TerrainBuildability = 'favorable' | 'conditional' | 'constrained';
+export type TerrainAspectDirection =
+  | 'N'
+  | 'NE'
+  | 'E'
+  | 'SE'
+  | 'S'
+  | 'SW'
+  | 'W'
+  | 'NW';
+export type TerrainClass =
+  | 'flat'
+  | 'gentle'
+  | 'rolling'
+  | 'steep'
+  | 'very-steep';
+
+export interface TerrainIntelligenceData {
+  location: string;
+  coordinates: [number, number];
+  analysisDate: string;
+  source: string;
+  dataset: string;
+  resolutionMeters: number;
+  geometryMode: TerrainGeometryMode;
+  bufferRadiusMeters: number | null;
+  elevationMeters: {
+    mean: number | null;
+    min: number | null;
+    max: number | null;
+    relief: number | null;
+    centroid: number | null;
+  };
+  slopeDegrees: {
+    mean: number | null;
+    max: number | null;
+  };
+  aspectDegrees: number | null;
+  aspectDirection: TerrainAspectDirection | null;
+  terrainClass: TerrainClass;
+  runoffRisk: TerrainRiskLevel;
+  foundationRisk: TerrainRiskLevel;
+  buildability: TerrainBuildability;
+  drainageNote: string;
+  summary: string;
+}
+
 // Master Plan extraction types
 export interface MasterPlanZone {
   zoneName: string;              // e.g. "Residential Zone R1"
