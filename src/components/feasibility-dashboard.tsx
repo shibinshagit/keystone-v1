@@ -2043,7 +2043,9 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
 
   const sim = estimates.simulation;
   const bd = estimates.cost_breakdown;
-  const totalCost = estimates.total_construction_cost;
+  const softCosts = estimates.soft_cost_breakdown;
+  const softCostTotal = softCosts?.total || 0;
+  const totalCost = estimates.total_project_cost || estimates.total_construction_cost;
   const totalRev = estimates.total_revenue;
   const profit = estimates.potential_profit;
   const roi = estimates.roi_percentage;
@@ -2138,13 +2140,13 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
 
   // Adjust simulated totals to include these site-level costs for display
   const adj_cost_p10 = sim
-    ? sim.cost_p10 + roadMin + parkingMin + boundaryMin
+    ? sim.cost_p10 + softCostTotal + roadMin + parkingMin + boundaryMin
     : 0;
   const adj_cost_p50 = sim
-    ? sim.cost_p50 + roadMin + parkingMin + boundaryMin
+    ? sim.cost_p50 + softCostTotal + roadMin + parkingMin + boundaryMin
     : 0;
   const adj_cost_p90 = sim
-    ? sim.cost_p90 + roadMin + parkingMin + boundaryMin
+    ? sim.cost_p90 + softCostTotal + roadMin + parkingMin + boundaryMin
     : 0;
 
   // Calculate revenue and profit ranges based on cost ranges (including land)
@@ -2277,7 +2279,10 @@ function CostSimulatorTab({ estimates, isLoading }: SimulatorTabProps) {
             { label: "Structure", value: bd.structure, color: "#3b82f6" },
             { label: "Finishing", value: bd.finishing, color: "#8b5cf6" },
             { label: "Services", value: bd.services, color: "#10b981" },
+            { label: "Closeout", value: bd.closeout, color: "#f97316" },
             { label: "Contingency", value: bd.contingency, color: "#ef4444" },
+            { label: "Finance", value: softCosts?.finance || 0, color: "#64748b" },
+            { label: "Marketing", value: softCosts?.marketing || 0, color: "#ec4899" },
           ];
           const totalParts =
             costCategories.reduce((s, c) => s + c.value, 0) || 1;
@@ -2880,7 +2885,7 @@ function MultiBuildingBudgetTab({
   const fmtCr = (v: number) => isUSD ? `${(v / 1000000).toFixed(1)} M` : `₹${(v / 10000000).toFixed(1)} Cr`;
   const selectedPlot = useSelectedPlot();
   const estimateBreakdown = estimates.breakdown || [];
-  const totalCost = estimates.total_construction_cost;
+  const totalCost = estimates.total_project_cost || estimates.total_construction_cost;
   const totalRev = estimates.total_revenue;
   const totalUtilities = estimates.simulation?.total_utility_cost || 0;
   const sim = estimates.simulation;
@@ -3825,7 +3830,7 @@ function FeasibilityTab({ estimates, isLoadingEstimates }: FeasibilityTabProps) 
     ? (dashProfit_p90 / dashTotalCostWithLand_p10) * 100
     : 0;
 
-  const dashEstTotalCost = (estimates?.total_construction_cost || 0) + dashRoadMin + dashParkingMin + dashBoundaryMin + dashLandCost;
+  const dashEstTotalCost = (estimates?.total_project_cost || estimates?.total_construction_cost || 0) + dashRoadMin + dashParkingMin + dashBoundaryMin + dashLandCost;
   const dashEstProfit = (estimates?.potential_profit || 0) - dashRoadMin - dashParkingMin - dashBoundaryMin - dashLandCost;
   const dashRoiEst = dashEstTotalCost > 0 ? (dashEstProfit / dashEstTotalCost) * 100 : (estimates?.roi_percentage || 0);
 

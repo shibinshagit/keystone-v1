@@ -92,11 +92,16 @@ function runCostSimulation({ costParam, gfa, iterations = 5000 }: CostSimInput) 
             mode: cp.services_cost_per_sqm,
             max: cp.services_cost_per_sqm_max ?? cp.services_cost_per_sqm * 1.2,
         },
+        closeout: {
+            min: cp.closeout_cost_per_sqm_min ?? ((cp.closeout_cost_per_sqm || 0) * 0.8),
+            mode: cp.closeout_cost_per_sqm || 0,
+            max: cp.closeout_cost_per_sqm_max ?? ((cp.closeout_cost_per_sqm || 0) * 1.3),
+        },
     };
 
     const totals: number[] = [];
     const components: Record<string, number[]> = {
-        earthwork: [], structure: [], finishing: [], services: [],
+        earthwork: [], structure: [], finishing: [], services: [], closeout: [],
     };
 
     for (let i = 0; i < iterations; i++) {
@@ -104,25 +109,33 @@ function runCostSimulation({ costParam, gfa, iterations = 5000 }: CostSimInput) 
         const s = triSample(ranges.structure.min, ranges.structure.mode, ranges.structure.max) * gfa;
         const f = triSample(ranges.finishing.min, ranges.finishing.mode, ranges.finishing.max) * gfa;
         const sv = triSample(ranges.services.min, ranges.services.mode, ranges.services.max) * gfa;
-        const contingency = (e + s + f + sv) * 0.05;
-        const total = e + s + f + sv + contingency;
+        const c = triSample(ranges.closeout.min, ranges.closeout.mode, ranges.closeout.max) * gfa;
+        const contingency = (e + s + f + sv + c) * 0.05;
+        const total = e + s + f + sv + c + contingency;
         totals.push(total);
         components.earthwork.push(e);
         components.structure.push(s);
         components.finishing.push(f);
         components.services.push(sv);
+        components.closeout.push(c);
     }
 
     const sorted = [...totals].sort((a, b) => a - b);
 
     // Sensitivity analysis: vary one component at a time
-    const baseTotal = gfa * (cp.earthwork_cost_per_sqm + cp.structure_cost_per_sqm +
-        cp.finishing_cost_per_sqm + cp.services_cost_per_sqm) * 1.05;
+    const baseTotal = gfa * (
+        cp.earthwork_cost_per_sqm +
+        cp.structure_cost_per_sqm +
+        cp.finishing_cost_per_sqm +
+        cp.services_cost_per_sqm +
+        (cp.closeout_cost_per_sqm || 0)
+    ) * 1.05;
 
     const sensitivity: SensitivityVar[] = Object.entries(ranges).map(([key, r]) => {
         const labelMap: Record<string, string> = {
             earthwork: 'Earthwork', structure: 'Structure',
             finishing: 'Finishing', services: 'MEP/Services',
+            closeout: 'Closeout',
         };
         const lowCost = r.min * gfa * 1.05;
         const highCost = r.max * gfa * 1.05;

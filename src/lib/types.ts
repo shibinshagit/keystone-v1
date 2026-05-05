@@ -856,6 +856,7 @@ export interface CostRevenueParameters {
   structure_cost_per_sqm: number;
   finishing_cost_per_sqm: number;
   services_cost_per_sqm: number; // MEP
+  closeout_cost_per_sqm?: number;
   total_cost_per_sqm: number; // Calculated field
 
   // Range fields for Monte Carlo simulation (min/max)
@@ -867,6 +868,16 @@ export interface CostRevenueParameters {
   finishing_cost_per_sqm_max?: number;
   services_cost_per_sqm_min?: number;
   services_cost_per_sqm_max?: number;
+  closeout_cost_per_sqm_min?: number;
+  closeout_cost_per_sqm_max?: number;
+
+  // Soft costs (% based)
+  finance_pct?: number;
+  finance_pct_min?: number;
+  finance_pct_max?: number;
+  marketing_pct?: number;
+  marketing_pct_min?: number;
+  marketing_pct_max?: number;
 
   // Utility Costs (absolute or per-unit)
   utility_costs?: {
@@ -1142,16 +1153,27 @@ export interface SimulationResults {
 }
 
 export interface ProjectEstimates {
+  /** Core construction incl. closeout and contingency, excl. finance/marketing/site/land */
   isPotential?: boolean;
   /** Currency code for all monetary values in this estimate ('INR' | 'USD') */
   currency?: string;
   total_construction_cost: number;
+  /** Fully loaded project cost excl. land/site extras, incl. finance and marketing */
+  total_project_cost?: number;
   cost_breakdown: {
     earthwork: number;
     structure: number;
     finishing: number;
     services: number;
+    closeout: number;
     contingency: number;
+  };
+  soft_cost_breakdown?: {
+    finance: number;
+    marketing: number;
+    total: number;
+    finance_pct?: number;
+    marketing_pct?: number;
   };
 
   total_revenue: number;
@@ -1160,6 +1182,7 @@ export interface ProjectEstimates {
   /** Market rate from admin cost params (₹/sqm sellable) */
   market_rate_per_sqm?: number;
   sellable_ratio?: number;
+  site_costs?: CostRevenueParameters['site_costs'] | null;
 
   timeline: {
     total_months: number;

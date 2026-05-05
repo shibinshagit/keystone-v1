@@ -250,11 +250,16 @@ export function FeasibilityReport({
     )?.status === "pass";
 
   // cost/revenue from estimates
-  const totalCost = estimates?.total_construction_cost ?? 0;
+  const constructionCostTotal = estimates?.total_construction_cost ?? 0;
+  const totalCost = estimates?.total_project_cost ?? constructionCostTotal;
   const totalRev = estimates?.total_revenue ?? 0;
   const profit = estimates?.potential_profit ?? 0;
   const roi = estimates?.roi_percentage ?? 0;
   const cb = estimates?.cost_breakdown;
+  const softCosts = estimates?.soft_cost_breakdown;
+  const financeCost = softCosts?.finance ?? 0;
+  const marketingCost = softCosts?.marketing ?? 0;
+  const softCostTotal = softCosts?.total ?? 0;
   const tl = estimates?.timeline;
   const sim = estimates?.simulation;
 
@@ -3816,7 +3821,7 @@ export function FeasibilityReport({
                           </TD>
                         </tr>
                         <tr>
-                          <TD>Soft Costs (~15%)</TD>
+                          <TD>Finance + Marketing</TD>
                           <TD className="text-right">
                             {crore(totalCost * 0.15 * simRatio10).replace(/₹ |\$ | Cr| M/g, "")}{" "}
                             –{" "}
@@ -3835,7 +3840,7 @@ export function FeasibilityReport({
                           </TD>
                         </tr>
                         <tr>
-                          <TD>Contingency (2%)</TD>
+                          <TD>Contingency</TD>
                           <TD className="text-right">
                             {crore(totalCost * 0.02 * simRatio10).replace(/₹ |\$ | Cr| M/g, "")}{" "}
                             –{" "}
@@ -4124,8 +4129,20 @@ export function FeasibilityReport({
                         ratio: estimates.cost_breakdown.services / totalCost,
                       },
                       {
+                        label: "Closeout",
+                        ratio: estimates.cost_breakdown.closeout / totalCost,
+                      },
+                      {
                         label: "Contingency",
                         ratio: estimates.cost_breakdown.contingency / totalCost,
+                      },
+                      {
+                        label: "Finance",
+                        ratio: financeCost / totalCost,
+                      },
+                      {
+                        label: "Marketing",
+                        ratio: marketingCost / totalCost,
                       },
                     ].map((row, i) => {
                       const p10 = sim
@@ -5025,9 +5042,12 @@ export function FeasibilityReport({
           <div>
             {(() => {
               const landCost = actualLandCost;
-              const constructionCost = totalCost;
-              const softCosts = constructionCost * 0.15;
-              const contingency = constructionCost * 0.02;
+              const constructionCost = Math.max(
+                0,
+                constructionCostTotal - (cb?.contingency || 0)
+              );
+              const softCosts = softCostTotal;
+              const contingency = cb?.contingency || 0;
               const totalCapReq =
                 landCost + constructionCost + softCosts + contingency;
 
@@ -5183,9 +5203,12 @@ export function FeasibilityReport({
         <SH2>15.2 Cash Flow Projection — Sales Realization</SH2>
         {(() => {
           const landCost = actualLandCost;
-          const constructionCost = totalCost;
-          const softCosts = totalCost * 0.15;
-          const contingency = totalCost * 0.02;
+          const constructionCost = Math.max(
+            0,
+            constructionCostTotal - (cb?.contingency || 0)
+          );
+          const softCosts = softCostTotal;
+          const contingency = cb?.contingency || 0;
           const totalCapReq =
             landCost + constructionCost + softCosts + contingency;
           const debtCost = uw?.requestedLoanAmount || totalCapReq * 0.46;
@@ -5348,9 +5371,9 @@ export function FeasibilityReport({
                       <TD colSpan={2}>Less: Operating Expenses</TD>
                     </tr>
                     <tr>
-                      <TD>Marketing & Sales (3%)</TD>
+                      <TD>Marketing & Sales</TD>
                       <TD className="text-right">
-                        {(revCr * 0.03).toFixed(2)}
+                        {(isUSD ? marketingCost / 1000000 : marketingCost / 10000000).toFixed(2)}
                       </TD>
                     </tr>
                     <tr>

@@ -43,7 +43,10 @@ export function CostRevenuePanel() {
         structure_cost_per_sqm: 0,
         finishing_cost_per_sqm: 0,
         services_cost_per_sqm: 0,
+        closeout_cost_per_sqm: 0,
         total_cost_per_sqm: 0,
+        finance_pct: 0,
+        marketing_pct: 0,
         market_rate_per_sqm: 0,
         sellable_ratio: 0.75,
         currency: 'INR',
@@ -114,7 +117,8 @@ export function CostRevenuePanel() {
                 (formData.earthwork_cost_per_sqm || 0) +
                 (formData.structure_cost_per_sqm || 0) +
                 (formData.finishing_cost_per_sqm || 0) +
-                (formData.services_cost_per_sqm || 0);
+                (formData.services_cost_per_sqm || 0) +
+                (formData.closeout_cost_per_sqm || 0);
             setFormData(prev => ({ ...prev, total_cost_per_sqm: total }));
         }
     }, [
@@ -122,6 +126,7 @@ export function CostRevenuePanel() {
         formData.structure_cost_per_sqm,
         formData.finishing_cost_per_sqm,
         formData.services_cost_per_sqm,
+        formData.closeout_cost_per_sqm,
         isEditing
     ]);
 
@@ -275,6 +280,12 @@ export function CostRevenuePanel() {
                                             {Object.entries(countryParams).length === 0 ? (
                                                 <div className="text-center text-sm text-muted-foreground py-8">
                                                     No parameters for {country}
+                                                    <div className="mt-3">
+                                                        <Button variant="outline" size="sm" onClick={handleLoadDefaults} disabled={isLoading}>
+                                                            <RefreshCw className="mr-2 h-4 w-4" />
+                                                            Load Default Parameters
+                                                        </Button>
+                                                    </div>
                                                 </div>
                                             ) : (
                                                 Object.entries(countryParams).map(([location, params]) => (
@@ -367,8 +378,11 @@ export function CostRevenuePanel() {
                                     ) : (
                                         <>
                                             <Button variant="outline" onClick={() => {
-                                                setIsEditing(false);
-                                                if (selectedParam) setFormData(selectedParam);
+                                                if (selectedParam) {
+                                                    handleSelectParam(selectedParam);
+                                                } else {
+                                                    setIsEditing(false);
+                                                }
                                             }}>
                                                 Cancel
                                             </Button>
@@ -439,7 +453,7 @@ export function CostRevenuePanel() {
                             <div className="space-y-4">
                                 <h4 className="text-sm font-semibold">Cost Breakdown (per sqm)</h4>
                                 <div className="space-y-6">
-                                    {(['earthwork', 'structure', 'finishing', 'services'] as const).map(key => (
+                                    {(['earthwork', 'structure', 'finishing', 'services', 'closeout'] as const).map(key => (
                                         <div key={key} className="p-3 bg-secondary/10 rounded-lg border border-border/40">
                                             <Label className="capitalize font-semibold mb-3 block">{key} Cost</Label>
                                             <div className="grid grid-cols-3 gap-3">
@@ -483,6 +497,54 @@ export function CostRevenuePanel() {
                                         </span>
                                     </div>
                                     <p className="text-xs text-muted-foreground mt-1">Auto-calculated from above costs</p>
+                                </div>
+                            </div>
+
+                            <Separator />
+
+                            <div className="space-y-4">
+                                <h4 className="text-sm font-semibold">Soft Costs (percentage based)</h4>
+                                <div className="grid grid-cols-2 gap-4">
+                                    {([
+                                        { key: 'finance_pct', label: 'Finance (%)' },
+                                        { key: 'marketing_pct', label: 'Marketing (%)' },
+                                    ] as const).map(field => (
+                                        <div key={field.key} className="space-y-2 p-3 border rounded-md bg-background/50">
+                                            <Label className="text-xs font-semibold">{field.label}</Label>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <div className="space-y-1">
+                                                    <span className="text-[10px] text-muted-foreground block">Min</span>
+                                                    <Input
+                                                        type="number"
+                                                        className="h-7 text-xs"
+                                                        value={(formData as any)[`${field.key}_min`] || ''}
+                                                        onChange={(e) => setFormData({ ...formData, [`${field.key}_min`]: parseFloat(e.target.value) || undefined })}
+                                                        disabled={!isEditing}
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <span className="text-[10px] text-muted-foreground block">Base</span>
+                                                    <Input
+                                                        type="number"
+                                                        className="h-7 text-xs"
+                                                        value={(formData as any)[field.key] || 0}
+                                                        onChange={(e) => setFormData({ ...formData, [field.key]: parseFloat(e.target.value) || 0 })}
+                                                        disabled={!isEditing}
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <span className="text-[10px] text-muted-foreground block">Max</span>
+                                                    <Input
+                                                        type="number"
+                                                        className="h-7 text-xs"
+                                                        value={(formData as any)[`${field.key}_max`] || ''}
+                                                        onChange={(e) => setFormData({ ...formData, [`${field.key}_max`]: parseFloat(e.target.value) || undefined })}
+                                                        disabled={!isEditing}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
 
