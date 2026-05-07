@@ -10,6 +10,7 @@ import {
   Loader2,
   Map,
   MapPin,
+  FileText,
   RefreshCw,
   Satellite,
   TrendingUp,
@@ -456,6 +457,111 @@ export function LandIntelligencePanel() {
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">{analysisModeLabel}</p>
               </div>
+            </div>
+          </div>
+        ) : null}
+
+        {instantAnalysisTarget?.keralaParcel ? (
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-emerald-700">
+                  Kerala Parcel Details
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {instantAnalysisTarget.keralaParcel.gisInfo ||
+                    instantAnalysisTarget.locationLabel}
+                </p>
+              </div>
+              <Badge variant="outline" className="text-[10px]">
+                eMaps
+              </Badge>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <InfoCard icon={MapPin} title="Parcel" color="text-emerald-600">
+                <DataRow
+                  label="Block"
+                  value={instantAnalysisTarget.keralaParcel.blockNo || "N/A"}
+                />
+                <DataRow
+                  label="Survey"
+                  value={instantAnalysisTarget.keralaParcel.surveyNo || "N/A"}
+                />
+                <DataRow
+                  label="Subdivision"
+                  value={
+                    instantAnalysisTarget.keralaParcel.subdivisionNo || "N/A"
+                  }
+                />
+                <DataRow
+                  label="Area"
+                  value={
+                    instantAnalysisTarget.keralaParcel.areaSqm != null
+                      ? `${Math.round(
+                          instantAnalysisTarget.keralaParcel.areaSqm,
+                        ).toLocaleString()} sqm`
+                      : instantAnalysisTarget.keralaParcel.areaLabel || "N/A"
+                  }
+                />
+              </InfoCard>
+              <InfoCard icon={FileText} title="Record" color="text-emerald-600">
+                <DataRow
+                  label="Village"
+                  value={
+                    instantAnalysisTarget.keralaParcel.villageName || "N/A"
+                  }
+                />
+                <DataRow
+                  label="Taluk"
+                  value={instantAnalysisTarget.keralaParcel.talukName || "N/A"}
+                />
+                <DataRow
+                  label="District"
+                  value={
+                    instantAnalysisTarget.keralaParcel.districtName || "N/A"
+                  }
+                />
+                <DataRow
+                  label="Owners"
+                  value={
+                    instantAnalysisTarget.keralaParcel.owners?.length || 0
+                  }
+                />
+              </InfoCard>
+            </div>
+            {instantAnalysisTarget.keralaParcel.owners?.length ? (
+              <div className="mt-3 rounded-md border border-border/40 bg-background/70 p-3 text-xs">
+                <div className="font-medium text-muted-foreground">
+                  Owner details
+                </div>
+                <div className="mt-2 space-y-1">
+                  {instantAnalysisTarget.keralaParcel.owners
+                    .slice(0, 3)
+                    .map((owner) => (
+                      <p key={owner} className="break-words">
+                        {owner}
+                      </p>
+                    ))}
+                </div>
+              </div>
+            ) : null}
+            <div className="mt-3 flex gap-2">
+              {instantAnalysisTarget.keralaParcel.mapSketchUrl ? (
+                <Button asChild size="sm" variant="outline" className="h-8 text-xs">
+                  <a
+                    href={instantAnalysisTarget.keralaParcel.mapSketchUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open Official Map Sketch
+                  </a>
+                </Button>
+              ) : null}
+              {instantAnalysisTarget.keralaParcel.remarks ? (
+                <Badge variant="outline" className="max-w-full whitespace-normal text-[10px]">
+                  {instantAnalysisTarget.keralaParcel.remarks}
+                </Badge>
+              ) : null}
             </div>
           </div>
         ) : null}

@@ -23,6 +23,7 @@ import { generateSiteUtilities, generateBuildingLayout, calculateUtilityReservat
 import { splitPolygon } from '@/lib/polygon-utils';
 import { db } from '@/lib/firebase';
 import { inferRegulationGeography } from '@/lib/geography';
+import type { KeralaParcelSelection } from '@/lib/types';
 import { calculateVastuScore } from '@/lib/engines/vastu-engine';
 import { calculateGreenAnalysis } from '@/lib/engines/green-analysis-engine';
 import { ComplianceEngine } from '@/lib/engines/compliance-engine';
@@ -63,6 +64,7 @@ interface InstantAnalysisTarget {
     source: 'map-click';
     requestKey: string;
     capturedAt: string;
+    keralaParcel?: KeralaParcelSelection | null;
 }
 
 interface UiState {
