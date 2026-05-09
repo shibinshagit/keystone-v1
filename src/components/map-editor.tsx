@@ -1087,6 +1087,9 @@ export function MapEditor({
                       detail: {
                         highlightType: "wms",
                         wmsPath: indiaParcel.overlay.wmsPath,
+                        stateCode:
+                          indiaParcel.overlay.highlightStateCode ||
+                          indiaParcel.stateCode,
                         gisCode: indiaParcel.gisCode,
                         plotId: indiaParcel.overlay.plotId,
                         bounds: indiaParcel.extent,
@@ -1487,6 +1490,7 @@ export function MapEditor({
         geometry,
         apn,
         wmsPath,
+        stateCode,
         gisCode,
         plotId,
         bounds,
@@ -1496,7 +1500,7 @@ export function MapEditor({
       } = (e as CustomEvent).detail;
 
       if (highlightType === "wms") {
-        if (!wmsPath || !gisCode || !plotId || !bounds) return;
+        if (!wmsPath || !gisCode || !plotId || !bounds || !stateCode) return;
         const params = new URLSearchParams();
         params.set("service", "WMS");
         params.set("version", "1.1.1");
@@ -1509,7 +1513,7 @@ export function MapEditor({
         params.set("width", "512");
         params.set("height", "512");
         params.set("bbox", `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`);
-        params.set("state", "03");
+        params.set("state", stateCode);
         params.set("gis_code", gisCode);
         params.set("plot_id", plotId);
         const imageUrl = `${wmsPath}?${params.toString()}`;

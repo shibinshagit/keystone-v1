@@ -8,6 +8,11 @@ export async function proxyIndiaParcelWms(
   request: NextRequest,
   remoteWmsUrl: string,
   errorLabel: string,
+  remoteFetcher?: (targetUrl: string) => Promise<{
+    statusCode: number;
+    headers: Record<string, string | string[] | undefined>;
+    body: Buffer;
+  }>,
 ) {
   try {
     const target = new URL(remoteWmsUrl);
@@ -40,23 +45,42 @@ export async function proxyIndiaParcelWms(
       target.searchParams.set("SRS", srs || "EPSG:4326");
     }
 
-    const response = await fetch(target.toString(), {
-      headers: {
-        Accept: "image/png,*/*",
-        "User-Agent": "Mozilla/5.0",
-      },
-      cache: "no-store",
-    });
+    const response = remoteFetcher ? await remoteFetcher(target.toString()) : null;
 
-    if (!response.ok) {
+    if (response) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return NextResponse.json(
+          { error: `${errorLabel} responded with status ${response.statusCode}` },
+          { status: response.statusCode },
+        );
+      }
+    }
+
+    const fetchResponse = response
+      ? response
+      : await fetch(target.toString(), {
+          headers: {
+            Accept: "image/png,*/*",
+            "User-Agent": "Mozilla/5.0",
+          },
+          cache: "no-store",
+        }).then(async (res) => ({
+          statusCode: res.status,
+          headers: Object.fromEntries(res.headers.entries()),
+          body: Buffer.from(await res.arrayBuffer()),
+        }));
+
+    if (fetchResponse.statusCode < 200 || fetchResponse.statusCode >= 300) {
       return NextResponse.json(
-        { error: `${errorLabel} responded with status ${response.status}` },
-        { status: response.status },
+        { error: `${errorLabel} responded with status ${fetchResponse.statusCode}` },
+        { status: fetchResponse.statusCode },
       );
     }
 
-    const contentType = response.headers.get("content-type") || "image/png";
-    const buffer = Buffer.from(await response.arrayBuffer());
+    const headerValue = fetchResponse.headers["content-type"];
+    const contentType =
+      (Array.isArray(headerValue) ? headerValue[0] : headerValue) || "image/png";
+    const buffer = fetchResponse.body;
 
     let output = buffer;
     if (contentType.includes("png")) {
@@ -101,7 +125,7 @@ export async function proxyIndiaParcelWms(
         .toBuffer();
     }
 
-    return new NextResponse(output, {
+    return new NextResponse(new Uint8Array(output), {
       status: 200,
       headers: {
         "Content-Type": contentType,

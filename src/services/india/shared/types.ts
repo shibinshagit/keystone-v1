@@ -55,6 +55,7 @@ export interface IndiaParcelSelection {
     wmsPath?: string;
     overlayCodes?: string | null;
     plotId?: string;
+    highlightStateCode?: string | null;
   } | null;
 }
 

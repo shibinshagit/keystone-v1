@@ -1,7 +1,7 @@
 import type { IndiaParcelSelection, IndiaViewportBounds } from "./types";
 
 export type IndiaParcelClientAdapter = {
-  id: "kerala" | "punjab";
+  id: "kerala" | "punjab" | "maharashtra";
   stateCode: string;
   stateName: string;
   overlayMinZoom: number;
@@ -130,6 +130,50 @@ export const INDIA_PARCEL_CLIENT_ADAPTERS: IndiaParcelClientAdapter[] = [
       [parcel.parcelLabel, parcel.villageName, parcel.subdistrictName, parcel.districtName]
         .filter(Boolean)
         .join(", ") || "Punjab Parcel",
+  },
+  {
+    id: "maharashtra",
+    stateCode: "27",
+    stateName: "Maharashtra",
+    overlayMinZoom: 14,
+    coverageBounds: {
+      west: 72.55,
+      south: 15.6,
+      east: 80.95,
+      north: 22.1,
+    },
+    overlayResolvePath: "/api/in/maharashtra/overlay-resolve",
+    parcelClickPath: "/api/in/maharashtra/parcel-click",
+    wmsPath: "/api/in/maharashtra/parcels/wms",
+    buildOverlayParams: ({
+      bounds,
+      gisCode,
+      viewportWidth,
+      viewportHeight,
+    }) => {
+      const params = new URLSearchParams();
+      params.set("service", "WMS");
+      params.set("version", "1.1.1");
+      params.set("request", "GetMap");
+      params.set("layers", "VILLAGE_MAP");
+      params.set("styles", "VILLAGE_MAP");
+      params.set("format", "image/png");
+      params.set("transparent", "true");
+      params.set("srs", "EPSG:4326");
+      params.set("width", String(viewportWidth));
+      params.set("height", String(viewportHeight));
+      params.set("bbox", `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`);
+      params.set("state", "27");
+      params.set("gis_code", gisCode);
+      params.set("giscode", gisCode);
+      params.set("overlay_codes", "");
+      params.set("crs", "");
+      return params;
+    },
+    buildParcelLocationLabel: (parcel) =>
+      [parcel.parcelLabel, parcel.villageName, parcel.subdistrictName, parcel.districtName]
+        .filter(Boolean)
+        .join(", ") || "Maharashtra Parcel",
   },
 ];
 

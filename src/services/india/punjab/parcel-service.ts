@@ -1,14 +1,9 @@
 import {
-  boundsCenter,
-  containsPoint,
-  distanceToBounds,
-  intersectionArea,
   isFiniteNumber,
-  rectArea,
 } from "@/services/india/shared/geometry";
+import { buildViewportSamplePoints } from "@/services/india/shared/overlay-sampling";
 import type {
   IndiaOverlayVillage,
-  IndiaParcelAdminLevel,
   IndiaParcelField,
   IndiaParcelSelection,
   IndiaViewportBounds,
@@ -73,12 +68,6 @@ type PunjabLayerRecord = {
   layerDescription?: string;
 };
 
-type PunjabVillageRecord = IndiaOverlayVillage & {
-  selectedLevels: string;
-};
-
-const districtVillageCache = new Map<string, Promise<PunjabVillageRecord[]>>();
-let districtExtentsPromise: Promise<PunjabVillageRecord[]> | null = null;
 const overlayCodesCache = new Map<string, Promise<string | null>>();
 
 function trimHtmlBreaks(value: string) {
@@ -229,165 +218,6 @@ async function getOverlayCodesForGisCode(gisCode: string) {
   return promise;
 }
 
-async function buildDistrictExtents() {
-  const root = await getLevelsAfter(0, "");
-  const districts = (root[0] || []).filter((option) => option?.extraParms?.hasData !== false);
-
-  const items = await Promise.all(
-    districts.map(async (district) => {
-      const selectedLevels = `${district.code},`;
-      const extent = await getExtentForLevels(selectedLevels).catch(() => null);
-      const normalizedExtent = normalizeExtent4326(extent);
-      if (!normalizedExtent) return null;
-
-      return {
-        stateCode: PUNJAB_STATE_CODE,
-        stateName: "Punjab",
-        gisCode: extent?.gisCode || extent?.giscode || district.code,
-        extent: normalizedExtent,
-        selectedLevels,
-        administrativeLevels: [
-          { code: district.code, label: "District", value: district.value },
-        ],
-        districtName: district.value,
-        subdistrictName: null,
-        villageName: null,
-      } satisfies PunjabVillageRecord;
-    }),
-  );
-
-  return items.filter(Boolean) as PunjabVillageRecord[];
-}
-
-async function getDistrictExtents(): Promise<PunjabVillageRecord[]> {
-  if (!districtExtentsPromise) {
-    districtExtentsPromise = buildDistrictExtents().catch((error) => {
-      districtExtentsPromise = null;
-      throw error;
-    });
-  }
-
-  return districtExtentsPromise as Promise<PunjabVillageRecord[]>;
-}
-
-async function buildVillagesForDistrict(district: PunjabVillageRecord) {
-  const districtCode = district.administrativeLevels[0]?.code;
-  if (!districtCode) return [];
-
-  const tehsilResponse = await getLevelsAfter(1, district.selectedLevels).catch(() => []);
-  const tehsils = (tehsilResponse[0] || []).filter((option) => option?.extraParms?.hasData !== false);
-  const entries: PunjabVillageRecord[] = [];
-
-  for (const tehsil of tehsils) {
-    const tehsilLevels = `${districtCode},${tehsil.code},`;
-    const kanungoResponse = await getLevelsAfter(2, tehsilLevels).catch(() => []);
-    const kanungos = (kanungoResponse[0] || []).filter(
-      (option) => option?.extraParms?.hasData !== false,
-    );
-
-    for (const kanungo of kanungos) {
-      const kanungoLevels = `${districtCode},${tehsil.code},${kanungo.code},`;
-      const patwarResponse = await getLevelsAfter(3, kanungoLevels).catch(() => []);
-      const patwars = (patwarResponse[0] || []).filter(
-        (option) => option?.extraParms?.hasData !== false,
-      );
-
-      for (const patwar of patwars) {
-        const patwarLevels = `${districtCode},${tehsil.code},${kanungo.code},${patwar.code},`;
-        const villageResponse = await getLevelsAfter(4, patwarLevels).catch(() => []);
-        const villages = (villageResponse[0] || []).filter(
-          (option) => option?.extraParms?.hasData !== false,
-        );
-
-        const extentResults = await Promise.all(
-          villages.map(async (village) => {
-            const selectedLevels = `${districtCode},${tehsil.code},${kanungo.code},${patwar.code},${village.code},`;
-            const extent = await getExtentForLevels(selectedLevels).catch(() => null);
-            const normalizedExtent = normalizeExtent4326(extent);
-            if (!normalizedExtent) return null;
-
-            const gisCode = extent?.gisCode || extent?.giscode || village.code;
-            const overlayCodes = await getOverlayCodesForGisCode(gisCode);
-
-            return {
-              stateCode: PUNJAB_STATE_CODE,
-              stateName: "Punjab",
-              gisCode,
-              overlayCodes,
-              extent: normalizedExtent,
-              selectedLevels,
-              administrativeLevels: [
-                { code: districtCode, label: "District", value: district.districtName || districtCode },
-                { code: tehsil.code, label: "Tehsil", value: tehsil.value },
-                { code: kanungo.code, label: "Kanungo", value: kanungo.value },
-                { code: patwar.code, label: "Patwar", value: patwar.value },
-                { code: village.code, label: "Village", value: village.value },
-              ],
-              districtName: district.districtName,
-              subdistrictName: tehsil.value,
-              villageName: village.value,
-            } satisfies PunjabVillageRecord;
-          }),
-        );
-
-        entries.push(...(extentResults.filter(Boolean) as PunjabVillageRecord[]));
-      }
-    }
-  }
-
-  return entries;
-}
-
-async function getVillagesForDistrict(district: PunjabVillageRecord) {
-  const districtCode = district.administrativeLevels[0]?.code || district.gisCode;
-  const cached = districtVillageCache.get(districtCode);
-  if (cached) return cached;
-
-  const promise = buildVillagesForDistrict(district).catch((error) => {
-    districtVillageCache.delete(districtCode);
-    throw error;
-  });
-  districtVillageCache.set(districtCode, promise);
-  return promise;
-}
-
-function pickBestOverlayVillage(
-  bounds: IndiaViewportBounds,
-  villages: PunjabVillageRecord[],
-) {
-  const center = boundsCenter(bounds);
-  const viewportArea = rectArea(bounds);
-
-  const overlapping = villages
-    .map((village) => ({
-      village,
-      overlapArea: intersectionArea(bounds, village.extent),
-      containsCenter: containsPoint(village.extent, center),
-      distanceToCenter: distanceToBounds(village.extent, center),
-    }))
-    .filter((entry) => entry.overlapArea > 0);
-
-  if (overlapping.length > 0) {
-    overlapping.sort((a, b) => {
-      if (a.containsCenter !== b.containsCenter) {
-        return a.containsCenter ? -1 : 1;
-      }
-
-      const overlapRatioA = a.overlapArea / Math.max(viewportArea, 0.000001);
-      const overlapRatioB = b.overlapArea / Math.max(viewportArea, 0.000001);
-      if (Math.abs(overlapRatioB - overlapRatioA) > 0.000001) {
-        return overlapRatioB - overlapRatioA;
-      }
-
-      return a.distanceToCenter - b.distanceToCenter;
-    });
-
-    return overlapping[0]?.village || null;
-  }
-
-  return null;
-}
-
 function parsePunjabInfo(info?: string | null) {
   const text = trimHtmlBreaks(info || "");
   const lines = text
@@ -448,25 +278,6 @@ function parsePunjabGisInfo(gisInfo?: string | null) {
     subdistrictName: tehsilMatch?.[1]?.trim() || null,
     villageName: villageMatch?.[1]?.trim() || null,
   };
-}
-
-function buildViewportSamplePoints(bounds: IndiaViewportBounds): [number, number][] {
-  const centerLng = (bounds.west + bounds.east) / 2;
-  const centerLat = (bounds.south + bounds.north) / 2;
-  const lngQuarter = (bounds.east - bounds.west) / 4;
-  const latQuarter = (bounds.north - bounds.south) / 4;
-
-  return [
-    [centerLng, centerLat],
-    [centerLng - lngQuarter, centerLat],
-    [centerLng + lngQuarter, centerLat],
-    [centerLng, centerLat - latQuarter],
-    [centerLng, centerLat + latQuarter],
-    [centerLng - lngQuarter, centerLat - latQuarter],
-    [centerLng + lngQuarter, centerLat - latQuarter],
-    [centerLng - lngQuarter, centerLat + latQuarter],
-    [centerLng + lngQuarter, centerLat + latQuarter],
-  ];
 }
 
 export const PunjabParcelService = {
@@ -590,6 +401,7 @@ export const PunjabParcelService = {
         wmsPath: "/api/in/punjab/parcels/wms",
         overlayCodes,
         plotId: plot.ID || hit.id || undefined,
+        highlightStateCode: PUNJAB_STATE_CODE,
       },
     };
   },
