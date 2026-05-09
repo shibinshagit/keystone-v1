@@ -1,5 +1,15 @@
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import type { KeralaParcelSelection } from "@/lib/types";
+import {
+  boundsCenter,
+  containsPoint,
+  distanceToBounds,
+  intersectionArea,
+  isFiniteNumber,
+  rectArea,
+  webMercatorToLngLat,
+} from "@/services/india/shared/geometry";
+import type { IndiaParcelField, IndiaViewportBounds } from "@/services/india/shared/types";
 
 const KERALA_EMAPS_BASE = "https://emaps.kerala.gov.in/bhunaksha";
 const KERALA_STATE_CODE = "32" as const;
@@ -48,12 +58,7 @@ type KeralaLevelOption = {
   } | null;
 };
 
-type KeralaViewportBounds = {
-  west: number;
-  south: number;
-  east: number;
-  north: number;
-};
+type KeralaViewportBounds = IndiaViewportBounds;
 
 type KeralaVillageExtent = {
   districtCode: string;
@@ -67,19 +72,6 @@ type KeralaVillageExtent = {
   gisCode: string;
   extent: KeralaViewportBounds;
 };
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function webMercatorToLngLat(x: number, y: number): [number, number] {
-  const lng = (x / 20037508.34) * 180;
-  let lat = (y / 20037508.34) * 180;
-  lat =
-    (180 / Math.PI) *
-    (2 * Math.atan(Math.exp((lat * Math.PI) / 180)) - Math.PI / 2);
-  return [lng, lat];
-}
 
 function trimHtmlBreaks(value: string) {
   return value.replace(/<br\s*\/?>/gi, "\n").trim();
@@ -279,40 +271,30 @@ function hasValidExtent(
   );
 }
 
-function rectArea(bounds: KeralaViewportBounds) {
-  return Math.max(0, bounds.east - bounds.west) * Math.max(0, bounds.north - bounds.south);
-}
+function buildKeralaParcelFields(
+  plotInfo: PlotInfoResponse | null | undefined,
+  parsedInfo: ReturnType<typeof parseInfoSections>,
+  attrs: { vsno?: string; bcode?: string } | null,
+): IndiaParcelField[] {
+  const fields: IndiaParcelField[] = [
+    { label: "Block", value: parsedInfo.blockNo || attrs?.bcode || "N/A" },
+    { label: "Survey", value: parsedInfo.surveyNo || attrs?.vsno || "N/A" },
+    {
+      label: "Subdivision",
+      value:
+        parsedInfo.subdivisionNo && parsedInfo.subdivisionNo !== "null"
+          ? parsedInfo.subdivisionNo
+          : "N/A",
+    },
+  ];
 
-function intersectionArea(a: KeralaViewportBounds, b: KeralaViewportBounds) {
-  const west = Math.max(a.west, b.west);
-  const east = Math.min(a.east, b.east);
-  const south = Math.max(a.south, b.south);
-  const north = Math.min(a.north, b.north);
-  if (west >= east || south >= north) return 0;
-  return (east - west) * (north - south);
-}
+  const areaValue =
+    isFiniteNumber(plotInfo?.area)
+      ? `${Math.round(plotInfo.area).toLocaleString()} sqm`
+      : plotInfo?.formatedArea || "N/A";
+  fields.push({ label: "Area", value: areaValue });
 
-function containsPoint(bounds: KeralaViewportBounds, coordinates: [number, number]) {
-  const [lng, lat] = coordinates;
-  return (
-    lng >= bounds.west &&
-    lng <= bounds.east &&
-    lat >= bounds.south &&
-    lat <= bounds.north
-  );
-}
-
-function distanceToBounds(bounds: KeralaViewportBounds, coordinates: [number, number]) {
-  const [lng, lat] = coordinates;
-  const dx =
-    lng < bounds.west ? bounds.west - lng : lng > bounds.east ? lng - bounds.east : 0;
-  const dy =
-    lat < bounds.south ? bounds.south - lat : lat > bounds.north ? lat - bounds.north : 0;
-  return Math.hypot(dx, dy);
-}
-
-function boundsCenter(bounds: KeralaViewportBounds): [number, number] {
-  return [(bounds.west + bounds.east) / 2, (bounds.south + bounds.north) / 2];
+  return fields;
 }
 
 let villageExtentsPromise: Promise<KeralaVillageExtent[]> | null = null;
@@ -502,19 +484,25 @@ export const KeralaParcelService = {
 
     const parsedInfo = parseInfoSections(plotInfo?.info);
     const parsedLocation = parseLocationParts(plotInfo?.gisinfo || hit.gisinfo);
+    const parcelLabel =
+      [
+        parsedInfo.blockNo ? `Block ${parsedInfo.blockNo}` : null,
+        parsedInfo.surveyNo ? `Survey ${parsedInfo.surveyNo}` : null,
+        parsedInfo.subdivisionNo && parsedInfo.subdivisionNo !== "null"
+          ? `Subdiv ${parsedInfo.subdivisionNo}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "Kerala Parcel";
 
     return {
       stateCode: KERALA_STATE_CODE,
+      stateName: "Kerala",
+      sourceName: "Kerala eMaps",
       gisCode: hit.gis_code,
-      vsrNo: hit.vsrno || hit.gis_code,
       plotId: hit.id,
       plotNo: plotInfo?.plotno || hit.plot_no || null,
-      blockNo: parsedInfo.blockNo || attrs?.bcode || null,
-      surveyNo: parsedInfo.surveyNo || attrs?.vsno || null,
-      subdivisionNo:
-        parsedInfo.subdivisionNo && parsedInfo.subdivisionNo !== "null"
-          ? parsedInfo.subdivisionNo
-          : null,
+      parcelLabel,
       areaSqm:
         isFiniteNumber(plotInfo?.area)
           ? plotInfo.area
@@ -523,7 +511,16 @@ export const KeralaParcelService = {
       districtName: parsedLocation.districtName,
       talukName: parsedLocation.talukName,
       villageName: parsedLocation.villageName,
+      subdistrictName: parsedLocation.talukName,
       gisInfo: plotInfo?.gisinfo || hit.gisinfo || null,
+      vsrNo: hit.vsrno || hit.gis_code,
+      blockNo: parsedInfo.blockNo || attrs?.bcode || null,
+      surveyNo: parsedInfo.surveyNo || attrs?.vsno || null,
+      subdivisionNo:
+        parsedInfo.subdivisionNo && parsedInfo.subdivisionNo !== "null"
+          ? parsedInfo.subdivisionNo
+          : null,
+      locationLabel: parsedLocation.villageName || plotInfo?.gisinfo || hit.gisinfo || null,
       remarks: parsedInfo.remarks,
       owners: parsedInfo.owners,
       infoHtml: plotInfo?.info || null,
@@ -531,6 +528,17 @@ export const KeralaParcelService = {
       mapSketchUrl: parseInfoLinksHtml(plotInfo?.infoLinks),
       geometry: parseWktGeometry(plotInfo?.the_geom),
       extent: normalizeExtent(extent),
+      parcelFields: buildKeralaParcelFields(plotInfo, parsedInfo, attrs),
+      administrativeFields: [
+        { label: "Village", value: parsedLocation.villageName || "N/A" },
+        { label: "Taluk", value: parsedLocation.talukName || "N/A" },
+        { label: "District", value: parsedLocation.districtName || "N/A" },
+        { label: "Owners", value: String(parsedInfo.owners.length || 0) },
+      ],
+      sourceBadge: "Official eMaps",
+      overlay: {
+        highlightType: "geometry",
+      },
     };
   },
 };

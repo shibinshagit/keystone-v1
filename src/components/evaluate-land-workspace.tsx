@@ -44,6 +44,7 @@ import {
   TerrainIntelligenceCard,
   TerrainIntelligenceStateCard,
 } from "@/components/terrain-intelligence-card";
+import { IndiaParcelDetailsCard } from "@/components/india-parcel-details-card";
 import { AnalysisMode } from "@/components/solar-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1143,7 +1144,14 @@ export function EvaluateLandWorkspace() {
                     </div>
                   ) : null}
 
-                  {instantAnalysisTarget?.keralaParcel ? (
+                  {instantAnalysisTarget?.indiaParcel ? (
+                    <IndiaParcelDetailsCard
+                      parcel={instantAnalysisTarget.indiaParcel}
+                      title={`${instantAnalysisTarget.indiaParcel.stateName} Parcel Matched`}
+                    />
+                  ) : null}
+
+                  {false && instantAnalysisTarget?.keralaParcel ? (
                     <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -1151,8 +1159,8 @@ export function EvaluateLandWorkspace() {
                             Kerala Parcel Matched
                           </p>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            {instantAnalysisTarget.keralaParcel.gisInfo ||
-                              instantAnalysisTarget.locationLabel}
+                            {instantAnalysisTarget?.keralaParcel?.gisInfo ||
+                              instantAnalysisTarget?.locationLabel}
                           </p>
                         </div>
                         <Badge variant="outline" className="text-[10px]">
@@ -1165,14 +1173,14 @@ export function EvaluateLandWorkspace() {
                         </div>
                         <div className="mt-1 font-medium break-words">
                           {[
-                            instantAnalysisTarget.keralaParcel.blockNo
-                              ? `Block ${instantAnalysisTarget.keralaParcel.blockNo}`
+                            instantAnalysisTarget?.keralaParcel?.blockNo
+                              ? `Block ${instantAnalysisTarget?.keralaParcel?.blockNo}`
                               : null,
-                            instantAnalysisTarget.keralaParcel.surveyNo
-                              ? `Survey ${instantAnalysisTarget.keralaParcel.surveyNo}`
+                            instantAnalysisTarget?.keralaParcel?.surveyNo
+                              ? `Survey ${instantAnalysisTarget?.keralaParcel?.surveyNo}`
                               : null,
-                            instantAnalysisTarget.keralaParcel.subdivisionNo
-                              ? `Subdiv ${instantAnalysisTarget.keralaParcel.subdivisionNo}`
+                            instantAnalysisTarget?.keralaParcel?.subdivisionNo
+                              ? `Subdiv ${instantAnalysisTarget?.keralaParcel?.subdivisionNo}`
                               : null,
                           ]
                             .filter(Boolean)
@@ -1183,42 +1191,42 @@ export function EvaluateLandWorkspace() {
                         <div className="rounded-md border bg-background/80 p-2">
                           <div className="text-muted-foreground">Block</div>
                           <div className="font-semibold">
-                            {instantAnalysisTarget.keralaParcel.blockNo || "N/A"}
+                            {instantAnalysisTarget?.keralaParcel?.blockNo || "N/A"}
                           </div>
                         </div>
                         <div className="rounded-md border bg-background/80 p-2">
                           <div className="text-muted-foreground">Survey</div>
                           <div className="font-semibold">
-                            {instantAnalysisTarget.keralaParcel.surveyNo || "N/A"}
+                            {instantAnalysisTarget?.keralaParcel?.surveyNo || "N/A"}
                           </div>
                         </div>
                         <div className="rounded-md border bg-background/80 p-2">
                           <div className="text-muted-foreground">Subdivision</div>
                           <div className="font-semibold">
-                            {instantAnalysisTarget.keralaParcel.subdivisionNo || "N/A"}
+                            {instantAnalysisTarget?.keralaParcel?.subdivisionNo || "N/A"}
                           </div>
                         </div>
                         <div className="rounded-md border bg-background/80 p-2">
                           <div className="text-muted-foreground">Area</div>
                           <div className="font-semibold">
-                            {instantAnalysisTarget.keralaParcel.areaSqm != null
+                            {instantAnalysisTarget?.keralaParcel?.areaSqm != null
                               ? `${formatNumber(
-                                  instantAnalysisTarget.keralaParcel.areaSqm,
+                                  instantAnalysisTarget?.keralaParcel?.areaSqm ?? 0,
                                   0,
                                 )} sqm`
-                              : instantAnalysisTarget.keralaParcel.areaLabel || "N/A"}
+                              : instantAnalysisTarget?.keralaParcel?.areaLabel || "N/A"}
                           </div>
                         </div>
                       </div>
-                      {instantAnalysisTarget.keralaParcel.owners?.length ? (
+                      {instantAnalysisTarget?.keralaParcel?.owners?.length ? (
                         <div className="mt-3 rounded-md border bg-background/70 p-2 text-xs">
                           <div className="font-medium text-muted-foreground">
                             Owners
                           </div>
                           <div className="mt-1 space-y-1">
-                            {instantAnalysisTarget.keralaParcel.owners
-                              .slice(0, 2)
-                              .map((owner) => (
+                            {instantAnalysisTarget?.keralaParcel?.owners
+                              ?.slice(0, 2)
+                              ?.map((owner) => (
                                 <p key={owner} className="break-words">
                                   {owner}
                                 </p>
@@ -1227,10 +1235,10 @@ export function EvaluateLandWorkspace() {
                         </div>
                       ) : null}
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {instantAnalysisTarget.keralaParcel.mapSketchUrl ? (
+                        {instantAnalysisTarget?.keralaParcel?.mapSketchUrl ? (
                           <Button asChild size="sm" variant="outline">
                             <Link
-                              href={instantAnalysisTarget.keralaParcel.mapSketchUrl}
+                              href={instantAnalysisTarget?.keralaParcel?.mapSketchUrl || "#"}
                               target="_blank"
                               rel="noreferrer"
                             >
@@ -1238,9 +1246,9 @@ export function EvaluateLandWorkspace() {
                             </Link>
                           </Button>
                         ) : null}
-                        {instantAnalysisTarget.keralaParcel.remarks ? (
+                        {instantAnalysisTarget?.keralaParcel?.remarks ? (
                           <div className="rounded-md border bg-background/70 px-2 py-1 text-[11px] text-muted-foreground">
-                            {instantAnalysisTarget.keralaParcel.remarks}
+                            {instantAnalysisTarget?.keralaParcel?.remarks}
                           </div>
                         ) : null}
                       </div>

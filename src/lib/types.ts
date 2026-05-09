@@ -1,5 +1,6 @@
 
 import type { Feature, Polygon, Point, MultiPolygon } from 'geojson';
+import type { IndiaParcelSelection } from '@/services/india/shared/types';
 import { z } from 'zod';
 
 export interface SoilData {
@@ -308,34 +309,7 @@ export interface EvaluateLandInput {
   notes?: string;
 }
 
-export interface KeralaParcelSelection {
-  stateCode: '32';
-  gisCode: string;
-  vsrNo: string;
-  plotId: string;
-  plotNo?: string | null;
-  blockNo?: string | null;
-  surveyNo?: string | null;
-  subdivisionNo?: string | null;
-  areaSqm?: number | null;
-  areaLabel?: string | null;
-  districtName?: string | null;
-  talukName?: string | null;
-  villageName?: string | null;
-  gisInfo?: string | null;
-  remarks?: string | null;
-  owners?: string[];
-  infoHtml?: string | null;
-  infoLinksHtml?: string | null;
-  mapSketchUrl?: string | null;
-  geometry?: Feature<Polygon | MultiPolygon> | null;
-  extent?: {
-    west: number;
-    south: number;
-    east: number;
-    north: number;
-  } | null;
-}
+export type KeralaParcelSelection = IndiaParcelSelection;
 
 export type GeographyMarket = 'India' | 'USA' | 'UAE';
 export type CountryCode = 'IN' | 'US' | 'AE';

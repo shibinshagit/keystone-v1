@@ -15,7 +15,6 @@ import {
   BuildableArea,
   UtilityArea,
   SelectableObjectType,
-  KeralaParcelSelection,
 } from "@/lib/types";
 import {
   Feature,
@@ -53,6 +52,15 @@ import {
   inferThematicContextFromCoordinates,
   NLCD_CLASS_LABEL_BY_CODE,
 } from "@/lib/thematic-utils";
+import {
+  getIndiaParcelClientAdapter,
+  type IndiaParcelClientAdapter,
+} from "@/services/india/shared/client-adapters";
+import type {
+  IndiaOverlayVillage,
+  IndiaParcelSelection,
+  IndiaViewportBounds,
+} from "@/services/india/shared/types";
 
 import { Map as MapIcon, Globe, Image as ImageIcon } from "lucide-react";
 
@@ -74,11 +82,22 @@ const SELECTION_HIGHLIGHT_SOURCE_ID = "selection-highlight-source";
 const SELECTION_HIGHLIGHT_LAYER_ID = "selection-highlight-layer";
 const DRAWING_LABELS_SOURCE_ID = "drawing-labels-source";
 const DRAWING_LABELS_LAYER_ID = "drawing-labels-layer";
-const KERALA_PARCEL_SOURCE_ID = "kerala-parcels-source";
-const KERALA_PARCEL_LAYER_ID = "kerala-parcels-layer";
+const INDIA_PARCEL_SOURCE_ID = "india-parcels-source";
+const INDIA_PARCEL_LAYER_ID = "india-parcels-layer";
 const HIGHLIGHT_SOURCE = "highlight-parcel-source";
 const HIGHLIGHT_FILL = "highlight-parcel-fill";
 const HIGHLIGHT_LINE = "highlight-parcel-line";
+const HIGHLIGHT_WMS_SOURCE = "highlight-parcel-wms-source";
+const HIGHLIGHT_WMS_LAYER = "highlight-parcel-wms-layer";
+
+const isPointInBounds = (
+  [lng, lat]: [number, number],
+  bounds: IndiaViewportBounds,
+) =>
+  lng >= bounds.west &&
+  lng <= bounds.east &&
+  lat >= bounds.south &&
+  lat <= bounds.north;
 const KERALA_OVERLAY_CODES = [
   "TrQXZ8iXRXSU3ZhKFGRKDg",
   "3Sod_6RQS1ylPMXWYXuw2w",
@@ -96,7 +115,7 @@ const getKeralaLookupCoordinates = ([lng, lat]: [number, number]): [number, numb
   lat - KERALA_OVERLAY_ALIGNMENT_OFFSET.lat,
 ];
 
-const buildKeralaParcelLocationLabel = (parcel: KeralaParcelSelection) => {
+const buildKeralaParcelLocationLabel = (parcel: IndiaParcelSelection) => {
   const locality = [parcel.villageName, parcel.talukName, parcel.districtName]
     .filter(Boolean)
     .join(", ");
@@ -211,21 +230,18 @@ export function MapEditor({
   >("map");
   const markers = useRef<Marker[]>([]);
   const instantAnalysisMarker = useRef<Marker | null>(null);
-  const keralaParcelGisCodeRef = useRef<string | null>(null);
-  const keralaOverlayFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+  const indiaParcelOverlayKeyRef = useRef<string | null>(null);
+  const indiaOverlayFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const vastuObjectsRef = useRef<any[]>([]);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [primaryColor, setPrimaryColor] = useState("hsl(210, 40%, 50%)");
-  const [keralaOverlayGisCode, setKeralaOverlayGisCode] = useState<string | null>(
-    null,
-  );
-  const [keralaOverlayBounds, setKeralaOverlayBounds] = useState<{
-    west: number;
-    south: number;
-    east: number;
-    north: number;
+  const [indiaOverlayState, setIndiaOverlayState] = useState<{
+    adapter: IndiaParcelClientAdapter;
+    gisCode: string;
+    overlayCodes?: string | null;
+    bounds: IndiaViewportBounds;
   } | null>(null);
   const hasNavigatedRef = useRef(false);
   const windStreamlineLayer = useRef<WindStreamlineLayer | null>(null);
@@ -365,14 +381,13 @@ export function MapEditor({
     const mapInst = map.current;
     if (!mapInst || !isMapLoaded) return;
 
-    const gisCode = keralaOverlayGisCode;
-    const bounds = keralaOverlayBounds;
+    const overlay = indiaOverlayState;
 
-    if (!gisCode || !bounds) {
-      keralaParcelGisCodeRef.current = null;
-      if (mapInst.getLayer(KERALA_PARCEL_LAYER_ID)) {
+    if (!overlay) {
+      indiaParcelOverlayKeyRef.current = null;
+      if (mapInst.getLayer(INDIA_PARCEL_LAYER_ID)) {
         mapInst.setLayoutProperty(
-          KERALA_PARCEL_LAYER_ID,
+          INDIA_PARCEL_LAYER_ID,
           "visibility",
           "none",
         );
@@ -392,20 +407,21 @@ export function MapEditor({
       ),
     );
 
-    const imageUrl =
-      `/api/in/kerala/parcels/wms?service=WMS&version=1.1.1&request=GetMap` +
-      `&layers=${encodeURIComponent("OVERLAY_LAYER")}` +
-      `&overlay_codes=${encodeURIComponent(KERALA_OVERLAY_CODES)}` +
-      `&styles=` +
-      `&format=image%2Fpng&transparent=true&srs=EPSG%3A4326` +
-      `&width=${viewportWidth}&height=${viewportHeight}` +
-      `&bbox=${bounds.west},${bounds.south},${bounds.east},${bounds.north}` +
-      `&state=32&giscode=${encodeURIComponent(gisCode)}`;
+    const { adapter, gisCode, bounds, overlayCodes } = overlay;
+    const params = adapter.buildOverlayParams({
+      bounds,
+      gisCode,
+      overlayCodes,
+      viewportWidth,
+      viewportHeight,
+    });
+    const imageUrl = `${adapter.wmsPath}?${params.toString()}`;
 
-    const overlayWest = bounds.west + KERALA_OVERLAY_ALIGNMENT_OFFSET.lng;
-    const overlayEast = bounds.east + KERALA_OVERLAY_ALIGNMENT_OFFSET.lng;
-    const overlayNorth = bounds.north + KERALA_OVERLAY_ALIGNMENT_OFFSET.lat;
-    const overlaySouth = bounds.south + KERALA_OVERLAY_ALIGNMENT_OFFSET.lat;
+    const offset = adapter.overlayAlignmentOffset || { lng: 0, lat: 0 };
+    const overlayWest = bounds.west + offset.lng;
+    const overlayEast = bounds.east + offset.lng;
+    const overlayNorth = bounds.north + offset.lat;
+    const overlaySouth = bounds.south + offset.lat;
 
     const coordinates: [[number, number], [number, number], [number, number], [number, number]] =
       [
@@ -415,26 +431,27 @@ export function MapEditor({
         [overlayWest, overlaySouth],
       ];
 
-    const existingSource = mapInst.getSource(KERALA_PARCEL_SOURCE_ID);
-    if (existingSource && keralaParcelGisCodeRef.current !== gisCode) {
-      if (mapInst.getLayer(KERALA_PARCEL_LAYER_ID)) {
-        mapInst.removeLayer(KERALA_PARCEL_LAYER_ID);
+    const overlayKey = `${adapter.id}:${gisCode}:${overlayCodes || ""}`;
+    const existingSource = mapInst.getSource(INDIA_PARCEL_SOURCE_ID);
+    if (existingSource && indiaParcelOverlayKeyRef.current !== overlayKey) {
+      if (mapInst.getLayer(INDIA_PARCEL_LAYER_ID)) {
+        mapInst.removeLayer(INDIA_PARCEL_LAYER_ID);
       }
-      mapInst.removeSource(KERALA_PARCEL_SOURCE_ID);
+      mapInst.removeSource(INDIA_PARCEL_SOURCE_ID);
     }
 
-    keralaParcelGisCodeRef.current = gisCode;
-    const refreshedSource = mapInst.getSource(KERALA_PARCEL_SOURCE_ID);
+    indiaParcelOverlayKeyRef.current = overlayKey;
+    const refreshedSource = mapInst.getSource(INDIA_PARCEL_SOURCE_ID);
     if (!refreshedSource) {
-      mapInst.addSource(KERALA_PARCEL_SOURCE_ID, {
+      mapInst.addSource(INDIA_PARCEL_SOURCE_ID, {
         type: "image",
         url: imageUrl,
         coordinates,
       });
       mapInst.addLayer({
-        id: KERALA_PARCEL_LAYER_ID,
+        id: INDIA_PARCEL_LAYER_ID,
         type: "raster",
-        source: KERALA_PARCEL_SOURCE_ID,
+        source: INDIA_PARCEL_SOURCE_ID,
         paint: {
           "raster-opacity": [
             "interpolate",
@@ -464,25 +481,24 @@ export function MapEditor({
       coordinates,
     });
 
-    if (mapInst.getLayer(KERALA_PARCEL_LAYER_ID)) {
+    if (mapInst.getLayer(INDIA_PARCEL_LAYER_ID)) {
       mapInst.setLayoutProperty(
-        KERALA_PARCEL_LAYER_ID,
+        INDIA_PARCEL_LAYER_ID,
         "visibility",
         "visible",
       );
     }
-  }, [keralaOverlayBounds, keralaOverlayGisCode, isMapLoaded]);
+  }, [indiaOverlayState, isMapLoaded]);
 
   useEffect(() => {
     const mapInst = map.current;
     if (!mapInst || !isMapLoaded) return;
 
-    const hideKeralaOverlay = () => {
-      setKeralaOverlayGisCode(null);
-      setKeralaOverlayBounds(null);
-      if (mapInst.getLayer(KERALA_PARCEL_LAYER_ID)) {
+    const hideIndiaOverlay = () => {
+      setIndiaOverlayState(null);
+      if (mapInst.getLayer(INDIA_PARCEL_LAYER_ID)) {
         mapInst.setLayoutProperty(
-          KERALA_PARCEL_LAYER_ID,
+          INDIA_PARCEL_LAYER_ID,
           "visibility",
           "none",
         );
@@ -490,84 +506,103 @@ export function MapEditor({
     };
 
     if (!uiState.isInstantAnalysisMode) {
-      hideKeralaOverlay();
+      hideIndiaOverlay();
       return;
     }
 
-    const resolveKeralaOverlay = async () => {
+    const resolveIndiaOverlay = async () => {
       if (!mapInst.isStyleLoaded()) return;
 
       const center = mapInst.getCenter();
       const zoom = mapInst.getZoom();
+      const adapter = getIndiaParcelClientAdapter([center.lng, center.lat]);
 
-      if (!isKeralaCoordinate([center.lng, center.lat]) || zoom < 14) {
-        hideKeralaOverlay();
+      if (!adapter || zoom < adapter.overlayMinZoom) {
+        hideIndiaOverlay();
+        return;
+      }
+
+      if (
+        indiaOverlayState &&
+        indiaOverlayState.adapter.id === adapter.id &&
+        isPointInBounds([center.lng, center.lat], indiaOverlayState.bounds)
+      ) {
+        const bounds = mapInst.getBounds();
+        if (!bounds) return;
+        setIndiaOverlayState({
+          ...indiaOverlayState,
+          bounds: {
+            west: bounds.getWest(),
+            south: bounds.getSouth(),
+            east: bounds.getEast(),
+            north: bounds.getNorth(),
+          },
+        });
         return;
       }
 
       try {
         const bounds = mapInst.getBounds();
         if (!bounds) {
-          hideKeralaOverlay();
+          hideIndiaOverlay();
           return;
         }
 
-        const response = await fetch("/api/in/kerala/overlay-resolve", {
+        const overlayBounds = {
+          west: bounds.getWest(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          north: bounds.getNorth(),
+        };
+
+        const response = await fetch(adapter.overlayResolvePath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            bounds: {
-              west: bounds.getWest(),
-              south: bounds.getSouth(),
-              east: bounds.getEast(),
-              north: bounds.getNorth(),
-            },
+            bounds: overlayBounds,
           }),
         });
 
         if (!response.ok) {
-          hideKeralaOverlay();
+          hideIndiaOverlay();
           return;
         }
 
         const payload = await response.json();
-        const matchedGisCode =
-          typeof payload?.village?.gisCode === "string"
-            ? payload.village.gisCode
-            : null;
+        const village = payload?.village as IndiaOverlayVillage | null;
 
-        setKeralaOverlayGisCode(matchedGisCode);
-        setKeralaOverlayBounds(
-          matchedGisCode
-            ? {
-                west: bounds.getWest(),
-                south: bounds.getSouth(),
-                east: bounds.getEast(),
-                north: bounds.getNorth(),
-              }
-            : null,
-        );
+        if (!village?.gisCode) {
+          hideIndiaOverlay();
+          return;
+        }
+
+        setIndiaOverlayState({
+          adapter,
+          gisCode: village.gisCode,
+          overlayCodes: village.overlayCodes || null,
+          bounds: overlayBounds,
+        });
       } catch (error) {
-        console.warn("[KeralaOverlay] Failed to resolve village overlay:", error);
-        hideKeralaOverlay();
+        console.warn("[IndiaOverlay] Failed to resolve village overlay:", error);
+        hideIndiaOverlay();
       }
     };
 
     const onMoveEnd = () => {
-      if (keralaOverlayFetchTimerRef.current) {
-        clearTimeout(keralaOverlayFetchTimerRef.current);
+      if (indiaOverlayFetchTimerRef.current) {
+        clearTimeout(indiaOverlayFetchTimerRef.current);
       }
-      keralaOverlayFetchTimerRef.current = setTimeout(resolveKeralaOverlay, 400);
+      indiaOverlayFetchTimerRef.current = setTimeout(resolveIndiaOverlay, 180);
     };
 
     mapInst.on("moveend", onMoveEnd);
-    void resolveKeralaOverlay();
+    void resolveIndiaOverlay();
 
     return () => {
       mapInst.off("moveend", onMoveEnd);
-      if (keralaOverlayFetchTimerRef.current) {
-        clearTimeout(keralaOverlayFetchTimerRef.current);
-        keralaOverlayFetchTimerRef.current = null;
+      if (indiaOverlayFetchTimerRef.current) {
+        clearTimeout(indiaOverlayFetchTimerRef.current);
+        indiaOverlayFetchTimerRef.current = null;
       }
     };
   }, [isMapLoaded, uiState.isInstantAnalysisMode]);
@@ -586,6 +621,12 @@ export function MapEditor({
     }
     if (mapInst.getSource(HIGHLIGHT_SOURCE)) {
       mapInst.removeSource(HIGHLIGHT_SOURCE);
+    }
+    if (mapInst.getLayer(HIGHLIGHT_WMS_LAYER)) {
+      mapInst.removeLayer(HIGHLIGHT_WMS_LAYER);
+    }
+    if (mapInst.getSource(HIGHLIGHT_WMS_SOURCE)) {
+      mapInst.removeSource(HIGHLIGHT_WMS_SOURCE);
     }
   }, [instantAnalysisTarget, isMapLoaded]);
 
@@ -952,71 +993,113 @@ export function MapEditor({
       ) {
         const coordinates: [number, number] = [e.lngLat.lng, e.lngLat.lat];
 
-        if (isKeralaCoordinate(coordinates)) {
+        const indiaParcelAdapter = getIndiaParcelClientAdapter(coordinates);
+
+        if (indiaParcelAdapter) {
           try {
-            const keralaLookupCoordinates =
-              getKeralaLookupCoordinates(coordinates);
-            const response = await fetch("/api/in/kerala/parcel-click", {
+            const geocodePromise =
+              MapboxPlacesService.reverseGeocode(coordinates).catch(() => null);
+            const response = await fetch(indiaParcelAdapter.parcelClickPath, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ coordinates: keralaLookupCoordinates }),
+              body: JSON.stringify({
+                coordinates:
+                  indiaParcelAdapter.transformClickCoordinates?.(coordinates) ||
+                  coordinates,
+              }),
             });
 
             if (response.ok) {
               const payload = await response.json();
-              const keralaParcel = payload?.parcel as KeralaParcelSelection | null;
+              const indiaParcel = payload?.parcel as IndiaParcelSelection | null;
 
-              if (keralaParcel?.plotId && keralaParcel.gisCode) {
-                const geocode =
-                  await MapboxPlacesService.reverseGeocode(coordinates);
-                const locationLabel =
-                  geocode.locationLabel ||
-                  [geocode.district, geocode.stateName].filter(Boolean).join(", ") ||
-                  keralaParcel.villageName ||
-                  "Kerala Parcel";
+              if (indiaParcel?.plotId && indiaParcel.gisCode) {
+                const initialLocationLabel =
+                  indiaParcel.locationLabel ||
+                  indiaParcelAdapter.buildParcelLocationLabel(indiaParcel);
+                const requestKey = `${coordinates[0].toFixed(6)}:${coordinates[1].toFixed(6)}:${Date.now()}`;
 
-                actions.setMapLocation(locationLabel);
+                actions.setMapLocation(initialLocationLabel);
                 actions.setInstantAnalysisTarget({
                   coordinates,
-                  locationLabel,
-                  district:
-                    geocode.district ||
-                    keralaParcel.districtName ||
-                    undefined,
-                  stateCode: geocode.stateCode || "IN",
-                  stateName: geocode.stateName || "Kerala",
+                  locationLabel: initialLocationLabel,
+                  district: indiaParcel.districtName || undefined,
+                  stateCode: "IN",
+                  stateName: indiaParcel.stateName,
                   plotId: null,
                   plotName: null,
                   parcelAware: true,
                   source: "map-click",
-                  requestKey: `${coordinates[0].toFixed(6)}:${coordinates[1].toFixed(6)}:${Date.now()}`,
+                  requestKey,
                   capturedAt: new Date().toISOString(),
-                  keralaParcel,
+                  keralaParcel: indiaParcel,
+                  indiaParcel,
                 });
                 actions.selectObject(null, null);
 
-                if (keralaParcel.geometry?.geometry) {
+                void geocodePromise.then((geocode) => {
+                  if (!geocode) return;
+                  const nextLocationLabel =
+                    geocode.locationLabel ||
+                    [geocode.district, geocode.stateName].filter(Boolean).join(", ") ||
+                    initialLocationLabel;
+                  const currentTarget = useBuildingStore.getState().instantAnalysisTarget;
+                  if (currentTarget?.requestKey !== requestKey) return;
+
+                  actions.setMapLocation(nextLocationLabel);
+                  actions.setDistrictNameHint(geocode.district);
+                  actions.setInstantAnalysisTarget({
+                    ...currentTarget,
+                    locationLabel: nextLocationLabel,
+                    district:
+                      geocode.district ||
+                      currentTarget.district ||
+                      indiaParcel.districtName ||
+                      undefined,
+                    stateCode: geocode.stateCode || currentTarget.stateCode,
+                    stateName: geocode.stateName || currentTarget.stateName,
+                  });
+                });
+
+                if (indiaParcel.geometry?.geometry) {
                   window.dispatchEvent(
                     new CustomEvent("highlightParcel", {
                       detail: {
-                        geometry: keralaParcel.geometry.geometry,
+                        geometry: indiaParcel.geometry.geometry,
                         apn:
-                          keralaParcel.surveyNo ||
-                          keralaParcel.plotNo ||
-                          keralaParcel.plotId,
+                          indiaParcel.surveyNo ||
+                          indiaParcel.plotNo ||
+                          indiaParcel.plotId,
                         fillColor: "rgba(59, 130, 246, 0.18)",
                         outlineColor: "rgba(59, 130, 246, 0.65)",
                         lineColor: "rgba(59, 130, 246, 0.9)",
                       },
                     }),
                   );
+                } else if (
+                  indiaParcel.overlay?.highlightType === "wms" &&
+                  indiaParcel.extent &&
+                  indiaParcel.overlay.wmsPath &&
+                  indiaParcel.overlay.plotId
+                ) {
+                  window.dispatchEvent(
+                    new CustomEvent("highlightParcel", {
+                      detail: {
+                        highlightType: "wms",
+                        wmsPath: indiaParcel.overlay.wmsPath,
+                        gisCode: indiaParcel.gisCode,
+                        plotId: indiaParcel.overlay.plotId,
+                        bounds: indiaParcel.extent,
+                      },
+                    }),
+                  );
                 }
 
-                if (keralaParcel.extent) {
+                if (indiaParcel.extent) {
                   mapInst.fitBounds(
                     [
-                      [keralaParcel.extent.west, keralaParcel.extent.south],
-                      [keralaParcel.extent.east, keralaParcel.extent.north],
+                      [indiaParcel.extent.west, indiaParcel.extent.south],
+                      [indiaParcel.extent.east, indiaParcel.extent.north],
                     ],
                     {
                       padding: 80,
@@ -1029,7 +1112,7 @@ export function MapEditor({
               }
             }
           } catch (error) {
-            console.warn("[KeralaParcel] Parcel click lookup failed:", error);
+            console.warn("[IndiaParcel] Parcel click lookup failed:", error);
           }
         }
 
@@ -1063,6 +1146,8 @@ export function MapEditor({
           source: "map-click",
           requestKey: `${coordinates[0].toFixed(6)}:${coordinates[1].toFixed(6)}:${Date.now()}`,
           capturedAt: new Date().toISOString(),
+          keralaParcel: null,
+          indiaParcel: null,
         });
 
         if (matchedPlot) {
@@ -1398,12 +1483,75 @@ export function MapEditor({
       const mapInst = map.current;
       if (!mapInst || !isMapLoaded) return;
       const {
+        highlightType = "geometry",
         geometry,
         apn,
+        wmsPath,
+        gisCode,
+        plotId,
+        bounds,
         fillColor = "rgba(16, 185, 129, 0.25)",
         outlineColor = "rgba(16, 185, 129, 0.8)",
         lineColor = "#10b981",
       } = (e as CustomEvent).detail;
+
+      if (highlightType === "wms") {
+        if (!wmsPath || !gisCode || !plotId || !bounds) return;
+        const params = new URLSearchParams();
+        params.set("service", "WMS");
+        params.set("version", "1.1.1");
+        params.set("request", "GetMap");
+        params.set("layers", "PLOT_LIST");
+        params.set("styles", "PLOT_SELECTION");
+        params.set("format", "image/png");
+        params.set("transparent", "true");
+        params.set("srs", "EPSG:4326");
+        params.set("width", "512");
+        params.set("height", "512");
+        params.set("bbox", `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`);
+        params.set("state", "03");
+        params.set("gis_code", gisCode);
+        params.set("plot_id", plotId);
+        const imageUrl = `${wmsPath}?${params.toString()}`;
+        const coordinates: [[number, number], [number, number], [number, number], [number, number]] =
+          [
+            [bounds.west, bounds.north],
+            [bounds.east, bounds.north],
+            [bounds.east, bounds.south],
+            [bounds.west, bounds.south],
+          ];
+
+        try {
+          if (mapInst.getLayer(HIGHLIGHT_FILL)) mapInst.removeLayer(HIGHLIGHT_FILL);
+          if (mapInst.getLayer(HIGHLIGHT_LINE)) mapInst.removeLayer(HIGHLIGHT_LINE);
+          if (mapInst.getSource(HIGHLIGHT_SOURCE)) mapInst.removeSource(HIGHLIGHT_SOURCE);
+
+          if (mapInst.getSource(HIGHLIGHT_WMS_SOURCE)) {
+            (mapInst.getSource(HIGHLIGHT_WMS_SOURCE) as mapboxgl.ImageSource).updateImage({
+              url: imageUrl,
+              coordinates,
+            });
+          } else {
+            mapInst.addSource(HIGHLIGHT_WMS_SOURCE, {
+              type: "image",
+              url: imageUrl,
+              coordinates,
+            });
+            mapInst.addLayer({
+              id: HIGHLIGHT_WMS_LAYER,
+              type: "raster",
+              source: HIGHLIGHT_WMS_SOURCE,
+              paint: {
+                "raster-opacity": 0.95,
+              },
+            });
+          }
+        } catch (err) {
+          console.warn("[HighlightParcel] Failed to render WMS highlight:", err);
+        }
+        return;
+      }
+
       if (!geometry) return;
 
       const geojson = {
@@ -1418,6 +1566,12 @@ export function MapEditor({
       };
 
       try {
+        if (mapInst.getLayer(HIGHLIGHT_WMS_LAYER)) {
+          mapInst.removeLayer(HIGHLIGHT_WMS_LAYER);
+        }
+        if (mapInst.getSource(HIGHLIGHT_WMS_SOURCE)) {
+          mapInst.removeSource(HIGHLIGHT_WMS_SOURCE);
+        }
         if (mapInst.getSource(HIGHLIGHT_SOURCE)) {
           (mapInst.getSource(HIGHLIGHT_SOURCE) as GeoJSONSource).setData(
             geojson as any,
