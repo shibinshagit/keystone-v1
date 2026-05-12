@@ -465,11 +465,17 @@ export function EvaluateLandWorkspace() {
         zoningPreference: values.zoningPreference,
         proximity: values.proximity,
       };
+      const analyzedLandCost =
+        scoreData?.usMarketData?.parcel?.title?.assessedValue &&
+        scoreData.usMarketData.parcel.title.assessedValue > 0
+          ? scoreData.usMarketData.parcel.title.assessedValue
+          : undefined;
 
       const result = await actions.startProjectFromEvaluateLand(
         evaluateLandInput,
         plots,
         selectedPlot.id,
+        analyzedLandCost,
       );
 
       if (!result?.project) return;

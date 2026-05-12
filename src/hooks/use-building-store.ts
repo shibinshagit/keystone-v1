@@ -1408,6 +1408,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             evaluateLandInput: EvaluateLandInput,
             sourcePlots: Plot[],
             selectedPlotId?: string | null,
+            analyzedLandCost?: number,
         ) => {
             const inferredGeography = inferRegulationGeography(
                 evaluateLandInput.location.trim(),
@@ -1456,6 +1457,13 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
             );
             get().actions.updateProject(newProject.id, {
                 evaluateLandInput,
+                underwriting:
+                    analyzedLandCost && analyzedLandCost > 0
+                        ? {
+                              ...(newProject.underwriting || {}),
+                              actualLandPurchaseCost: analyzedLandCost,
+                          }
+                        : newProject.underwriting,
                 lastModified: new Date().toISOString(),
             });
             await get().actions.saveCurrentProject();
