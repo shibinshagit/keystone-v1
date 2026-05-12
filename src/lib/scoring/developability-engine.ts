@@ -49,7 +49,7 @@ export function toDevelopabilityScore(
   const getItems = (cat: typeof cats[number]): DevelopabilityScoreItem[] =>
     cat.items.map((item) => ({
       id: item.id,
-      title: item.title,
+      title: formatDevelopabilityItemTitle(item.id, item.title, results[item.id]),
       score: item.score,
       maxScore: item.maxScore,
       status: item.status === 'neutral' ? 'pending' : item.status,
@@ -105,6 +105,25 @@ export function toDevelopabilityScore(
 }
 
 export default evaluateDevelopability;
+
+function formatDevelopabilityItemTitle(
+  itemId: string,
+  defaultTitle: string,
+  result: ItemResult | undefined,
+): string {
+  if (itemId === 'LR4') {
+    const value = toRecord(result?.value);
+    const isUsTitleSignal =
+      result?.value === null ||
+      (value != null && typeof value.ownerName === 'string');
+
+    if (isUsTitleSignal) {
+      return 'Approval status';
+    }
+  }
+
+  return defaultTitle;
+}
 
 function formatDevelopabilityItemDetail(
   itemId: string,

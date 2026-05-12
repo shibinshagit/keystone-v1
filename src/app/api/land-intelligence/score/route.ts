@@ -51,7 +51,7 @@ const EMPTY_PROPOSED_INFRA_SIGNAL = {
 const TRANSIT_PLACE_TYPES = ['bus_station', 'train_station', 'subway_station'];
 const SCHOOL_PLACE_TYPES = ['school', 'primary_school', 'secondary_school', 'university'];
 const MALL_PLACE_TYPES = ['shopping_mall', 'department_store'];
-const AIRPORT_DISTANCE_OPTIMAL_RANGE: [number, number] = [5000, 40000];
+const AIRPORT_DISTANCE_OPTIMAL_RANGE: [number, number] = [0, 40000];
 
 function normalizeText(value: unknown): string {
   return String(value ?? '')
@@ -704,19 +704,16 @@ export async function POST(request: NextRequest) {
 
     let lc5Score = 0;
     if (nearestAirport != null) {
-      lc5Score =
-        nearestAirport < 5000
-          ? 12
-          : scoreByDistance(
-              nearestAirport,
-              [
-                { maxMeters: 10000, score: 24 },
-                { maxMeters: 25000, score: 40 },
-                { maxMeters: 40000, score: 30 },
-                { maxMeters: 60000, score: 20 },
-              ],
-              10,
-            );
+      lc5Score = scoreByDistance(
+        nearestAirport,
+        [
+          { maxMeters: 10000, score: 40 },
+          { maxMeters: 25000, score: 30 },
+          { maxMeters: 40000, score: 20 },
+          { maxMeters: 60000, score: 10 },
+        ],
+        5,
+      );
       results['LC5'] = {
         score: lc5Score,
         status:
@@ -872,17 +869,13 @@ export async function POST(request: NextRequest) {
         value: { altaSurveyAvailable: altaAvailable, floodZone },
       };
     } else if (isUS && !usParcel) {
-      // US city-level search: no parcel data available — assign moderate baseline scores
-      // LR1: US zoning frameworks are generally well-defined, give partial credit
-      results['LR1'] = { score: 45, status: true, value: { zoningCode: 'N/A', zoningDescription: 'Parcel-level zoning not available for city-level search. Draw or click a parcel for details.', jurisdiction: state } };
-      // LR2: Without parcel data, CLU check is inconclusive
-      results['LR2'] = { score: 25, status: true, value: { zoningCode: 'N/A', intendedUse: query.intendedUse || 'Unknown', compatible: null } };
-      // LR3: No encumbrances data without parcel
-      results['LR3'] = { score: 30, status: true, value: { encumbrances: [], count: 0 } };
-      // LR4: No title data without parcel
-      results['LR4'] = { score: 15, status: true, value: null };
-      // LR5: No survey data without parcel
-      results['LR5'] = { score: 15, status: true, value: { altaSurveyAvailable: false, floodZone: 'Unknown' } };
+      // US city-level search: parcel-dependent legal checks should stay pending
+      // until the user draws or clicks a parcel with title/zoning/survey detail.
+      results['LR1'] = undefined;
+      results['LR2'] = undefined;
+      results['LR3'] = undefined;
+      results['LR4'] = undefined;
+      results['LR5'] = undefined;
     } else if (regulation) {
       if (regulationPermitsUse) {
         results['LR1'] = { score: 80, status: true };
