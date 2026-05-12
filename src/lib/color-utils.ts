@@ -46,6 +46,11 @@ export const BUILDING_MATERIALS = {
         saturation: 0,
         baseLightness: 50,
     },
+    [BuildingIntendedUse.Institutional]: {
+        baseHue: 145, // Civic green
+        saturation: 38,
+        baseLightness: 58,
+    },
     [BuildingIntendedUse.Public]: {
         baseHue: 15, // Brick Red / Terracotta
         saturation: 50,

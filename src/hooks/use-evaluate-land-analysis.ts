@@ -444,7 +444,7 @@ export function useEvaluateLandAnalysis({
             if (s.toLowerCase().includes('m')) num *= 10;   // convert Million to Lakhs (rough)
             return num;
           });
-          // Note: The US ArcGIS query will use `minValue` in USD, so we convert the "Lakhs" value.
+          // Note: The Realie parcel query uses `minValue` in USD, so we convert the "Lakhs" value.
           // 1 Lakh INR is roughly 1,200 USD, but if they mean 1 Lakh USD, it's 100,000 USD.
           // Let's assume the user means USD if they are looking in the US.
           const minValue = (minLakhs || 0) * 100000;

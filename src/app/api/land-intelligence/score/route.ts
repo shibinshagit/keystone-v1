@@ -1056,6 +1056,9 @@ export async function POST(request: NextRequest) {
           zoning: usParcel.zoning,
           title: usParcel.title,
           encumbrances: usParcel.encumbrances,
+          source: usParcel.source,
+          address: usParcel.address,
+          lotAreaSqFt: usParcel.lotAreaSqFt,
         } : null,
         environmental: usEnvironmental ? {
           elevationMeters: usEnvironmental.elevationMeters,
@@ -1083,6 +1086,10 @@ export async function POST(request: NextRequest) {
           : { count: sez.length, available: sez.length > 0 },
         usEconomy: isUS ? { available: usInputs !== null, source: 'Bureau of Labor Statistics' } : undefined,
         usPermits: isUS ? { available: usInputs !== null, source: 'US Census BPS' } : undefined,
+        usProperty: isUS ? {
+          available: usParcel !== null,
+          source: usParcel?.source === 'realie' ? 'Realie Property Data API' : usParcel?.source || 'Unavailable',
+        } : undefined,
         usEnvironmental: isUS ? {
           available: usEnvironmental !== null,
           femaFlood: usEnvironmental?.floodZone?.source === 'fema-nfhl',

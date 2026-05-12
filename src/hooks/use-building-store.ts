@@ -2734,6 +2734,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                                 ...p,
                                 obstacles: [...builtObstacles],
                                 unitMix: projectUnitMix,
+                                width: p.width ?? 20,
                                 maxFootprint: effectiveMaxFootprint,
                                 minFootprint: effectiveMinFootprint,
                                 maxFloors: effectiveMaxFloors,
@@ -2753,7 +2754,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                             try {
                                 peripheralBuildings = generateSlabShapes(peripheralChunk, peripheralParams);
                                 // Also try points in remaining space
-                                const pointParams = { ...peripheralParams, obstacles: [...peripheralParams.obstacles, ...peripheralBuildings], seed: (peripheralParams.seed ?? 0) + 50 };
+                                const pointParams = { ...peripheralParams, obstacles: [...(peripheralParams.obstacles ?? []), ...peripheralBuildings], seed: (peripheralParams.seed ?? 0) + 50 };
                                 const extraPoints = generatePointShapes(peripheralChunk, pointParams);
                                 peripheralBuildings = [...peripheralBuildings, ...extraPoints];
                             } catch (e) {

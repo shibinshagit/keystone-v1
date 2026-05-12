@@ -131,10 +131,23 @@ function parseInfoSections(info?: string | null) {
     if (current) owners.push(current.trim());
   }
 
+  if (owners.length === 0) {
+    const ownerLineMatches = text.matchAll(
+      /(?:Owner(?:\s+Name)?|Land\s*Owner|Khatedar|Pattadar)\s*:?\s*([^\n]+)/gi,
+    );
+    for (const match of ownerLineMatches) {
+      const owner = match[1]?.trim();
+      if (owner) owners.push(owner);
+    }
+  }
+
   const remarksMatch = text.match(/Remarks\s*:\s*([\s\S]*?)$/i);
   const blockSurveyMatch = text.match(
     /Block No\.\s*([^\s,]+),\s*Survey No\.\s*([^\s,]+)/i,
   );
+  const blockOnlyMatch = text.match(/Block\s*(?:No\.?|Number)?\s*:?\s*([^\s,\n]+)/i);
+  const surveyOnlyMatch = text.match(/Survey\s*(?:No\.?|Number)?\s*:?\s*([^\s,\n]+)/i);
+  const plotOnlyMatch = text.match(/(?:Plot|Parcel)\s*(?:No\.?|Number)?\s*:?\s*([^\s,\n]+)/i);
   const subDivMatch = text.match(/Sub Div No\.\s*([^\n]*)/i);
   const areaMatch = text.match(
     /Square Metre\s*:\s*([\d.]+)/i,
@@ -143,8 +156,9 @@ function parseInfoSections(info?: string | null) {
   return {
     owners,
     remarks: remarksMatch?.[1]?.trim() || null,
-    blockNo: blockSurveyMatch?.[1]?.trim() || null,
-    surveyNo: blockSurveyMatch?.[2]?.trim() || null,
+    blockNo: blockSurveyMatch?.[1]?.trim() || blockOnlyMatch?.[1]?.trim() || null,
+    surveyNo: blockSurveyMatch?.[2]?.trim() || surveyOnlyMatch?.[1]?.trim() || null,
+    plotNo: plotOnlyMatch?.[1]?.trim() || null,
     subdivisionNo: subDivMatch?.[1]?.trim() || null,
     areaSqmFromInfo: areaMatch?.[1] ? Number(areaMatch[1]) : null,
   };
@@ -275,10 +289,22 @@ function buildKeralaParcelFields(
   plotInfo: PlotInfoResponse | null | undefined,
   parsedInfo: ReturnType<typeof parseInfoSections>,
   attrs: { vsno?: string; bcode?: string } | null,
+  hit: PlotAtCoordinateResponse,
 ): IndiaParcelField[] {
+  const plotNumber = plotInfo?.plotno || hit.plot_no || parsedInfo.plotNo || hit.id || "N/A";
   const fields: IndiaParcelField[] = [
+    { label: "Plot", value: plotNumber },
     { label: "Block", value: parsedInfo.blockNo || attrs?.bcode || "N/A" },
-    { label: "Survey", value: parsedInfo.surveyNo || attrs?.vsno || "N/A" },
+    {
+      label: "Survey",
+      value:
+        parsedInfo.surveyNo ||
+        attrs?.vsno ||
+        hit.vsrno ||
+        plotInfo?.plotno ||
+        hit.plot_no ||
+        "N/A",
+    },
     {
       label: "Subdivision",
       value:
@@ -293,6 +319,7 @@ function buildKeralaParcelFields(
       ? `${Math.round(plotInfo.area).toLocaleString()} sqm`
       : plotInfo?.formatedArea || "N/A";
   fields.push({ label: "Area", value: areaValue });
+  fields.push({ label: "GIS Code", value: plotInfo?.giscode || hit.gis_code || "N/A" });
 
   return fields;
 }
@@ -515,7 +542,7 @@ export const KeralaParcelService = {
       gisInfo: plotInfo?.gisinfo || hit.gisinfo || null,
       vsrNo: hit.vsrno || hit.gis_code,
       blockNo: parsedInfo.blockNo || attrs?.bcode || null,
-      surveyNo: parsedInfo.surveyNo || attrs?.vsno || null,
+      surveyNo: parsedInfo.surveyNo || attrs?.vsno || hit.vsrno || plotInfo?.plotno || hit.plot_no || null,
       subdivisionNo:
         parsedInfo.subdivisionNo && parsedInfo.subdivisionNo !== "null"
           ? parsedInfo.subdivisionNo
@@ -528,7 +555,7 @@ export const KeralaParcelService = {
       mapSketchUrl: parseInfoLinksHtml(plotInfo?.infoLinks),
       geometry: parseWktGeometry(plotInfo?.the_geom),
       extent: normalizeExtent(extent),
-      parcelFields: buildKeralaParcelFields(plotInfo, parsedInfo, attrs),
+      parcelFields: buildKeralaParcelFields(plotInfo, parsedInfo, attrs, hit),
       administrativeFields: [
         { label: "Village", value: parsedLocation.villageName || "N/A" },
         { label: "Taluk", value: parsedLocation.talukName || "N/A" },

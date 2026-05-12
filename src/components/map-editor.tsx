@@ -999,21 +999,36 @@ export function MapEditor({
           try {
             const geocodePromise =
               MapboxPlacesService.reverseGeocode(coordinates).catch(() => null);
-            const response = await fetch(indiaParcelAdapter.parcelClickPath, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                coordinates:
-                  indiaParcelAdapter.transformClickCoordinates?.(coordinates) ||
-                  coordinates,
-              }),
+            const transformedCoordinates =
+              indiaParcelAdapter.transformClickCoordinates?.(coordinates);
+            const clickCandidates = [
+              transformedCoordinates,
+              coordinates,
+            ].filter((candidate, index, list): candidate is [number, number] => {
+              if (!candidate) return false;
+              return list.findIndex(
+                (item) =>
+                  item &&
+                  item[0].toFixed(7) === candidate[0].toFixed(7) &&
+                  item[1].toFixed(7) === candidate[1].toFixed(7),
+              ) === index;
             });
 
-            if (response.ok) {
-              const payload = await response.json();
-              const indiaParcel = payload?.parcel as IndiaParcelSelection | null;
+            let indiaParcel: IndiaParcelSelection | null = null;
+            for (const candidate of clickCandidates) {
+              const response = await fetch(indiaParcelAdapter.parcelClickPath, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ coordinates: candidate }),
+              });
 
-              if (indiaParcel?.plotId && indiaParcel.gisCode) {
+              if (!response.ok) continue;
+              const payload = await response.json();
+              indiaParcel = payload?.parcel as IndiaParcelSelection | null;
+              if (indiaParcel?.plotId && indiaParcel.gisCode) break;
+            }
+
+            if (indiaParcel?.plotId && indiaParcel.gisCode) {
                 const initialLocationLabel =
                   indiaParcel.locationLabel ||
                   indiaParcelAdapter.buildParcelLocationLabel(indiaParcel);
@@ -1112,7 +1127,6 @@ export function MapEditor({
                   );
                 }
                 return;
-              }
             }
           } catch (error) {
             console.warn("[IndiaParcel] Parcel click lookup failed:", error);
@@ -1856,19 +1870,21 @@ export function MapEditor({
       const center = mapInst.getCenter();
       if (!bounds) return;
 
-      // Quick check: is the center within a supported US county?
-      const { isInSupportedUSCounty } =
-        await import("@/services/us/us-parcel-fetcher");
-      if (!isInSupportedUSCounty(center.lng, center.lat)) {
+      const isInRealieUsCoverage =
+        center.lat >= 24.5 &&
+        center.lat <= 49.5 &&
+        center.lng >= -125 &&
+        center.lng <= -66;
+      if (!isInRealieUsCoverage) {
         console.log(
-          "[USParcels] Not in supported US county, hiding",
+          "[USParcels] Not in Realie US coverage, hiding",
           center.lng.toFixed(4),
           center.lat.toFixed(4),
         );
         hideParcels();
         return;
       }
-      console.log("[USParcels] In supported US county, fetching parcels...");
+      console.log("[USParcels] In Realie US coverage, fetching parcels...");
 
       try {
         const res = await fetch(
