@@ -138,6 +138,21 @@ interface BhuvanAnalysisResponse {
   error?: string;
 }
 
+const parsePriceRangeValueToUsd = (value: string): number => {
+  const numericValue = Number(value.replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return 0;
+
+  const normalizedValue = value.toLowerCase();
+  if (/\bcr\b|crore|crores/.test(normalizedValue)) {
+    return numericValue * 10000000;
+  }
+  if (/\bm\b|million|millions/.test(normalizedValue)) {
+    return numericValue * 1000000;
+  }
+
+  return numericValue;
+};
+
 export function useEvaluateLandAnalysis({
   selectedPlot,
   plots,
@@ -436,19 +451,9 @@ export function useEvaluateLandAnalysis({
         } else {
           setIsSearchingParcels(true);
           const landSizeSqft = Number(values.landSize) * 10.7639;
-          const priceStr = values.priceRange || '';
-          const [minLakhs, maxLakhs] = priceStr.split('-').map(s => {
-            const numStr = s.replace(/[^0-9.]/g, '');
-            let num = Number(numStr);
-            if (s.toLowerCase().includes('cr')) num *= 100; // convert Cr to Lakhs
-            if (s.toLowerCase().includes('m')) num *= 10;   // convert Million to Lakhs (rough)
-            return num;
-          });
-          // Note: The Realie parcel query uses `minValue` in USD, so we convert the "Lakhs" value.
-          // 1 Lakh INR is roughly 1,200 USD, but if they mean 1 Lakh USD, it's 100,000 USD.
-          // Let's assume the user means USD if they are looking in the US.
-          const minValue = (minLakhs || 0) * 100000;
-          const maxValue = (maxLakhs || 0) * 100000;
+          const [minValue, maxValue] = (values.priceRange || '')
+            .split('-')
+            .map(parsePriceRangeValueToUsd);
 
           fetch('/api/us/parcel-search', {
             method: 'POST',

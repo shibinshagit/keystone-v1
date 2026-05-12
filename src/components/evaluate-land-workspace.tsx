@@ -117,7 +117,7 @@ const evaluateLandFormSchema = z.object({
   intendedUse: z.enum(INTENDED_USE_OPTIONS, {
     errorMap: () => ({ message: "Select an intended use case." }),
   }),
-  priceRange: z.string().trim().min(1, "Enter a price range or land value."),
+  priceRange: z.string().trim().min(1, "Enter a price range or land value in millions."),
   plotType: z.nativeEnum(LandPlotType, {
     errorMap: () => ({ message: "Select a plot type." }),
   }),
@@ -154,6 +154,15 @@ const formatNumber = (value: number, digits = 0) =>
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
+
+const formatUsdMillions = (value?: number | null) => {
+  if (!value || value <= 0) return "N/A";
+
+  return `$${(value / 1000000).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}M`;
+};
 
 function ScoreSummary({
   score,
@@ -562,6 +571,9 @@ export function EvaluateLandWorkspace() {
     }
     autoRunRequestKeyRef.current = instantAnalysisTarget.requestKey;
     setActivePanelTab("analysis");
+    setSidebarWidth((currentWidth) =>
+      Math.max(currentWidth, ANALYSIS_SIDEBAR_WIDTH),
+    );
     void runAnalysis();
   }, [instantAnalysisTarget?.requestKey, runAnalysis]);
 
@@ -933,11 +945,11 @@ export function EvaluateLandWorkspace() {
                       name="priceRange"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Price Range / Value *</FormLabel>
+                          <FormLabel>Price Range / Value (Millions) *</FormLabel>
                           <FormControl>
                             <Input
                               {...field}
-                              placeholder="e.g. 6 Cr - 9 Cr or 18,000 per sqm"
+                              placeholder="e.g. 6M - 9M"
                               onChange={(event) =>
                                 field.onChange(
                                   normalizePriceRangeInput(event.target.value),
@@ -1842,11 +1854,11 @@ export function EvaluateLandWorkspace() {
                                     )}
                                     <div className="flex justify-between text-xs">
                                       <span className="text-muted-foreground">Assessed Value</span>
-                                      <span className="font-bold text-emerald-400">${p.title.assessedValue?.toLocaleString()}</span>
+                                      <span className="font-bold text-emerald-400">{formatUsdMillions(p.title.assessedValue)}</span>
                                     </div>
                                     <div className="flex justify-between text-xs">
                                       <span className="text-muted-foreground">Last Sale Price</span>
-                                      <span className="font-semibold tabular-nums">${p.title.lastSalePrice?.toLocaleString()}</span>
+                                      <span className="font-semibold tabular-nums">{formatUsdMillions(p.title.lastSalePrice)}</span>
                                     </div>
                                     <div className="flex justify-between text-xs">
                                       <span className="text-muted-foreground">Last Sale Date</span>
@@ -2068,7 +2080,7 @@ export function EvaluateLandWorkspace() {
                                       </p>
                                       {parcel.assessedValue > 0 && (
                                         <span className="text-[10px] font-bold text-emerald-400 shrink-0">
-                                          ${(parcel.assessedValue / 1000).toFixed(0)}K
+                                          {formatUsdMillions(parcel.assessedValue)}
                                         </span>
                                       )}
                                     </div>
