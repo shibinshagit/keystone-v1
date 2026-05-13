@@ -22,7 +22,7 @@ import { generateLShapes, generateUShapes, generateTShapes, generateHShapes, gen
 import { generateSiteUtilities, generateBuildingLayout, calculateUtilityReservationZones, generateSiteGates, getPlotOrientation } from '@/lib/generators/layout-generator';
 import { splitPolygon } from '@/lib/polygon-utils';
 import { db } from '@/lib/firebase';
-import { inferRegulationGeography } from '@/lib/geography';
+import { getStateForUSLocation, inferRegulationGeography } from '@/lib/geography';
 import type { IndiaParcelSelection } from '@/services/india/shared/types';
 import { calculateVastuScore } from '@/lib/engines/vastu-engine';
 import { calculateGreenAnalysis } from '@/lib/engines/green-analysis-engine';
@@ -559,12 +559,23 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
     try {
         const collectionName = getRegulationCollectionNameForMarket(activeProject?.market);
         const regulationsRef = collection(db, collectionName);
-        const preferredProjectLocations = [
-            activeProject?.city,
-            activeProject?.locationLabel,
-            typeof activeProject?.location === 'string' ? activeProject.location : undefined,
-            activeProject?.stateOrProvince,
-        ].filter((value, index, values): value is string => !!value && values.indexOf(value) === index);
+        const preferredProjectLocations = (
+            activeProject?.market === 'USA'
+                ? [
+                    activeProject?.stateOrProvince,
+                    getStateForUSLocation(activeProject?.locationLabel),
+                    typeof activeProject?.location === 'string' ? getStateForUSLocation(activeProject.location) : undefined,
+                    activeProject?.locationLabel,
+                    typeof activeProject?.location === 'string' ? activeProject.location : undefined,
+                    activeProject?.city,
+                ]
+                : [
+                    activeProject?.city,
+                    activeProject?.locationLabel,
+                    typeof activeProject?.location === 'string' ? activeProject.location : undefined,
+                    activeProject?.stateOrProvince,
+                ]
+        ).filter((value, index, values): value is string => !!value && values.indexOf(value) === index);
 
         for (const candidate of preferredProjectLocations) {
             const regulations = await getAvailableRegulationsForLocation({
@@ -587,7 +598,10 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
             const regionFeature = Array.isArray(geoData.features)
                 ? geoData.features.find((feature: any) => feature.place_type?.includes('region'))
                 : null;
-            locationName = placeFeature?.text || regionFeature?.text || locationName;
+            locationName =
+                activeProject?.market === 'USA'
+                    ? getStateForUSLocation(regionFeature?.text || activeProject?.locationLabel || placeFeature?.text) || regionFeature?.text || locationName
+                    : placeFeature?.text || regionFeature?.text || locationName;
 
             if (locationName) {
                 console.log(`[Store] Fetching local regulations for ${locationName}...`);

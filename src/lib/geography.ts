@@ -15,6 +15,7 @@ export interface GeographyLocationOption {
   countryCode: CountryCode;
   stateOrProvince?: string;
   city?: string;
+  legacyCities?: string[];
   jurisdictionLevel: 'national' | 'state' | 'city';
   codeFamily?: string;
   projectSelectable: boolean;
@@ -89,38 +90,44 @@ export const INDIA_REGULATION_LOCATIONS: GeographyLocationOption[] = [
     : location,
 );
 
+export const US_CITY_TO_STATE: Record<string, string> = {
+  Austin: 'Texas',
+  Phoenix: 'Arizona',
+  Seattle: 'Washington',
+};
+
 export const US_PILOT_REGULATION_LOCATIONS: GeographyLocationOption[] = [
   {
-    location: 'Austin',
-    label: 'Austin, Texas',
+    location: 'Texas',
+    label: 'Texas',
     market: 'USA',
     countryCode: 'US',
     stateOrProvince: 'Texas',
-    city: 'Austin',
-    jurisdictionLevel: 'city',
-    codeFamily: 'City Zoning',
+    legacyCities: ['Austin'],
+    jurisdictionLevel: 'state',
+    codeFamily: 'State Regulations',
     projectSelectable: true,
   },
   {
-    location: 'Phoenix',
-    label: 'Phoenix, Arizona',
+    location: 'Arizona',
+    label: 'Arizona',
     market: 'USA',
     countryCode: 'US',
     stateOrProvince: 'Arizona',
-    city: 'Phoenix',
-    jurisdictionLevel: 'city',
-    codeFamily: 'City Zoning',
+    legacyCities: ['Phoenix'],
+    jurisdictionLevel: 'state',
+    codeFamily: 'State Regulations',
     projectSelectable: true,
   },
   {
-    location: 'Seattle',
-    label: 'Seattle, Washington',
+    location: 'Washington',
+    label: 'Washington',
     market: 'USA',
     countryCode: 'US',
     stateOrProvince: 'Washington',
-    city: 'Seattle',
-    jurisdictionLevel: 'city',
-    codeFamily: 'City Zoning',
+    legacyCities: ['Seattle'],
+    jurisdictionLevel: 'state',
+    codeFamily: 'State Regulations',
     projectSelectable: true,
   },
 ];
@@ -165,7 +172,7 @@ export function getDefaultLocationForMarket(
     market === 'India'
       ? options.find((option) => option.location === 'Delhi')
       : market === 'USA'
-        ? options.find((option) => option.location === 'Austin')
+        ? options.find((option) => option.location === 'Texas')
         : undefined;
 
   return preferredLocation?.location || options[0]?.location || '';
@@ -196,6 +203,7 @@ export function inferRegulationGeography(
       const optionLabel = normalizeLocationFragment(option.label);
       const optionCity = normalizeLocationFragment(option.city || "");
       const optionState = normalizeLocationFragment(option.stateOrProvince || "");
+      const legacyCities = (option.legacyCities || []).map(normalizeLocationFragment);
 
       return (
         optionLocation === normalized ||
@@ -204,6 +212,8 @@ export function inferRegulationGeography(
         parts.includes(optionLabel) ||
         (optionCity && parts.includes(optionCity)) ||
         (optionState && parts.includes(optionState)) ||
+        legacyCities.includes(normalized) ||
+        legacyCities.some((city) => parts.includes(city)) ||
         normalized.includes(optionLabel) ||
         normalized.includes(optionLocation)
       );
@@ -220,4 +230,28 @@ export function inferRegulationGeography(
     jurisdictionLevel: match.jurisdictionLevel,
     codeFamily: match.codeFamily,
   });
+}
+
+export function getStateForUSLocation(location?: string | null): string | undefined {
+  if (!location) return undefined;
+
+  const normalized = normalizeLocationFragment(location);
+  const parts = normalized
+    .split(",")
+    .map((part) => normalizeLocationFragment(part))
+    .filter(Boolean);
+
+  const stateMatch = US_PILOT_REGULATION_LOCATIONS.find((option) => {
+    const state = normalizeLocationFragment(option.stateOrProvince || option.location);
+    const label = normalizeLocationFragment(option.label);
+    return normalized === state || normalized === label || parts.includes(state) || parts.includes(label);
+  });
+  if (stateMatch) return stateMatch.stateOrProvince || stateMatch.location;
+
+  const legacyCityMatch = Object.entries(US_CITY_TO_STATE).find(([city]) => {
+    const cityName = normalizeLocationFragment(city);
+    return normalized === cityName || parts.includes(cityName);
+  });
+
+  return legacyCityMatch?.[1];
 }

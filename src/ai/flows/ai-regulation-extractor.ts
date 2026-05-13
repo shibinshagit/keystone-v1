@@ -236,7 +236,7 @@ Return only the JSON array and nothing else.
 Document: ${input.fileName}
 Location instruction: ${locationInstruction}
 
-Focus on zoning ordinances, site development standards, dimensional tables, and official city summaries for Austin, Phoenix, and Seattle.
+Focus on state-level zoning/building-code documents. Legacy pilot baselines may mention Austin, Phoenix, or Seattle, but new USA regulation records should be organized by state.
 Priority order:
 1. FAR, height, setbacks, lot coverage, minimum lot size, frontage, and units per acre.
 2. Zoning district names and land-use notes that help explain which representative baseline is being extracted.
@@ -258,7 +258,7 @@ ${commonSchema}`;
 Document: ${input.fileName}
 Location instruction: ${locationInstruction}
 
-Focus on IBC / IRC / locally adopted building-code amendments for Austin, Phoenix, and Seattle.
+Focus on IBC / IRC / state-adopted building-code amendments. Legacy pilot baselines may mention Austin, Phoenix, or Seattle, but new USA regulation records should be organized by state.
 Priority order:
 1. High-rise trigger and high-rise-only life-safety rules.
 2. Stair width, stair count, corridor width, elevator / fire-service elevator requirements.

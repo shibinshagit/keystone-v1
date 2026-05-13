@@ -5,6 +5,7 @@ import { Project, RegulationData, GreenRegulationData, VastuRegulationData } fro
 import { useBuildingStore } from '@/hooks/use-building-store';
 import ultimateVastu from '@/data/ultimate-vastu-checklist.json';
 import { lookupRegulationForLocationAndUse } from '@/lib/regulation-lookup';
+import { getStateForUSLocation } from '@/lib/geography';
 
 interface UseRegulationsReturn {
     regulations: RegulationData | null;
@@ -37,12 +38,21 @@ export function useRegulations(project: Project | null): UseRegulationsReturn {
                 // 1. Fetch Building Regulations
                 // Priority: Specific Regulation ID > Generic ID > Smart Fallback
                 // Parse location safely since it might be an object
-                let location = project.city || project.locationLabel || project.stateOrProvince || 'Delhi';
+                let location =
+                    project.market === 'USA'
+                        ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || getStateForUSLocation(project.city) || project.locationLabel || project.city || 'Texas'
+                        : project.city || project.locationLabel || project.stateOrProvince || 'Delhi';
                 if (typeof project.location === 'string') {
-                    location = project.city || project.locationLabel || project.location;
+                    location =
+                        project.market === 'USA'
+                            ? project.stateOrProvince || getStateForUSLocation(project.location) || getStateForUSLocation(project.locationLabel) || project.location
+                            : project.city || project.locationLabel || project.location;
                 } else if (project.location && typeof project.location === 'object') {
                     // If it's a coordinate object without a resolved string name, we'll have to rely on smart fallback or NBC
-                    location = project.city || project.locationLabel || (project.location as any).name || (project.location as any).text || 'Default';
+                    location =
+                        project.market === 'USA'
+                            ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || project.locationLabel || 'Texas'
+                            : project.city || project.locationLabel || (project.location as any).name || (project.location as any).text || 'Default';
                 }
                 
                 let intendedUse = project.intendedUse || 'Residential';
@@ -106,6 +116,9 @@ export function useRegulations(project: Project | null): UseRegulationsReturn {
     }, [
         project?.id,
         project?.location,
+        project?.locationLabel,
+        project?.stateOrProvince,
+        project?.city,
         project?.intendedUse,
         project?.regulationId, // Add specific ID dependency
         project?.market,
