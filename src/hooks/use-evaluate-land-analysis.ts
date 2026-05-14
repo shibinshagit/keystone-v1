@@ -36,6 +36,14 @@ interface ScoreResult {
     demandDensity: { population: number; medianIncome: number; tier: string };
     buyabilityScore: number | null;
     developmentProspect: string | null;
+    environmental?: {
+      floodZone?: {
+        zone: string;
+        zoneDescription: string;
+        isHighRisk: boolean;
+        panelNumber: string;
+      } | null;
+    } | null;
     parcel?: {
       parcelId: string;
       lotAreaSqFt?: number;
@@ -317,8 +325,8 @@ export function useEvaluateLandAnalysis({
             landSizeSqm: Number(values.landSize),
             intendedUse: values.intendedUse,
             parcelAware: Boolean(plotForAnalysis) || Boolean(pointTarget),
-            market: geography.market,
-            countryCode: geography.countryCode,
+            market: isUS ? "USA" : geography.market,
+            countryCode: isUS ? "US" : geography.countryCode,
           }),
         }).then(async (response) => {
           const payload = await response.json();

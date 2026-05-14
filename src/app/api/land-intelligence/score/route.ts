@@ -416,12 +416,12 @@ export async function POST(request: NextRequest) {
         state,
         district,
       }),
-      query.market === 'USA' || query.countryCode === 'US'
+      isUS
         ? EnvironmentalService.getEnvironmentalScreening({
             coordinates: coords,
             location: district ? `${district}, ${state}` : state,
-            market: query.market,
-            countryCode: query.countryCode,
+            market: query.market || 'USA',
+            countryCode: query.countryCode || 'US',
           })
         : Promise.resolve(null),
     ]);

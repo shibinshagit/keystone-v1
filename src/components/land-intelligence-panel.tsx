@@ -39,6 +39,17 @@ import { IndiaParcelDetailsCard } from "./india-parcel-details-card";
 
 interface ScoreResult {
   score: DevelopabilityScore;
+  isUS?: boolean;
+  usMarketData?: {
+    environmental?: {
+      floodZone?: {
+        zone: string;
+        zoneDescription: string;
+        isHighRisk: boolean;
+        panelNumber: string;
+      } | null;
+    } | null;
+  } | null;
   terrain: TerrainIntelligenceData | null;
   environmentalScreening: EnvironmentalScreeningReport | null;
   transportationScreening: TransportationScreeningReport | null;
@@ -592,6 +603,9 @@ export function LandIntelligencePanel() {
                 title="EPA Environmental Screening"
                 color="text-emerald-500"
               >
+                {(() => {
+                  return (
+                    <>
                 <DataRow
                   label="Wetland Risk"
                   value={scoreData.environmentalScreening.wetlandScreening.status}
@@ -640,7 +654,7 @@ export function LandIntelligencePanel() {
 
                 <div className="mt-2 rounded border border-border/40 bg-secondary/20 p-2">
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Summary
+                    Overview
                   </div>
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {scoreData.environmentalScreening.nepa.summary}
@@ -663,6 +677,53 @@ export function LandIntelligencePanel() {
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                       {scoreData.environmentalScreening.airQuality.summary}
                     </p>
+                    {scoreData.environmentalScreening.airQuality.observedAqi == null ? (
+                      <p className="mt-2 text-[11px] text-muted-foreground">
+                        Live AQI will appear here after the AirNow API key is configured.
+                      </p>
+                    ) : null}
+                    {scoreData.environmentalScreening.airQuality.observedAqi != null ||
+                    scoreData.environmentalScreening.airQuality.primaryPollutant ||
+                    scoreData.environmentalScreening.airQuality.reportingArea ||
+                    scoreData.environmentalScreening.airQuality.observationTime ? (
+                      <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
+                        {scoreData.environmentalScreening.airQuality.observedAqi != null ? (
+                          <div>
+                            AQI:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.airQuality.observedAqi}
+                              {scoreData.environmentalScreening.airQuality.observedCategory
+                                ? ` (${scoreData.environmentalScreening.airQuality.observedCategory})`
+                                : ""}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.airQuality.primaryPollutant ? (
+                          <div>
+                            Primary pollutant:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.airQuality.primaryPollutant}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.airQuality.reportingArea ? (
+                          <div>
+                            Reporting area:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.airQuality.reportingArea}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.airQuality.observationTime ? (
+                          <div>
+                            Observed:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.airQuality.observationTime}
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="rounded border border-border/40 bg-secondary/20 p-2">
                     <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -671,38 +732,58 @@ export function LandIntelligencePanel() {
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                       {scoreData.environmentalScreening.waterQuality.summary}
                     </p>
-                  </div>
-                </div>
-
-                {scoreData.environmentalScreening.nepa.triggers.length > 0 ? (
-                  <div className="space-y-1">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Review Triggers
-                    </div>
-                    {scoreData.environmentalScreening.nepa.triggers.map((trigger, index) => (
-                      <div
-                        key={`${trigger}-${index}`}
-                        className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
-                      >
-                        {trigger}
+                    {scoreData.environmentalScreening.waterQuality.nearestAssessmentUnit ||
+                    scoreData.environmentalScreening.waterQuality.overallStatus ||
+                    scoreData.environmentalScreening.waterQuality.irCategory ||
+                    scoreData.environmentalScreening.waterQuality.impairmentSignals?.length ? (
+                      <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
+                        {scoreData.environmentalScreening.waterQuality.nearestAssessmentUnit ? (
+                          <div>
+                            Waterbody:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.nearestAssessmentUnit}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.waterQuality.overallStatus ? (
+                          <div>
+                            Status:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.overallStatus}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.waterQuality.irCategory ? (
+                          <div>
+                            IR category:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.irCategory}
+                            </span>
+                          </div>
+                        ) : null}
+                        {typeof scoreData.environmentalScreening.waterQuality.impaired === "boolean" ? (
+                          <div>
+                            Impaired:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.impaired ? "Yes" : "No"}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.waterQuality.impairmentSignals?.length ? (
+                          <div>
+                            Observed indicators:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.impairmentSignals.join(", ")}
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
-                    ))}
+                    ) : null}
                   </div>
-                ) : null}
-
-                <div className="space-y-1">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Due-Diligence Documents
-                  </div>
-                  {scoreData.environmentalScreening.nepa.recommendedDocuments.map((document, index) => (
-                    <div
-                      key={`${document}-${index}`}
-                      className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
-                    >
-                      {document}
-                    </div>
-                  ))}
                 </div>
+                    </>
+                  );
+                })()}
               </InfoCard>
             ) : null}
 
