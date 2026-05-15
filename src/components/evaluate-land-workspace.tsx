@@ -75,6 +75,11 @@ import { useEvaluateLandAnalysis } from "@/hooks/use-evaluate-land-analysis";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useToast } from "@/hooks/use-toast";
 import {
+  LAND_CONVERSION_CATEGORIES,
+  getLandConversionCell,
+  normalizeLandConversionCategory,
+} from "@/lib/land-intelligence/land-conversion-matrix";
+import {
   BuildingIntendedUse,
   LandPlotType,
   LandProximity,
@@ -96,6 +101,12 @@ const INTENDED_USE_OPTIONS = [
 const DEFAULT_SIDEBAR_WIDTH = 380;
 const ANALYSIS_SIDEBAR_WIDTH = 500;
 const MAPBOX_GEOCODING_API = 'https://api.mapbox.com/geocoding/v5/mapbox.places/';
+
+const landConversionToneClasses = {
+  good: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+  caution: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+  risk: "border-red-500/30 bg-red-500/10 text-red-300",
+} as const;
 
 interface GeocodingSuggestion {
   id: string;
@@ -605,6 +616,26 @@ export function EvaluateLandWorkspace() {
           : regulationMatch?.source === "national-fallback"
             ? "National (NBC) fallback"
             : "No zoning match";
+  const conversionSignal = buildVerdict?.signals.find((signal) =>
+    signal.toLowerCase().startsWith("conversion status:"),
+  );
+  const landConversionMarket = scoreData?.isUS ? "USA" : "India";
+  const landConversionFromCategory = normalizeLandConversionCategory(
+    scoreData?.isUS
+      ? scoreData.usMarketData?.parcel?.zoning?.zoningDescription ||
+          scoreData.usMarketData?.parcel?.zoning?.description ||
+          scoreData.usMarketData?.parcel?.zoning?.zoningCode
+      : landUseData?.primaryLandUse || getValues("zoningPreference"),
+  );
+  const currentLandConversionLabel = scoreData?.isUS
+    ? scoreData.usMarketData?.parcel?.zoning?.zoningDescription ||
+      scoreData.usMarketData?.parcel?.zoning?.description ||
+      scoreData.usMarketData?.parcel?.zoning?.zoningCode ||
+      "Unavailable"
+    : landUseData?.primaryLandUse || "Unavailable";
+  const showLandConversionMatrix =
+    Boolean(buildVerdict && !scoreData?.isUS) ||
+    Boolean(scoreData?.isUS && scoreData.usMarketData?.parcel?.zoning);
 
   const handleRunDevelopabilityScore = useCallback(async () => {
     const didRun = await runAnalysis();
@@ -2377,6 +2408,109 @@ export function EvaluateLandWorkspace() {
                             ))}
                           </div>
                         </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {showLandConversionMatrix ? (
+                    <div className="min-w-0 overflow-hidden rounded-xl border border-border/60 bg-background/80 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="mt-1 text-sm font-bold">
+                            Land Conversion Matrix
+                          </h3>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            CLU-style reference matrix for {landConversionMarket} land-use conversion.
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] font-medium">
+                          {landConversionMarket}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-4 rounded-xl border border-border/50 bg-gradient-to-br from-background/90 via-background/75 to-muted/10 p-4">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                          Current land classification
+                        </p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className="max-w-full text-[11px] font-medium">
+                            {currentLandConversionLabel}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                            Conversion outlook from this land
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {LAND_CONVERSION_CATEGORIES.map((toCategory) => {
+                            const fromCategory = landConversionFromCategory;
+                            const cell = fromCategory
+                              ? getLandConversionCell(
+                                  landConversionMarket,
+                                  fromCategory,
+                                  toCategory.id,
+                                )
+                              : null;
+                            return (
+                              <div
+                                key={`selected-row-${toCategory.id}`}
+                                className={cn(
+                                  "min-w-0 rounded-xl border p-3 transition-colors",
+                                  cell
+                                    ? landConversionToneClasses[cell.tone]
+                                    : "border-border/50 bg-background/40 text-muted-foreground",
+                                  "opacity-90",
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="min-w-0 text-[11px] font-semibold uppercase tracking-[0.08em]">
+                                    {toCategory.label}
+                                  </p>
+                                </div>
+                                <p className="mt-3 text-sm font-semibold leading-tight">
+                                  {cell?.label || "Unavailable"}
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-2 rounded-lg border border-border/50 bg-background/70 p-3">
+                        <div className="flex items-center justify-between gap-3 text-xs">
+                          <span className="text-muted-foreground">
+                            Current land use
+                          </span>
+                          <span className="text-right font-semibold">
+                            {currentLandConversionLabel}
+                          </span>
+                        </div>
+                        {!scoreData?.isUS && conversionSignal ? (
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="text-muted-foreground">
+                              Conversion status
+                            </span>
+                            <span className="text-right font-semibold">
+                              {conversionSignal.replace(/^Conversion status:\s*/i, "")}
+                            </span>
+                          </div>
+                        ) : null}
+                        {!scoreData?.isUS ? (
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="text-muted-foreground">
+                              Rule source
+                            </span>
+                            <span className="text-right font-semibold">
+                              {regulationMatch?.matchedLocation
+                                ? `${verdictSourceLabel} (${regulationMatch.matchedLocation})`
+                                : verdictSourceLabel}
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}

@@ -46,6 +46,7 @@ interface ScoreResult {
     } | null;
     parcel?: {
       parcelId: string;
+      source?: "realie" | "llm" | "fallback";
       lotAreaSqFt?: number;
       zoning?: {
         zoningCode: string;
@@ -109,6 +110,7 @@ interface ScoreResult {
     sez: { count: number; available: boolean };
     usEconomy?: { available: boolean; source: string };
     usPermits?: { available: boolean; source: string };
+    usProperty?: { available: boolean; source: string };
     terrain: { available: boolean; isMock: boolean; source?: string };
     satellite: { available: boolean; isMock: boolean };
     regulation: { available: boolean };
