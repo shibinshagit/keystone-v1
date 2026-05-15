@@ -11,6 +11,23 @@ import type {
 import { UsgsNlcdService } from "@/services/land-intelligence/usgs-nlcd-service";
 
 const ECHO_BASE_URL = "https://echodata.epa.gov/echo";
+const AIRNOW_BASE_URL = "https://www.airnowapi.org/aq/observation/latLong/current/";
+
+type AirNowObservation = {
+  DateObserved?: string;
+  HourObserved?: number;
+  LocalTimeZone?: string;
+  ReportingArea?: string;
+  StateCode?: string;
+  Latitude?: number;
+  Longitude?: number;
+  ParameterName?: string;
+  AQI?: number;
+  Category?: {
+    Number?: number;
+    Name?: string;
+  };
+};
 
 type EchoResults = {
   Message?: string;
@@ -102,6 +119,40 @@ async function fetchJson<T>(url: string): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function getAirNowApiKey() {
+  return process.env.AIRNOW_API_KEY?.trim() || null;
+}
+
+async function fetchAirNowObservations(
+  coordinates: [number, number],
+): Promise<AirNowObservation[] | null> {
+  const apiKey = getAirNowApiKey();
+  if (!apiKey) return null;
+
+  const [lng, lat] = coordinates;
+  const params = new URLSearchParams({
+    format: "application/json",
+    latitude: String(lat),
+    longitude: String(lng),
+    distance: "25",
+    API_KEY: apiKey,
+  });
+
+  const response = await fetch(`${AIRNOW_BASE_URL}?${params.toString()}`, {
+    signal: AbortSignal.timeout(30000),
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`AirNow request failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as AirNowObservation[];
+  return Array.isArray(payload) ? payload : [];
 }
 
 function buildEchoUrl(
@@ -277,6 +328,67 @@ function buildAirSummary(payload: EchoResponse): AirQualityScreeningSummary {
   };
 }
 
+function enrichAirSummaryWithAirNow(
+  summary: AirQualityScreeningSummary,
+  observations: AirNowObservation[] | null,
+): AirQualityScreeningSummary {
+  if (!observations || observations.length === 0) {
+    return summary;
+  }
+
+  const bestObservation = [...observations]
+    .filter((observation) => Number.isFinite(Number(observation.AQI)))
+    .sort((a, b) => Number(b.AQI ?? -1) - Number(a.AQI ?? -1))[0];
+
+  if (!bestObservation || !Number.isFinite(Number(bestObservation.AQI))) {
+    return summary;
+  }
+
+  const observedAqi = Number(bestObservation.AQI);
+  const observedCategory = bestObservation.Category?.Name?.trim() || null;
+  const primaryPollutant = bestObservation.ParameterName?.trim() || null;
+  const reportingArea = bestObservation.ReportingArea?.trim() || null;
+  const observationTime =
+    bestObservation.DateObserved && typeof bestObservation.HourObserved === "number"
+      ? `${bestObservation.DateObserved} ${String(bestObservation.HourObserved).padStart(2, "0")}:00 ${bestObservation.LocalTimeZone || ""}`.trim()
+      : bestObservation.DateObserved || null;
+
+  let status: EnvironmentalRiskLevel = "low";
+  if (observedAqi > 100) {
+    status = "high";
+  } else if (observedAqi > 50) {
+    status = "moderate";
+  }
+
+  let summaryText = `AirNow reports AQI ${observedAqi}`;
+  if (observedCategory) {
+    summaryText += ` (${observedCategory})`;
+  }
+  if (reportingArea) {
+    summaryText += ` for ${reportingArea}`;
+  }
+  if (primaryPollutant) {
+    summaryText += `, driven by ${primaryPollutant}`;
+  }
+  summaryText += ".";
+
+  if (summary.status === "high" || summary.status === "moderate") {
+    summaryText += ` ${summary.summary}`;
+  }
+
+  return {
+    ...summary,
+    status,
+    summary: summaryText,
+    observedAqi,
+    observedCategory,
+    primaryPollutant,
+    reportingArea,
+    observationTime,
+    source: `${summary.source} + AirNow`,
+  };
+}
+
 function buildWaterSummary(payload: EchoResponse): WaterQualityScreeningSummary {
   const results = payload.Results;
   const facilityCount = toNumber(results?.QueryRows);
@@ -404,7 +516,7 @@ export const UsaEnvironmentalService = {
     const locationContext = normalizeLocationContext(location);
     const notes: string[] = [];
 
-    const [landUseResult, airResult, waterResult] = await Promise.allSettled([
+    const [landUseResult, airResult, waterResult, airNowResult] = await Promise.allSettled([
       UsgsNlcdService.getLandUse(coordinates, location),
       fetchJson<EchoResponse>(
         buildEchoUrl("air_rest_services.get_facility_info", coordinates, 10),
@@ -412,6 +524,7 @@ export const UsaEnvironmentalService = {
       fetchJson<EchoResponse>(
         buildEchoUrl("cwa_rest_services.get_facility_info", coordinates, 5),
       ),
+      fetchAirNowObservations(coordinates),
     ]);
 
     const wetlandSummary =
@@ -433,7 +546,7 @@ export const UsaEnvironmentalService = {
       notes.push("USGS land-cover screening was unavailable for this request.");
     }
 
-    const airSummary =
+    const baseAirSummary =
       airResult.status === "fulfilled"
         ? buildAirSummary(airResult.value)
         : ({
@@ -449,9 +562,18 @@ export const UsaEnvironmentalService = {
             totalPenalties: null,
             sampleFacilities: [],
           } satisfies AirQualityScreeningSummary);
+    const airSummary =
+      airNowResult.status === "fulfilled"
+        ? enrichAirSummaryWithAirNow(baseAirSummary, airNowResult.value)
+        : baseAirSummary;
 
     if (airResult.status !== "fulfilled") {
       notes.push("EPA ECHO air-facility screening was unavailable for this request.");
+    }
+    if (airNowResult.status === "rejected") {
+      notes.push("AirNow AQI observations were unavailable for this request.");
+    } else if (airNowResult.status === "fulfilled" && airNowResult.value === null) {
+      notes.push("AirNow API key is not configured for this environment.");
     }
 
     const waterSummary =
@@ -500,6 +622,18 @@ export const UsaEnvironmentalService = {
       dataSources: {
         nlcd: {
           available: landUseResult.status === "fulfilled",
+        },
+        airNow: {
+          available:
+            airNowResult.status === "fulfilled" &&
+            Array.isArray(airNowResult.value) &&
+            airNowResult.value.length > 0,
+          notes:
+            airNowResult.status === "fulfilled" && airNowResult.value === null
+              ? ["AIRNOW_API_KEY is not configured."]
+              : airNowResult.status === "rejected"
+                ? ["AirNow observations could not be retrieved for this request."]
+                : undefined,
         },
         echoAir: {
           available: airResult.status === "fulfilled",

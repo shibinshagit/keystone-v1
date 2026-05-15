@@ -1695,7 +1695,7 @@ export function EvaluateLandWorkspace() {
                               </p>
                               {scoreData.environmentalScreening.airQuality.observedAqi == null ? (
                                 <p className="mt-2 text-[11px] text-muted-foreground">
-                                  Live AQI will appear here after the AirNow API key is configured.
+                                  "Live AQI data was unavailable for this request."
                                 </p>
                               ) : null}
                               {scoreData.environmentalScreening.airQuality.observedAqi != null ||
