@@ -1,5 +1,9 @@
 import { adminDb } from '@/lib/firebase-admin';
-import { getStateForUSLocation } from '@/lib/geography';
+import {
+  getDefaultLocationForMarket,
+  getStateForUSLocation,
+  inferRegulationGeography,
+} from '@/lib/geography';
 import {
   getRegulationCollectionNameForMarket,
   shouldUseNationalIndiaFallback,
@@ -26,18 +30,20 @@ function normalizeIntendedUse(intendedUse: string): string {
 
 function buildLocationCandidates(location: string, market?: GeographyMarket): string[] {
   const cleaned = location.trim();
-  if (!cleaned) return ['Delhi'];
+  if (!cleaned) return [getDefaultLocationForMarket(market || 'India')];
 
-  const state = market === 'USA' ? getStateForUSLocation(cleaned) : undefined;
+  const inferred = inferRegulationGeography(cleaned);
+  const state = market === 'USA' ? getStateForUSLocation(cleaned) : inferred.stateOrProvince;
   const parts = cleaned
     .split(',')
     .map((part) => part.trim())
     .filter(Boolean)
-    .filter((part) => !/^(india|usa|us|uae)$/i.test(part));
+    .filter((part) => !/^(india|usa|us|uae|united arab emirates)$/i.test(part));
 
   return Array.from(
     new Set([
       ...(state ? [state] : []),
+      ...(inferred.city ? [inferred.city] : []),
       cleaned,
       ...parts,
       ...(parts.length > 1 ? [parts[parts.length - 1], parts[0]] : []),

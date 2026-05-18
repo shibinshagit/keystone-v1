@@ -27,6 +27,7 @@ export const GEOGRAPHY_MARKETS: Array<{
 }> = [
   { value: 'India', label: 'India' },
   { value: 'USA', label: 'USA' },
+  { value: 'UAE', label: 'UAE' },
 ];
 
 export const INDIA_REGULATION_LOCATIONS: GeographyLocationOption[] = [
@@ -180,6 +181,25 @@ export const US_REGULATION_LOCATIONS: GeographyLocationOption[] =
     };
   });
 
+export const UAE_REGULATION_LOCATIONS: GeographyLocationOption[] = [
+  'Abu Dhabi',
+  'Dubai',
+  'Sharjah',
+  'Ajman',
+  'Umm Al Quwain',
+  'Ras Al Khaimah',
+  'Fujairah',
+].map((location) => ({
+  location,
+  label: location,
+  market: 'UAE' as const,
+  countryCode: 'AE' as const,
+  stateOrProvince: location,
+  jurisdictionLevel: 'state' as const,
+  codeFamily: 'Emirate Regulations',
+  projectSelectable: true,
+}));
+
 export const US_STATE_NAME_TO_CODE: Readonly<Record<string, string>> = Object.freeze({
   Alabama: 'AL',
   Alaska: 'AK',
@@ -253,6 +273,7 @@ const US_STATE_TOKEN_TO_CODE: Readonly<Record<string, string>> = Object.freeze({
 export const ALL_REGULATION_LOCATION_OPTIONS: GeographyLocationOption[] = [
   ...INDIA_REGULATION_LOCATIONS,
   ...US_REGULATION_LOCATIONS,
+  ...UAE_REGULATION_LOCATIONS,
 ];
 
 function normalizeLocationFragment(value: string): string {
@@ -292,6 +313,8 @@ export function getDefaultLocationForMarket(
       ? options.find((option) => option.location === 'Delhi')
       : market === 'USA'
         ? options.find((option) => option.location === 'Texas')
+        : market === 'UAE'
+          ? options.find((option) => option.location === 'Dubai')
         : undefined;
 
   return preferredLocation?.location || options[0]?.location || '';

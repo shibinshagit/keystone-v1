@@ -4,7 +4,11 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { Project, RegulationData, GreenRegulationData, VastuRegulationData } from '@/lib/types';
 import { useBuildingStore } from '@/hooks/use-building-store';
 import ultimateVastu from '@/data/ultimate-vastu-checklist.json';
-import { getDefaultLocationForMarket, getStateForUSLocation } from '@/lib/geography';
+import {
+    getDefaultLocationForMarket,
+    getStateForUSLocation,
+    inferRegulationGeography,
+} from '@/lib/geography';
 
 interface UseRegulationsReturn {
     regulations: RegulationData | null;
@@ -37,21 +41,34 @@ export function useRegulations(project: Project | null): UseRegulationsReturn {
                 // 1. Fetch Building Regulations
                 // Priority: Specific Regulation ID > Generic ID > Smart Fallback
                 // Parse location safely since it might be an object
+                const defaultLocation = getDefaultLocationForMarket(project.market || 'India');
+                const inferredLocation =
+                    inferRegulationGeography(
+                        typeof project.location === 'string'
+                            ? project.location
+                            : project.locationLabel || project.city || project.stateOrProvince || '',
+                    );
                 let location =
                     project.market === 'USA'
-                        ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || getStateForUSLocation(project.city) || project.locationLabel || project.city || getDefaultLocationForMarket('USA')
-                        : project.city || project.locationLabel || project.stateOrProvince || 'Delhi';
+                        ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || getStateForUSLocation(project.city) || project.locationLabel || project.city || defaultLocation
+                        : project.market === 'UAE'
+                            ? project.stateOrProvince || inferredLocation.stateOrProvince || project.locationLabel || project.city || defaultLocation
+                            : project.city || project.locationLabel || project.stateOrProvince || defaultLocation;
                 if (typeof project.location === 'string') {
                         location =
                         project.market === 'USA'
                             ? project.stateOrProvince || getStateForUSLocation(project.location) || getStateForUSLocation(project.locationLabel) || project.location
-                            : project.city || project.locationLabel || project.location;
+                            : project.market === 'UAE'
+                                ? project.stateOrProvince || inferRegulationGeography(project.location).stateOrProvince || project.locationLabel || project.location
+                                : project.city || project.locationLabel || project.location;
                 } else if (project.location && typeof project.location === 'object') {
                     // If it's a coordinate object without a resolved string name, we'll have to rely on smart fallback or NBC
                     location =
                         project.market === 'USA'
-                            ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || project.locationLabel || getDefaultLocationForMarket('USA')
-                            : project.city || project.locationLabel || (project.location as any).name || (project.location as any).text || 'Default';
+                            ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || project.locationLabel || defaultLocation
+                            : project.market === 'UAE'
+                                ? project.stateOrProvince || inferredLocation.stateOrProvince || project.locationLabel || (project.location as any).name || (project.location as any).text || defaultLocation
+                                : project.city || project.locationLabel || (project.location as any).name || (project.location as any).text || defaultLocation;
                 }
                 
                 let intendedUse = project.intendedUse || 'Residential';

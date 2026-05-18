@@ -22,7 +22,11 @@ import { generateLShapes, generateUShapes, generateTShapes, generateHShapes, gen
 import { generateSiteUtilities, generateBuildingLayout, calculateUtilityReservationZones, generateSiteGates, getPlotOrientation } from '@/lib/generators/layout-generator';
 import { splitPolygon } from '@/lib/polygon-utils';
 import { db } from '@/lib/firebase';
-import { getStateForUSLocation, inferRegulationGeography } from '@/lib/geography';
+import {
+    getDefaultLocationForMarket,
+    getStateForUSLocation,
+    inferRegulationGeography,
+} from '@/lib/geography';
 import type { IndiaParcelSelection } from '@/services/india/shared/types';
 import { calculateVastuScore } from '@/lib/engines/vastu-engine';
 import { calculateGreenAnalysis } from '@/lib/engines/green-analysis-engine';
@@ -571,6 +575,17 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
                     typeof activeProject?.location === 'string' ? activeProject.location : undefined,
                     activeProject?.city,
                 ]
+                : activeProject?.market === 'UAE'
+                    ? [
+                        activeProject?.stateOrProvince,
+                        inferRegulationGeography(activeProject?.locationLabel || '').stateOrProvince,
+                        typeof activeProject?.location === 'string'
+                            ? inferRegulationGeography(activeProject.location).stateOrProvince
+                            : undefined,
+                        activeProject?.locationLabel,
+                        typeof activeProject?.location === 'string' ? activeProject.location : undefined,
+                        activeProject?.city,
+                    ]
                 : [
                     activeProject?.city,
                     activeProject?.locationLabel,
@@ -600,9 +615,16 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
             const regionFeature = Array.isArray(geoData.features)
                 ? geoData.features.find((feature: any) => feature.place_type?.includes('region'))
                 : null;
+            const resolvedUaeEmirate = inferRegulationGeography(
+                [placeFeature?.text, regionFeature?.text, activeProject?.locationLabel]
+                    .filter(Boolean)
+                    .join(', '),
+            ).stateOrProvince;
             locationName =
                 activeProject?.market === 'USA'
                     ? getStateForUSLocation(regionFeature?.text || activeProject?.locationLabel || placeFeature?.text) || regionFeature?.text || locationName
+                    : activeProject?.market === 'UAE'
+                        ? resolvedUaeEmirate || regionFeature?.text || placeFeature?.text || locationName
                     : placeFeature?.text || regionFeature?.text || locationName;
 
             if (locationName) {
@@ -643,7 +665,7 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
         activeProject?.stateOrProvince ||
         activeProject?.city ||
         (typeof activeProject?.location === 'string' ? activeProject.location : null) ||
-        (activeProject?.market === 'USA' ? 'USA' : 'Default');
+        getDefaultLocationForMarket(activeProject?.market || 'India');
 
     try {
         const response = await fetch('/api/regulations/lookup', {

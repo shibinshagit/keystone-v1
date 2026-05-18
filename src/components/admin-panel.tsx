@@ -42,7 +42,12 @@ import { NationalCodePanel } from './national-code-panel';
 import { useBuildingStore } from '@/hooks/use-building-store';
 import ultimateVastuChecklist from '@/data/ultimate-vastu-checklist.json';
 import { compactOptionalFields, inferRegulationGeography } from '@/lib/geography';
-import { getRegulationCollectionNameForRegulation, INDIA_REGULATIONS_COLLECTION, US_REGULATIONS_COLLECTION } from '@/lib/regulation-collections';
+import {
+    getRegulationCollectionNameForRegulation,
+    INDIA_REGULATIONS_COLLECTION,
+    UAE_REGULATIONS_COLLECTION,
+    US_REGULATIONS_COLLECTION,
+} from '@/lib/regulation-collections';
 
 const DEFAULT_REGULATION_DATA: Omit<RegulationData, 'location' | 'type' | 'market' | 'countryCode' | 'stateOrProvince' | 'city' | 'jurisdictionLevel' | 'codeFamily'> = {
     geometry: {
@@ -244,24 +249,23 @@ export function AdminPanel() {
     const fetchRegulations = async () => {
         setIsLoading(true);
         try {
-            let indiaDocs: any[] = [];
-            let usDocs: any[] = [];
+            const collectionConfigs = [
+                { label: 'India', name: INDIA_REGULATIONS_COLLECTION },
+                { label: 'USA', name: US_REGULATIONS_COLLECTION },
+                { label: 'UAE', name: UAE_REGULATIONS_COLLECTION },
+            ] as const;
+            const regulationDocs: RegulationData[] = [];
 
-            try {
-                const indiaSnapshot = await getDocs(getRegulationsCollection(INDIA_REGULATIONS_COLLECTION));
-                indiaDocs = indiaSnapshot.docs.map(doc => doc.data());
-            } catch (err) {
-                console.error("Error fetching India regulations:", err);
+            for (const config of collectionConfigs) {
+                try {
+                    const snapshot = await getDocs(getRegulationsCollection(config.name));
+                    regulationDocs.push(...snapshot.docs.map(doc => doc.data() as RegulationData));
+                } catch (err) {
+                    console.error(`Error fetching ${config.label} regulations:`, err);
+                }
             }
 
-            try {
-                const usSnapshot = await getDocs(getRegulationsCollection(US_REGULATIONS_COLLECTION));
-                usDocs = usSnapshot.docs.map(doc => doc.data());
-            } catch (err) {
-                console.error("Error fetching US regulations:", err);
-            }
-
-            const data = [...indiaDocs, ...usDocs] as RegulationData[];
+            const data = regulationDocs as RegulationData[];
             setRegulations(data);
 
             const greenSnapshot = await getDocs(greenRegulationsCollection);
@@ -317,7 +321,8 @@ export function AdminPanel() {
     const groupedRegulationsByMarket = useMemo(() => {
         const markets: Record<string, Record<string, RegulationData[]>> = {
             'India': {},
-            'USA': {}
+            'USA': {},
+            'UAE': {},
         };
         regulations.forEach(reg => {
             const market = reg.market || inferRegulationGeography(reg.location).market || 'India';
