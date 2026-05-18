@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
-import { RegulationData, RegulationValue, Plot, REGULATION_SUB_GROUPS } from '@/lib/types';
+import { RegulationData, RegulationFieldProvenance, RegulationSectionName, RegulationValue, Plot, REGULATION_SUB_GROUPS } from '@/lib/types';
 import { ScrollArea } from './ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
@@ -40,7 +40,28 @@ const getZoningBadgeValue = (regulation?: RegulationData | null) => {
     return null;
 };
 
-function RegulationCategory({ title, data, icon: Icon }: { title: string, data: { [key: string]: RegulationValue }, icon: React.ElementType }) {
+const getFieldProvenance = (
+    regulation: RegulationData | null | undefined,
+    section: RegulationSectionName,
+    key: string,
+): RegulationFieldProvenance | undefined => regulation?.fieldProvenance?.[section]?.[key];
+
+const formatConfidenceLabel = (confidence?: string) =>
+    confidence ? `${confidence.charAt(0).toUpperCase()}${confidence.slice(1)}` : null;
+
+function RegulationCategory({
+    title,
+    section,
+    data,
+    regulation,
+    icon: Icon,
+}: {
+    title: string,
+    section: RegulationSectionName,
+    data: { [key: string]: RegulationValue },
+    regulation: RegulationData,
+    icon: React.ElementType,
+}) {
     const groupedData: Record<string, [string, RegulationValue][]> = { "General": [] };
     Object.entries(data).forEach(([key, reg]) => {
         let assignedGroup = "General";
@@ -81,19 +102,31 @@ function RegulationCategory({ title, data, icon: Icon }: { title: string, data: 
                                             <TableHead>Max</TableHead>
                                         </TableRow>
                                     </TableHeader>
-                                    <TableBody>
-                                        {items.map(([key, reg]) => (
+                                        <TableBody>
+                                        {items.map(([key, reg]) => {
+                                            const provenance = getFieldProvenance(regulation, section, key);
+                                            return (
                                             <TableRow key={key}>
                                                 <TableCell>
-                                                    <div className="font-medium capitalize">{key.replace(/_/g, ' ')}</div>
+                                                    <div className="font-medium capitalize flex items-center gap-2 flex-wrap">
+                                                        <span>{key.replace(/_/g, ' ')}</span>
+                                                        {provenance?.status && (
+                                                            <Badge variant={provenance.status === 'missing' ? 'destructive' : provenance.status === 'inferred' ? 'secondary' : 'outline'}>
+                                                                {provenance.status}
+                                                            </Badge>
+                                                        )}
+                                                    </div>
                                                     {reg.desc && <div className="text-xs text-muted-foreground mt-1">{reg.desc}</div>}
+                                                    {provenance?.detail && (
+                                                        <div className="text-xs text-muted-foreground mt-1">{provenance.detail}</div>
+                                                    )}
                                                 </TableCell>
                                                 <TableCell>{renderValue(reg.value)}</TableCell>
                                                 <TableCell className="text-muted-foreground">{reg.unit || '-'}</TableCell>
                                                 <TableCell>{reg.min !== undefined ? renderValue(reg.min) : '-'}</TableCell>
                                                 <TableCell>{reg.max !== undefined ? renderValue(reg.max) : '-'}</TableCell>
                                             </TableRow>
-                                        ))}
+                                        )})}
                                     </TableBody>
                                 </Table>
                             </div>
@@ -118,14 +151,17 @@ export function RegulationViewerModal({ isOpen, onOpenChange, plot }: Regulation
     }
 
     const zoningDistrict = getZoningBadgeValue(regulation);
+    const sourceConfidenceLabel = formatConfidenceLabel(regulation?.sourceInfo?.confidence);
+    const unresolvedFieldCount = regulation?.sourceInfo?.missingFields?.length || 0;
+    const hasEnvelopeGeometry = Boolean(plot.regulationArtifacts?.gridics?.envelopeGeometry);
 
     const categories = regulation ? [
-        { key: 'geometry', title: 'Geometry & Zoning', icon: Scaling, data: regulation.geometry },
-        { key: 'highrise', title: 'High-Rise & Building Code', icon: Ruler, data: regulation.highrise || {} },
-        { key: 'facilities', title: 'Facilities', icon: Building, data: regulation.facilities },
-        { key: 'sustainability', title: 'Sustainability', icon: Droplets, data: regulation.sustainability },
-        { key: 'safety_and_services', title: 'Safety & Services', icon: ShieldCheck, data: regulation.safety_and_services },
-        { key: 'administration', title: 'Administration', icon: Banknote, data: regulation.administration },
+        { key: 'geometry' as const, title: 'Geometry & Zoning', icon: Scaling, data: regulation.geometry },
+        { key: 'highrise' as const, title: 'High-Rise & Building Code', icon: Ruler, data: regulation.highrise || {} },
+        { key: 'facilities' as const, title: 'Facilities', icon: Building, data: regulation.facilities },
+        { key: 'sustainability' as const, title: 'Sustainability', icon: Droplets, data: regulation.sustainability },
+        { key: 'safety_and_services' as const, title: 'Safety & Services', icon: ShieldCheck, data: regulation.safety_and_services },
+        { key: 'administration' as const, title: 'Administration', icon: Banknote, data: regulation.administration },
     ] : [];
 
     return (
@@ -158,8 +194,20 @@ export function RegulationViewerModal({ isOpen, onOpenChange, plot }: Regulation
                             {regulation?.codeFamily && (
                                 <Badge variant="outline">{regulation.codeFamily}</Badge>
                             )}
+                            {regulation?.sourceInfo?.label && (
+                                <Badge variant="outline">Source: {regulation.sourceInfo.label}</Badge>
+                            )}
+                            {sourceConfidenceLabel && (
+                                <Badge variant="outline">Confidence: {sourceConfidenceLabel}</Badge>
+                            )}
                             {zoningDistrict && (
                                 <Badge variant="secondary">Zone: {String(zoningDistrict)}</Badge>
+                            )}
+                            {unresolvedFieldCount > 0 && (
+                                <Badge variant="secondary">{unresolvedFieldCount} unresolved field{unresolvedFieldCount === 1 ? '' : 's'}</Badge>
+                            )}
+                            {hasEnvelopeGeometry && (
+                                <Badge variant="outline">Envelope geometry available</Badge>
                             )}
                         </div>
 
@@ -168,7 +216,7 @@ export function RegulationViewerModal({ isOpen, onOpenChange, plot }: Regulation
                                 <ScrollArea className="h-full pr-6">
                                     <Accordion type="multiple" defaultValue={categories.map(c => c.title)} className="w-full">
                                         {categories.map(cat => (
-                                            cat.data && <RegulationCategory key={cat.key} title={cat.title} data={cat.data} icon={cat.icon} />
+                                            cat.data && <RegulationCategory key={cat.key} title={cat.title} section={cat.key} data={cat.data} regulation={regulation} icon={cat.icon} />
                                         ))}
                                     </Accordion>
                                 </ScrollArea>

@@ -11,6 +11,7 @@
  */
 
 import type { Geometry } from 'geojson';
+import type { RegulationArtifacts, RegulationData } from '@/lib/types';
 
 export interface USTitleOwnership {
     ownerName: string;
@@ -25,6 +26,20 @@ export interface USZoningInfo {
     zoningDescription: string;
     jurisdiction: string;
     floodZone: string; // FEMA designation: X, A, AE, V, etc.
+    source?: 'realie' | 'gridics' | 'fallback';
+    allowedUses?: string[];
+    buildability?: {
+        far?: number;
+        maxCoverage?: number;
+        maxFloors?: number;
+        maxHeightMeters?: number;
+        frontSetbackMeters?: number;
+        rearSetbackMeters?: number;
+        sideSetbackMeters?: number;
+        allowedUnits?: number;
+        frontageMeters?: number;
+    };
+    zoningRegulationLink?: string;
 }
 
 export interface USEncumbrance {
@@ -52,6 +67,7 @@ export interface USParcelData {
     encumbrances: USEncumbrance[];
     dueDiligence: USDueDiligenceInfo;
     altaSurveyAvailable: boolean;
+    regulationArtifacts?: RegulationArtifacts;
     source: 'realie' | 'llm' | 'fallback';
 }
 
@@ -100,18 +116,6 @@ export interface RealieLocationSearchOptions {
     limit?: number;
     offset?: number;
     residential?: boolean;
-}
-
-export interface RealiePropertySearchOptions {
-    state: string;
-    county?: string;
-    city?: string;
-    address?: string;
-    zipCode?: string;
-    includeUnassignedAddress?: boolean;
-    limit?: number;
-    cursor?: string;
-    offset?: number;
 }
 
 function getRealieApiKey(): string | null {
@@ -223,16 +227,124 @@ export function getRealieAssessedValue(property: RealiePropertyRecord): number {
     );
 }
 
+function getRegulationNumber(
+    regulation: RegulationData | undefined,
+    keys: Array<[section: keyof RegulationData, key: string]>,
+): number | undefined {
+    if (!regulation) return undefined;
+
+    for (const [section, key] of keys) {
+        const sectionData = regulation[section];
+        if (!sectionData || typeof sectionData !== 'object') continue;
+        const candidate = (sectionData as Record<string, { value?: unknown }>)[key]?.value;
+        if (candidate === '' || candidate === null || candidate === undefined) continue;
+        const numeric = typeof candidate === 'number' ? candidate : Number(candidate);
+        if (Number.isFinite(numeric)) return numeric;
+    }
+
+    return undefined;
+}
+
+function getRegulationStringArray(
+    regulation: RegulationData | undefined,
+    section: keyof RegulationData,
+    key: string,
+): string[] | undefined {
+    if (!regulation) return undefined;
+    const sectionData = regulation[section];
+    if (!sectionData || typeof sectionData !== 'object') return undefined;
+    const value = (sectionData as Record<string, { value?: unknown }>)[key]?.value;
+    return Array.isArray(value)
+        ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+        : undefined;
+}
+
+function buildGridicsZoningSummary(regulation: RegulationData | undefined): USZoningInfo['buildability'] | undefined {
+    if (!regulation) return undefined;
+
+    const summary: NonNullable<USZoningInfo['buildability']> = {
+        far: getRegulationNumber(regulation, [['geometry', 'floor_area_ratio'], ['geometry', 'max_far']]),
+        maxCoverage: getRegulationNumber(regulation, [['geometry', 'max_ground_coverage']]),
+        maxFloors: getRegulationNumber(regulation, [['geometry', 'max_floors'], ['highrise', 'max_floors']]),
+        maxHeightMeters: getRegulationNumber(regulation, [['geometry', 'max_height'], ['highrise', 'max_building_height']]),
+        frontSetbackMeters: getRegulationNumber(regulation, [['geometry', 'front_setback']]),
+        rearSetbackMeters: getRegulationNumber(regulation, [['geometry', 'rear_setback']]),
+        sideSetbackMeters: getRegulationNumber(regulation, [['geometry', 'side_setback']]),
+        allowedUnits: getRegulationNumber(regulation, [['geometry', 'density_norms']]),
+        frontageMeters: getRegulationNumber(regulation, [['geometry', 'minimum_frontage_width']]),
+    };
+
+    return Object.values(summary).some((value) => value !== undefined) ? summary : undefined;
+}
+
+function buildGridicsZoningDescription(regulation: RegulationData | undefined, zoningCode: string): string {
+    const categories = getRegulationStringArray(regulation, 'administration', 'permitted_use_categories');
+    if (categories && categories.length > 0) {
+        return `${categories.slice(0, 3).join(', ')} permitted`;
+    }
+
+    return USParcelService.inferZoningDescription(zoningCode);
+}
+
+function overlayGridicsOnParcelData(
+    parcel: USParcelData,
+    regulation: RegulationData,
+    regulationArtifacts?: RegulationArtifacts | null,
+): USParcelData {
+    const zoningCode = String(
+        regulation.administration?.land_use_zoning?.value ||
+        regulation.geometry?.land_use_zoning?.value ||
+        parcel.zoning.zoningCode ||
+        'Unknown',
+    ).trim();
+    const zoningDescription = buildGridicsZoningDescription(regulation, zoningCode);
+    const allowedUses = getRegulationStringArray(regulation, 'administration', 'permitted_uses');
+    const buildability = buildGridicsZoningSummary(regulation);
+    const regulationLink = typeof regulation.administration?.zoning_regulation_link?.value === 'string'
+        ? regulation.administration.zoning_regulation_link.value
+        : undefined;
+    const jurisdiction = [
+        regulation.city,
+        regulation.stateOrProvince,
+    ].filter(Boolean).join(', ') || parcel.zoning.jurisdiction;
+
+    return {
+        ...parcel,
+        zoning: {
+            ...parcel.zoning,
+            zoningCode,
+            zoningDescription,
+            jurisdiction,
+            source: 'gridics',
+            allowedUses,
+            buildability,
+            zoningRegulationLink: regulationLink,
+        },
+        regulationArtifacts: regulationArtifacts || parcel.regulationArtifacts,
+    };
+}
+
 export function realiePropertyToUSParcelData(
     property: RealiePropertyRecord,
-    options: { fallbackLocation?: string; fallbackAreaSqm?: number; floodZone?: string } = {},
+    options: { fallbackLocation?: string; fallbackAreaSqm?: number; floodZone?: string; regulation?: RegulationData | null; regulationArtifacts?: RegulationArtifacts | null } = {},
 ): USParcelData {
     const assessedValue = getRealieAssessedValue(property);
     const transferPrice = toNumber(property.transferPrice);
     const ownerName = String(property.ownerName || 'Owner on Record').trim();
-    const zoningCode = String(property.zoningCode || property.useCode || 'Unknown').trim();
+    const zoningCode = String(
+        options.regulation?.administration?.land_use_zoning?.value ||
+        options.regulation?.geometry?.land_use_zoning?.value ||
+        property.zoningCode ||
+        property.useCode ||
+        'Unknown',
+    ).trim();
     const lotAreaSqFt = getRealieLotAreaSqFt(property) || Math.round((options.fallbackAreaSqm || 0) * 10.7639);
     const fullAddress = String(property.addressFull || property.address || property.addressRaw || options.fallbackLocation || '').trim();
+    const allowedUses = getRegulationStringArray(options.regulation || undefined, 'administration', 'permitted_uses');
+    const zoningSummary = buildGridicsZoningSummary(options.regulation || undefined);
+    const regulationLink = typeof options.regulation?.administration?.zoning_regulation_link?.value === 'string'
+        ? options.regulation?.administration?.zoning_regulation_link?.value
+        : undefined;
 
     return {
         parcelId: String(property.parcelId || 'Unknown').trim(),
@@ -249,9 +361,13 @@ export function realiePropertyToUSParcelData(
         },
         zoning: {
             zoningCode,
-            zoningDescription: USParcelService.inferZoningDescription(zoningCode),
-            jurisdiction: String(property.jurisdiction || property.county || property.city || 'County').trim(),
+            zoningDescription: buildGridicsZoningDescription(options.regulation || undefined, zoningCode),
+            jurisdiction: String(property.jurisdiction || property.city || property.county || 'County').trim(),
             floodZone: options.floodZone || 'Unknown',
+            source: options.regulation ? 'gridics' : 'realie',
+            allowedUses,
+            buildability: zoningSummary,
+            zoningRegulationLink: regulationLink,
         },
         encumbrances: buildEncumbrances(property),
         dueDiligence: {
@@ -261,6 +377,7 @@ export function realiePropertyToUSParcelData(
             titleCommitmentStatus: 'Pending',
         },
         altaSurveyAvailable: Boolean(property.geometry),
+        regulationArtifacts: options.regulationArtifacts || undefined,
         source: 'realie',
     };
 }
@@ -279,33 +396,6 @@ export async function searchRealiePropertiesByLocation(
 
     const data = await fetchRealie<{ properties?: RealiePropertyRecord[] }>('/property/location/', params);
     return Array.isArray(data?.properties) ? data.properties : [];
-}
-
-export async function searchRealieProperties(
-    options: RealiePropertySearchOptions,
-): Promise<{ properties: RealiePropertyRecord[]; nextCursor?: string; count?: number }> {
-    const params = compactParams({
-        state: options.state.toUpperCase(),
-        county: options.county,
-        city: options.city,
-        address: options.address,
-        zipCode: options.zipCode,
-        includeUnassignedAddress: options.includeUnassignedAddress,
-        limit: Math.min(100, Math.max(1, options.limit ?? 10)),
-        cursor: options.cursor,
-        offset: Math.max(0, options.offset ?? 0),
-    });
-
-    const data = await fetchRealie<{
-        properties?: RealiePropertyRecord[];
-        metadata?: { nextCursor?: string; count?: number };
-    }>('/property/search/', params);
-
-    return {
-        properties: Array.isArray(data?.properties) ? data.properties : [],
-        nextCursor: data?.metadata?.nextCursor,
-        count: data?.metadata?.count,
-    };
 }
 
 function distanceSq(a: [number, number], b: [number, number]): number {
@@ -341,6 +431,8 @@ export const USParcelService = {
      * Priority: Realie location search -> LLM -> hardcoded fallback.
      */
     async getParcelData(location: string, areaSqm: number, coordinates?: [number, number]): Promise<USParcelData> {
+        let directGridicsResult: { regulation: RegulationData; artifacts: RegulationArtifacts | null } | null = null;
+
         if (coordinates) {
             try {
                 const properties = await searchRealiePropertiesByLocation({
@@ -352,19 +444,36 @@ export const USParcelService = {
                 const bestProperty = findBestRealieProperty(properties, coordinates, areaSqm * 10.7639);
                 if (bestProperty) {
                     console.log(`[USParcelService] Realie parcel data retrieved for ${location}`);
-                    const floodZone = await this.fetchFloodZone(coordinates);
+                    const [floodZone, gridicsResult] = await Promise.all([
+                        this.fetchFloodZone(coordinates),
+                        this.fetchGridicsRegulation({
+                            location,
+                            coordinates,
+                            property: bestProperty,
+                        }),
+                    ]);
                     return realiePropertyToUSParcelData(bestProperty, {
                         fallbackLocation: location,
                         fallbackAreaSqm: areaSqm,
                         floodZone,
+                        regulation: gridicsResult?.regulation || null,
+                        regulationArtifacts: gridicsResult?.artifacts || null,
                     });
                 }
             } catch (err) {
                 console.warn('[USParcelService] Realie location search failed:', err);
             }
+
+            directGridicsResult = await this.fetchGridicsRegulation({
+                location,
+                coordinates,
+            });
         }
 
-        return this.getParcelDataViaLLM(location, areaSqm);
+        const fallbackParcel = await this.getParcelDataViaLLM(location, areaSqm);
+        return directGridicsResult
+            ? overlayGridicsOnParcelData(fallbackParcel, directGridicsResult.regulation, directGridicsResult.artifacts)
+            : fallbackParcel;
     },
 
     /**
@@ -383,6 +492,42 @@ export const USParcelService = {
             // FEMA fetch failed, keep unknown.
         }
         return 'Unknown';
+    },
+
+    async fetchGridicsRegulation({
+        location,
+        coordinates,
+        property,
+    }: {
+        location: string;
+        coordinates?: [number, number];
+        property?: RealiePropertyRecord;
+    }): Promise<{ regulation: RegulationData; artifacts: RegulationArtifacts | null } | null> {
+        try {
+            const { GridicsService } = await import('./gridics-service');
+            const gridicsLocation = [
+                property?.addressFull || property?.address || property?.addressRaw,
+                property?.city,
+                property?.state,
+                property?.zipCode,
+            ].filter(Boolean).join(', ') || location;
+
+            const normalized = await GridicsService.getNormalizedResult({
+                location: gridicsLocation,
+                coordinates,
+                address: String(property?.addressFull || property?.address || property?.addressRaw || '').trim() || undefined,
+                zipCode: String(property?.zipCode || '').trim() || undefined,
+            });
+            return normalized
+                ? {
+                    regulation: normalized.regulation,
+                    artifacts: normalized.artifacts,
+                }
+                : null;
+        } catch (error) {
+            console.warn('[USParcelService] Gridics zoning lookup failed:', error);
+            return null;
+        }
     },
 
     /**
@@ -460,6 +605,7 @@ Do not include markdown or extra text.`;
                 zoningDescription: 'General Commercial',
                 jurisdiction: 'County',
                 floodZone: 'Unknown',
+                source: 'fallback',
             },
             encumbrances: [],
             dueDiligence: {

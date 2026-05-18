@@ -1,4 +1,4 @@
-import { inferRegulationGeography } from "@/lib/geography";
+import { getStateForUSLocation, getUSStateCode, inferRegulationGeography } from "@/lib/geography";
 import type {
   AirQualityScreeningSummary,
   EnvironmentalFacility,
@@ -9,6 +9,7 @@ import type {
   WetlandScreeningSummary,
 } from "@/lib/land-intelligence/environmental";
 import { UsgsNlcdService } from "@/services/land-intelligence/usgs-nlcd-service";
+import { lookupFIPS } from "@/services/us/us-fips-lookup";
 
 const ECHO_BASE_URL = "https://echodata.epa.gov/echo";
 const AIRNOW_BASE_URL = "https://www.airnowapi.org/aq/observation/latLong/current/";
@@ -45,25 +46,11 @@ type EchoResponse = {
   Results?: EchoResults;
 };
 
-type PilotContext = {
-  city: "Austin" | "Phoenix" | "Seattle";
-  stateCode: "TX" | "AZ" | "WA";
-  county: string;
-};
-
-const PILOT_CONTEXT: Record<PilotContext["city"], Omit<PilotContext, "city">> = {
-  Austin: {
-    stateCode: "TX",
-    county: "Travis",
-  },
-  Phoenix: {
-    stateCode: "AZ",
-    county: "Maricopa",
-  },
-  Seattle: {
-    stateCode: "WA",
-    county: "King",
-  },
+type UsaEnvironmentalLocationContext = {
+  city?: string;
+  stateCode?: string;
+  stateName?: string;
+  county?: string;
 };
 
 function toNumber(value: unknown): number {
@@ -81,26 +68,59 @@ function uniqueValues(values: Array<string | null | undefined>) {
   );
 }
 
-function normalizeLocationContext(location: string): PilotContext | null {
-  const inferred = inferRegulationGeography(location);
-  const city = inferred.city as PilotContext["city"] | undefined;
+function toTitleCase(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
 
-  if (city && city in PILOT_CONTEXT) {
+function normalizeLocationContext(location: string): UsaEnvironmentalLocationContext | null {
+  const normalizedLocation = location.toLowerCase();
+  if (
+    normalizedLocation.includes("district of columbia") ||
+    normalizedLocation.includes("washington dc") ||
+    normalizedLocation.includes("washington, dc") ||
+    normalizedLocation.includes("washington, d.c")
+  ) {
     return {
-      city,
-      ...PILOT_CONTEXT[city],
+      city: "Washington",
+      stateCode: "DC",
+      stateName: "District of Columbia",
     };
   }
 
-  const normalized = location.toLowerCase();
-  if (normalized.includes("austin")) {
-    return { city: "Austin", ...PILOT_CONTEXT.Austin };
+  const inferred = inferRegulationGeography(location);
+  const inferredCity =
+    typeof inferred.city === "string" ? inferred.city : undefined;
+  const inferredState =
+    typeof inferred.stateOrProvince === "string" ? inferred.stateOrProvince : undefined;
+  const resolvedState = inferredState || getStateForUSLocation(location);
+
+  if (resolvedState) {
+    const parts = location
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .filter((part) => !/^(usa|us|united states)$/i.test(part));
+    const city =
+      inferredCity ||
+      (parts.length > 1 ? parts[0] : undefined);
+
+    return {
+      city,
+      stateCode: getUSStateCode(resolvedState),
+      stateName: resolvedState,
+    };
   }
-  if (normalized.includes("phoenix")) {
-    return { city: "Phoenix", ...PILOT_CONTEXT.Phoenix };
-  }
-  if (normalized.includes("seattle")) {
-    return { city: "Seattle", ...PILOT_CONTEXT.Seattle };
+
+  const fips = lookupFIPS(location);
+  if (fips.matchType !== "none") {
+    return {
+      city: inferredCity || (fips.matchType === "exact" ? toTitleCase(fips.city) : undefined),
+      stateCode: fips.stateAbbr,
+    };
   }
 
   return null;
@@ -612,7 +632,7 @@ export const UsaEnvironmentalService = {
     return {
       market: "USA",
       countryCode: "US",
-      location: location || locationContext?.city || "USA pilot location",
+      location: location || locationContext?.city || "USA location",
       stateCode: locationContext?.stateCode,
       county: locationContext?.county,
       wetlandScreening: wetlandSummary,

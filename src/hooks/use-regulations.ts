@@ -4,8 +4,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { Project, RegulationData, GreenRegulationData, VastuRegulationData } from '@/lib/types';
 import { useBuildingStore } from '@/hooks/use-building-store';
 import ultimateVastu from '@/data/ultimate-vastu-checklist.json';
-import { lookupRegulationForLocationAndUse } from '@/lib/regulation-lookup';
-import { getStateForUSLocation } from '@/lib/geography';
+import { getDefaultLocationForMarket, getStateForUSLocation } from '@/lib/geography';
 
 interface UseRegulationsReturn {
     regulations: RegulationData | null;
@@ -40,10 +39,10 @@ export function useRegulations(project: Project | null): UseRegulationsReturn {
                 // Parse location safely since it might be an object
                 let location =
                     project.market === 'USA'
-                        ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || getStateForUSLocation(project.city) || project.locationLabel || project.city || 'Texas'
+                        ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || getStateForUSLocation(project.city) || project.locationLabel || project.city || getDefaultLocationForMarket('USA')
                         : project.city || project.locationLabel || project.stateOrProvince || 'Delhi';
                 if (typeof project.location === 'string') {
-                    location =
+                        location =
                         project.market === 'USA'
                             ? project.stateOrProvince || getStateForUSLocation(project.location) || getStateForUSLocation(project.locationLabel) || project.location
                             : project.city || project.locationLabel || project.location;
@@ -51,7 +50,7 @@ export function useRegulations(project: Project | null): UseRegulationsReturn {
                     // If it's a coordinate object without a resolved string name, we'll have to rely on smart fallback or NBC
                     location =
                         project.market === 'USA'
-                            ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || project.locationLabel || 'Texas'
+                            ? project.stateOrProvince || getStateForUSLocation(project.locationLabel) || project.locationLabel || getDefaultLocationForMarket('USA')
                             : project.city || project.locationLabel || (project.location as any).name || (project.location as any).text || 'Default';
                 }
                 
@@ -60,12 +59,29 @@ export function useRegulations(project: Project | null): UseRegulationsReturn {
                 if (intendedUse.toLowerCase() === 'mixed use') intendedUse = 'Mixed-Use';
                 else if (intendedUse.toLowerCase() === 'mixed-use') intendedUse = 'Mixed Use';
 
-                const regulationResult = await lookupRegulationForLocationAndUse({
-                    location,
-                    intendedUse,
-                    regulationId: project.regulationId,
-                    market: project.market,
+                const firstPlotCentroid = project.plots?.[0]?.centroid?.geometry?.coordinates;
+                const projectCoordinates =
+                    Array.isArray(firstPlotCentroid) && firstPlotCentroid.length === 2
+                        ? [Number(firstPlotCentroid[0]), Number(firstPlotCentroid[1])]
+                        : project.location && typeof project.location === 'object'
+                            ? [Number((project.location as any).lng), Number((project.location as any).lat)]
+                            : undefined;
+
+                const regulationResponse = await fetch('/api/regulations/lookup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        location,
+                        intendedUse,
+                        regulationId: project.regulationId,
+                        market: project.market,
+                        coordinates: projectCoordinates,
+                    }),
                 });
+                const regulationResult = await regulationResponse.json();
+                if (!regulationResponse.ok) {
+                    throw new Error(regulationResult?.error || 'Failed to fetch project regulations.');
+                }
                 const foundReg = regulationResult.regulation;
 
                 if (foundReg) {
