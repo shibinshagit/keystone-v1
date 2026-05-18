@@ -1,5 +1,5 @@
 
-import type { Feature, Polygon, Point, MultiPolygon } from 'geojson';
+import type { Feature, Polygon, Point, MultiPolygon, GeoJsonObject } from 'geojson';
 import type { IndiaParcelSelection } from '@/services/india/shared/types';
 import { z } from 'zod';
 
@@ -217,8 +217,10 @@ export interface Plot {
   visible: boolean;
   location: string | null;
   availableRegulations: RegulationData[] | null;
+  availableRegulationArtifacts?: Record<string, RegulationArtifacts> | null;
   selectedRegulationType: string | null;
   regulation: RegulationData | null;
+  regulationArtifacts?: RegulationArtifacts | null;
   // Regulation-derived constraints
   maxBuildingHeight?: number; // Maximum building height in meters (from regulations)
   far?: number; // Floor Area Ratio (from regulations)
@@ -772,6 +774,52 @@ export interface RegulationValue {
   exampleStr?: string;
 }
 
+export type RegulationProvider = 'gridics' | 'firestore' | 'national-fallback' | 'hybrid';
+export type RegulationSourceConfidence = 'explicit' | 'inferred' | 'partial';
+export type RegulationFieldStatus = 'explicit' | 'inferred' | 'missing' | 'override';
+export type RegulationSectionName =
+  | 'geometry'
+  | 'highrise'
+  | 'facilities'
+  | 'sustainability'
+  | 'safety_and_services'
+  | 'administration'
+  | 'accessibility';
+
+export interface RegulationFieldProvenance {
+  provider: RegulationProvider;
+  status: RegulationFieldStatus;
+  detail?: string;
+  basis?: string;
+  rawField?: string | string[];
+  assumption?: string;
+}
+
+export type RegulationFieldProvenanceMap = Partial<Record<RegulationSectionName, Record<string, RegulationFieldProvenance>>>;
+
+export interface RegulationSourceInfo {
+  provider: RegulationProvider;
+  label: string;
+  confidence?: RegulationSourceConfidence;
+  detail?: string;
+  gridicsGroupId?: string;
+  zoneCode?: string;
+  hasAdminOverride?: boolean;
+  missingFields?: string[];
+}
+
+export interface GridicsRegulationArtifacts {
+  provider: 'gridics';
+  availableViews: string[];
+  envelopeGeometryView?: string;
+  envelopeGeometry?: GeoJsonObject | null;
+  frontageCount?: number;
+}
+
+export interface RegulationArtifacts {
+  gridics?: GridicsRegulationArtifacts;
+}
+
 export interface RegulationData {
   id?: string;
   location: string;
@@ -789,6 +837,8 @@ export interface RegulationData {
   safety_and_services: { [key: string]: RegulationValue };
   administration: { [key: string]: RegulationValue };
   accessibility?: { [key: string]: RegulationValue }; // IFC Fire Code + ADA (US)
+  sourceInfo?: RegulationSourceInfo;
+  fieldProvenance?: RegulationFieldProvenanceMap;
 }
 
 export const REGULATION_SUB_GROUPS: Record<string, string[]> = {

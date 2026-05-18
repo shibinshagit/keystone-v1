@@ -4,7 +4,7 @@
 import { create } from 'zustand';
 import type { Feature, Polygon, MultiPolygon, Point, LineString, FeatureCollection } from 'geojson';
 import * as turf from '@turf/turf';
-import { BuildingIntendedUse, type Plot, type Building, type GreenArea, type ParkingArea, type Floor, type Project, type BuildableArea, type SelectableObjectType, AiScenario, type Label, RegulationData, GenerateMassingInput, AiMassingScenario, GenerateMassingOutput, GenerateSiteLayoutInput, GenerateSiteLayoutOutput, AiSiteLayout, AiMassingGeneratedObject, AiZone, GenerateZonesOutput, DesignOption, GreenRegulationData, VastuRegulationData, DevelopmentStats, FeasibilityParams, UtilityType, UtilityArea, ParkingType, Unit, Core, type RenderingBuildingInfo, type RenderingPlotInfo, type RenderingProjectSummary, type GenerateRenderingOutput, type AdditiveScoreSummary, type EvaluateLandInput, getPrimarySetback } from '@/lib/types';
+import { BuildingIntendedUse, type Plot, type Building, type GreenArea, type ParkingArea, type Floor, type Project, type BuildableArea, type SelectableObjectType, AiScenario, type Label, RegulationData, type RegulationArtifacts, GenerateMassingInput, AiMassingScenario, GenerateMassingOutput, GenerateSiteLayoutInput, GenerateSiteLayoutOutput, AiSiteLayout, AiMassingGeneratedObject, AiZone, GenerateZonesOutput, DesignOption, GreenRegulationData, VastuRegulationData, DevelopmentStats, FeasibilityParams, UtilityType, UtilityArea, ParkingType, Unit, Core, type RenderingBuildingInfo, type RenderingPlotInfo, type RenderingProjectSummary, type GenerateRenderingOutput, type AdditiveScoreSummary, type EvaluateLandInput, getPrimarySetback } from '@/lib/types';
 import { calculateDevelopmentStats, DEFAULT_FEASIBILITY_PARAMS } from '@/lib/development-calc';
 import { calculateParkingCapacity } from '@/lib/parking-calc';
 import { produce } from 'immer';
@@ -552,6 +552,8 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
     const [lon, lat] = centroid.geometry.coordinates;
     let locationName: string | null = 'Default';
     let fetchedRegulations: RegulationData[] = [];
+    let lookupRegulation: RegulationData | undefined;
+    const availableRegulationArtifacts: Record<string, RegulationArtifacts> = {};
     const activeProject = useBuildingStore.getState().projects.find(
         p => p.id === useBuildingStore.getState().activeProjectId,
     );
@@ -635,6 +637,45 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
 
     const projectRegulationId = activeProject?.regulationId;
 
+    const lookupLocation =
+        locationName ||
+        activeProject?.locationLabel ||
+        activeProject?.stateOrProvince ||
+        activeProject?.city ||
+        (typeof activeProject?.location === 'string' ? activeProject.location : null) ||
+        (activeProject?.market === 'USA' ? 'USA' : 'Default');
+
+    try {
+        const response = await fetch('/api/regulations/lookup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                location: lookupLocation,
+                intendedUse,
+                regulationId: projectRegulationId,
+                market: activeProject?.market,
+                coordinates: [lon, lat],
+            }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload?.error || 'Failed to fetch plot regulations.');
+        }
+
+        if (payload?.regulation) {
+            lookupRegulation = payload.regulation as RegulationData;
+            if (lookupRegulation?.type && payload?.artifacts) {
+                availableRegulationArtifacts[lookupRegulation.type] = payload.artifacts as RegulationArtifacts;
+            }
+            fetchedRegulations = [
+                lookupRegulation,
+                ...fetchedRegulations.filter((reg) => reg.id !== lookupRegulation?.id),
+            ];
+        }
+    } catch (error) {
+        console.warn('[Store] Regulation lookup API failed, keeping local regulation candidates only:', error);
+    }
+
     let defaultRegulation: RegulationData | undefined;
 
     // 1. Priority: Explicit Project Regulation ID
@@ -642,7 +683,12 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
         defaultRegulation = fetchedRegulations.find(r => r.id === projectRegulationId || r.type === projectRegulationId);
     }
 
-    // 2. Fallback: Match Intended Use (Optimization)
+    // 2. Server lookup result becomes the default when there is no explicit manual override.
+    if (!defaultRegulation && lookupRegulation) {
+        defaultRegulation = lookupRegulation;
+    }
+
+    // 3. Fallback: Match Intended Use (Optimization)
     if (!defaultRegulation) {
         // Only try to find a match, do NOT force random ones
         defaultRegulation = fetchedRegulations.find(r => r.type && r.type.toLowerCase() === intendedUse.toLowerCase()); // Exact match preference
@@ -652,7 +698,7 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
         }
     }
 
-    // 3. Fallback: National (NBC) if entirely missing or no matching use case found locally
+    // 4. Fallback: National (NBC) if entirely missing or no matching use case found locally
     if (!defaultRegulation && shouldUseNationalIndiaFallback(activeProject?.market)) {
         console.log(`[Store] No matching local regulations found for intended use: ${intendedUse}, fetching National (NBC) fallback...`);
         try {
@@ -693,8 +739,14 @@ async function fetchRegulationsForPlot(plotId: string, centroid: Feature<Point>)
         if (plotToUpdate) {
             plotToUpdate.location = locationName;
             plotToUpdate.availableRegulations = fetchedRegulations;
+            plotToUpdate.availableRegulationArtifacts = Object.keys(availableRegulationArtifacts).length > 0
+                ? availableRegulationArtifacts
+                : null;
             plotToUpdate.selectedRegulationType = defaultRegulation?.type || null;
             plotToUpdate.regulation = defaultRegulation || null;
+            plotToUpdate.regulationArtifacts = defaultRegulation?.type
+                ? availableRegulationArtifacts[defaultRegulation.type] || null
+                : null;
 
             // Extract regulation constraints
             plotToUpdate.setback = getPrimarySetback(defaultRegulation) ?? 4;
@@ -4900,6 +4952,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     if (selectedReg) {
                         plot.selectedRegulationType = selectedReg.type;
                         plot.regulation = selectedReg;
+                        plot.regulationArtifacts = plot.availableRegulationArtifacts?.[selectedReg.type] || null;
 
                         // Update constraints
                         plot.setback = getPrimarySetback(selectedReg) ?? 4;
@@ -4920,6 +4973,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     const selectedReg = plot.availableRegulations[index];
                     plot.selectedRegulationType = selectedReg.type;
                     plot.regulation = selectedReg;
+                    plot.regulationArtifacts = plot.availableRegulationArtifacts?.[selectedReg.type] || null;
 
                     // Update constraints
                     plot.setback = getPrimarySetback(selectedReg) ?? 4;
@@ -5899,6 +5953,7 @@ const useBuildingStoreWithoutUndo = create<BuildingState>((set, get) => ({
                     }
                     if (props.selectedRegulationType) {
                         plot.regulation = plot.availableRegulations?.find((r: any) => r.type === props.selectedRegulationType) || null;
+                        plot.regulationArtifacts = plot.availableRegulationArtifacts?.[props.selectedRegulationType] || null;
                     }
                 }
             }));

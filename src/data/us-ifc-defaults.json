@@ -1,7 +1,7 @@
 {
   "name": "International Fire Code (IFC) 2021 — US Federal Standard",
   "source": "International Code Council (ICC) — IFC 2021 Edition",
-  "applicableTo": ["Texas", "Arizona", "Washington"],
+  "applicableTo": "All 50 US states",
   "defaults": {
     "fire_access_road_width_m": 6.1,
     "fire_access_road_clearance_m": 4.1,

@@ -214,7 +214,7 @@ export function FeasibilityReport({
           frontageWidthMeters:
             (plot.regulation?.geometry?.minimum_frontage_width?.value as number | undefined) ??
             null,
-          pilotContext: usaTransportContext,
+          jurisdictionContext: usaTransportContext,
         })
       : null;
   // Amenity area: use same source as Section 9 (groundFloorRemovedArea = actual removed amenity space)

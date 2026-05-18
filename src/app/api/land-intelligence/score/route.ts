@@ -6,7 +6,7 @@ import { GoogleMapsServerService } from '@/services/land-intelligence/google-map
 import { PopulationMigrationService } from '@/services/land-intelligence/population-migration-service';
 import { ProposedInfraService } from '@/services/land-intelligence/proposed-infra-service';
 import { TransportationService } from '@/services/land-intelligence/transportation-service';
-import { lookupRegulationForLocationAndUse } from '@/lib/regulation-lookup';
+import { lookupRegulationForLocationAndUse } from '@/lib/regulation-lookup-server';
 import { getUSScoreInputs, isUSCoordinates } from '@/services/us/us-score-data-service';
 import { evaluateDevelopability, toDevelopabilityScore } from '@/lib/scoring/developability-engine';
 import type { ItemResult } from '@/lib/scoring/schema-engine';
@@ -380,6 +380,7 @@ export async function POST(request: NextRequest) {
         location: district ? `${district}, ${state}` : state,
         intendedUse: query.intendedUse || 'Residential',
         market: query.market,
+        coordinates: coords,
       }),
       GoogleMapsServerService.searchNearbyPlaces(coords, {
         includedTypes: TRANSIT_PLACE_TYPES,
@@ -1096,7 +1097,10 @@ export async function POST(request: NextRequest) {
           isMock: terrainIsMock,
           source: terrain?.source || terrain?.dataset || 'USGS/SRTMGL1_003',
         },
-        regulation: { available: regulation !== null },
+        regulation: {
+          available: regulation !== null,
+          source: regulation?.sourceInfo?.label || undefined,
+        },
         googlePlaces: {
           count:
             storedAmenities.length +

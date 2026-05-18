@@ -397,7 +397,7 @@ export const EarthEngineService = {
     years: number = 5,
     location: string = 'Delhi'
   ): Promise<{ year: number; ndvi: number }[]> {
-    // For performance in the pilot, we grab the current year and extrapolate the mock trend.
+    // For performance, we grab the current year and extrapolate the mock trend.
     // In full prod, we would run `computeMeanNDVI` in a Promise.all() map loop for the last 5 years.
     const live = await this.getUrbanGrowthIndex(coordinates, location);
     const cur = new Date().getFullYear();

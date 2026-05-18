@@ -10,7 +10,6 @@ import type { TransportationScreeningReport } from "@/lib/land-intelligence/tran
 import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import type { LandUseSummary } from "@/lib/land-intelligence/land-use";
 import { inferRegulationGeography } from "@/lib/geography";
-import { lookupRegulationForLocationAndUse } from "@/lib/regulation-lookup";
 import type {
   BuildingIntendedUse,
   DevelopabilityScore,
@@ -134,6 +133,7 @@ interface AnalysisTargetSnapshot {
 
 interface RegulationMatchSnapshot {
   source:
+    | "gridics"
     | "specific-id"
     | "generic-id"
     | "location-query"
@@ -353,10 +353,21 @@ export function useEvaluateLandAnalysis({
           }
           return payload.report;
         }),
-        lookupRegulationForLocationAndUse({
-          location: values.location.trim(),
-          intendedUse: values.intendedUse,
-          market: geography.market,
+        fetch("/api/regulations/lookup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: values.location.trim(),
+            intendedUse: values.intendedUse,
+            market: geography.market,
+            coordinates: coords,
+          }),
+        }).then(async (response) => {
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload?.error || "Failed to fetch regulations.");
+          }
+          return payload;
         }),
       ]);
 

@@ -97,8 +97,11 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
 
     const estimates: ProjectEstimates | null = useMemo(() => {
         if (!project || !metrics || isLoading) return null;
+        const isUSProject = project.market === 'USA' || project.countryCode === 'US';
+        const defaultUsCostLocation = 'Chicago';
+        const defaultIndiaCostLocation = 'Delhi';
 
-        let location = "Delhi";
+        let location = defaultIndiaCostLocation;
         if (typeof project.location === 'string') {
             location = project.location;
         } else if (project.locationLabel) {
@@ -120,17 +123,17 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
         // console.log("Estimating for:", { location, buildingType, heightCategory });
 
         // 1. MATCH COST PARAMETERS
-        const US_LOCATIONS = new Set(['Austin', 'Seattle', 'Phoenix', 'New York', 'Chicago', 'Los Angeles', 'San Francisco', 'Houston', 'Dallas']);
         const lookupType = buildingType === 'Mixed-Use' ? 'Mixed Use' : buildingType;
         const mergeCostParamDefaults = (
             param: CostRevenueParameters | undefined,
             bType: string
         ): CostRevenueParameters | undefined => {
             const normalizedType = bType === 'Mixed-Use' ? 'Mixed Use' : bType;
+            const fallbackLocation = isUSProject ? defaultUsCostLocation : defaultIndiaCostLocation;
             const fallbackParam = DEFAULT_COST_PARAMETERS.find(
                 c => c.location === location && c.building_type === normalizedType
             ) || DEFAULT_COST_PARAMETERS.find(
-                c => c.location === 'Delhi' && c.building_type === normalizedType
+                c => c.location === fallbackLocation && c.building_type === normalizedType
             ) || DEFAULT_COST_PARAMETERS[0];
 
             if (!param) return fallbackParam as CostRevenueParameters;
@@ -151,8 +154,8 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
 
         let costParam = costs.find(c => c.location === location && c.building_type === lookupType);
         if (!costParam) {
-            // console.log("Exact match not found. Trying Delhi fallback...");
-            costParam = costs.find(c => c.location === 'Delhi' && c.building_type === lookupType);
+            const fallbackLocation = isUSProject ? defaultUsCostLocation : defaultIndiaCostLocation;
+            costParam = costs.find(c => c.location === fallbackLocation && c.building_type === lookupType);
         }
         if (!costParam) {
             // console.log("Delhi fallback not found. Using first available.");
@@ -161,7 +164,7 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
         costParam = mergeCostParamDefaults(costParam, lookupType);
 
         // Ensure US locations always have USD currency, even if the DB record is stale
-        if (costParam && US_LOCATIONS.has(location) && costParam.currency !== 'USD') {
+        if (costParam && isUSProject && costParam.currency !== 'USD') {
             costParam = { ...costParam, currency: 'USD' };
         }
 

@@ -161,6 +161,34 @@ function toParcelResult(property: RealiePropertyRecord, index: number) {
     };
 }
 
+function buildFallbackParcelResult(params: ParcelSearchParams) {
+    const areaSqft = Math.max(
+        2500,
+        Math.round(
+            params.targetAreaSqft ||
+            params.maxAreaSqft ||
+            params.minAreaSqft ||
+            12000,
+        ),
+    );
+    const geometry = createApproximateParcelGeometry(params.coordinates, areaSqft);
+    const centroid = computeCentroid(geometry, params.coordinates) || params.coordinates;
+
+    return {
+        geometry,
+        centroid,
+        apn: `fallback-${Math.abs(Math.round(params.coordinates[0] * 10000))}-${Math.abs(Math.round(params.coordinates[1] * 10000))}`,
+        address: params.location,
+        zoning: params.zoningPreference || params.intendedUse || 'Unknown',
+        assessedValue: 0,
+        areaSqft,
+        areaSqm: Math.round(areaSqft / 10.7639),
+        county: 'Fallback parcel estimate',
+        source: 'Fallback',
+        id: `fallback-${Math.abs(Math.round(params.coordinates[0] * 10000))}-${Math.abs(Math.round(params.coordinates[1] * 10000))}`,
+    };
+}
+
 export async function POST(request: NextRequest) {
     try {
         const params: ParcelSearchParams = await request.json();
@@ -176,12 +204,20 @@ export async function POST(request: NextRequest) {
 
         console.log(`[ParcelSearch] Querying Realie around ${location}: radius ${strategy.radiusMiles}mi | criteria: ${strategy.criteria}`);
 
-        const realieProperties = await searchRealiePropertiesByLocation({
-            longitude: lng,
-            latitude: lat,
-            radius: strategy.radiusMiles,
-            limit: 100,
-        });
+        let realieProperties: RealiePropertyRecord[] = [];
+        let realieLookupFailed = false;
+
+        try {
+            realieProperties = await searchRealiePropertiesByLocation({
+                longitude: lng,
+                latitude: lat,
+                radius: strategy.radiusMiles,
+                limit: 100,
+            });
+        } catch (error: any) {
+            console.warn('[ParcelSearch] Realie lookup failed, returning fallback parcel estimate:', error);
+            realieLookupFailed = true;
+        }
 
         let parcels = realieProperties
             .filter((property) => matchesFilters(property, params, strategy))
@@ -207,6 +243,10 @@ export async function POST(request: NextRequest) {
         });
 
         parcels = parcels.slice(0, maxResults);
+
+        if (parcels.length === 0 && realieLookupFailed) {
+            parcels = [buildFallbackParcelResult(params)];
+        }
 
         return NextResponse.json({
             success: true,
