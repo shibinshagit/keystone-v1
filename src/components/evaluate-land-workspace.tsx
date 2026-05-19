@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 
 import { DrawingToolbar } from "@/components/drawing-toolbar";
+import { DubaiLandContextCard } from "@/components/dubai-land-context-card";
 import { MapEditor } from "@/components/map-editor";
 import { MapSearch } from "@/components/map-search";
 import { PopulationMigrationCard } from "@/components/population-migration-card";
@@ -1465,6 +1466,10 @@ export function EvaluateLandWorkspace() {
                         dataSources={scoreData.dataSources}
                         nearbyAmenities={scoreData.nearbyAmenities}
                       />
+
+                      {scoreData.uaeMarketData ? (
+                        <DubaiLandContextCard data={scoreData.uaeMarketData} />
+                      ) : null}
 
                       {/* -- US Market Intelligence */}
                       {scoreData.isUS && scoreData.usMarketData && (

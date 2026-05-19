@@ -316,6 +316,34 @@ function formatDevelopabilityItemDetail(
         ].filter(Boolean);
         return parts.join(' | ');
       }
+      const titleVerification = toRecord(value?.titleDeedVerification);
+      const propertyStatus = toRecord(value?.propertyStatus);
+      const landRecord = toRecord(value?.landRecord);
+      const unitRecord = toRecord(value?.unitRecord);
+      const buildingRecord = toRecord(value?.buildingRecord);
+      // Dubai LR4 can come from official registry/status context rather than a
+      // single owner-title object, so we summarize the strongest identifiers.
+      if (value && (titleVerification || propertyStatus || landRecord || unitRecord || buildingRecord)) {
+        const parts = [
+          landRecord && typeof landRecord.landNumber === 'string'
+            ? `Land ${landRecord.landNumber}`
+            : null,
+          unitRecord && typeof unitRecord.unitNumber === 'string'
+            ? `Unit ${unitRecord.unitNumber}`
+            : null,
+          buildingRecord && typeof buildingRecord.buildingNumber === 'string'
+            ? `Building ${buildingRecord.buildingNumber}`
+            : null,
+          titleVerification && typeof titleVerification.status === 'string'
+            ? `Title deed verification ${titleVerification.status}`
+            : null,
+          propertyStatus && typeof propertyStatus.status === 'string'
+            ? `Property status lookup ${propertyStatus.status}`
+            : null,
+          typeof value.source === 'string' ? `Source: ${value.source}` : null,
+        ].filter(Boolean);
+        return parts.length > 0 ? parts.join(' | ') : undefined;
+      }
       return typeof result?.value === 'string'
         ? `RERA or approval reference: ${result.value as string}.`
         : undefined;
@@ -332,8 +360,25 @@ function formatDevelopabilityItemDetail(
       }
       return 'Pending master plan extraction and conformity check.';
     }
-    case 'ME1':
-      return 'Pending locality-level price trend data.';
+    case 'ME1': {
+      const value = toRecord(result?.value);
+      if (!value) return 'Pending locality-level price trend data.';
+      // Dubai ME1 uses the official DLD sale-index payload instead of the
+      // older generic placeholder text.
+      const latestMonth = typeof value.latestMonth === 'string' ? value.latestMonth : null;
+      const monthlyIndex = toNumber(value.latestMonthlyPriceIndex);
+      const yearlyIndex = toNumber(value.latestYearlyPriceIndex);
+      const monthlyChange = toNumber(value.monthlyChangePct);
+      const yearlyChange = toNumber(value.yearlyChangePct);
+      const parts = [
+        latestMonth ? `As of ${latestMonth}` : null,
+        monthlyIndex != null ? `Monthly index ${monthlyIndex.toFixed(1)}` : null,
+        monthlyChange != null ? `${monthlyChange >= 0 ? '+' : ''}${monthlyChange.toFixed(1)}% MoM` : null,
+        yearlyIndex != null ? `Yearly index ${yearlyIndex.toFixed(1)}` : null,
+        yearlyChange != null ? `${yearlyChange >= 0 ? '+' : ''}${yearlyChange.toFixed(1)}% YoY` : null,
+      ].filter(Boolean);
+      return parts.length > 0 ? parts.join(' | ') : 'Pending locality-level price trend data.';
+    }
     case 'ME2': {
       const value = toRecord(result?.value);
       if (!value) return undefined;

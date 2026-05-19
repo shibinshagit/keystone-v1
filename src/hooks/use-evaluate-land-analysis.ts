@@ -10,6 +10,7 @@ import type { TransportationScreeningReport } from "@/lib/land-intelligence/tran
 import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import type { LandUseSummary } from "@/lib/land-intelligence/land-use";
 import { inferRegulationGeography } from "@/lib/geography";
+import type { DubaiLandContextResult } from "@/services/uae/dubai-land-service";
 import type {
   BuildingIntendedUse,
   DevelopabilityScore,
@@ -24,6 +25,7 @@ import type {
 interface ScoreResult {
   score: DevelopabilityScore;
   isUS?: boolean;
+  uaeMarketData?: DubaiLandContextResult | null;
   usMarketData?: {
     city: string;
     state: string;
@@ -107,6 +109,12 @@ interface ScoreResult {
     populationMigration: { count: number; available: boolean };
     fdi: { count: number; available: boolean };
     sez: { count: number; available: boolean };
+    dubaiLand?: {
+      count: number;
+      available: boolean;
+      source?: string;
+      integrationStatus?: string;
+    };
     usEconomy?: { available: boolean; source: string };
     usPermits?: { available: boolean; source: string };
     usProperty?: { available: boolean; source: string };

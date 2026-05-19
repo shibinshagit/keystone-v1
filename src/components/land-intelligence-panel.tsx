@@ -22,9 +22,11 @@ import type { EnvironmentalScreeningReport } from "@/lib/land-intelligence/envir
 import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import type { LandUseSummary } from "@/lib/land-intelligence/land-use";
 import type { TransportationScreeningReport } from "@/lib/land-intelligence/transportation";
+import type { DubaiLandContextResult } from "@/services/uae/dubai-land-service";
 import type { DevelopabilityScore, PopulationMigrationAnalysis, TerrainIntelligenceData } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useRegulations } from "@/hooks/use-regulations";
+import { DubaiLandContextCard } from "./dubai-land-context-card";
 import { PopulationMigrationCard } from "./population-migration-card";
 import {
   TerrainIntelligenceCard,
@@ -40,6 +42,7 @@ import { IndiaParcelDetailsCard } from "./india-parcel-details-card";
 interface ScoreResult {
   score: DevelopabilityScore;
   isUS?: boolean;
+  uaeMarketData?: DubaiLandContextResult | null;
   usMarketData?: {
     environmental?: {
       floodZone?: {
@@ -85,6 +88,12 @@ interface ScoreResult {
     populationMigration: { count: number; available: boolean };
     fdi: { count: number; available: boolean };
     sez: { count: number; available: boolean };
+    dubaiLand?: {
+      count: number;
+      available: boolean;
+      source?: string;
+      integrationStatus?: string;
+    };
     terrain: { available: boolean; isMock: boolean; source?: string };
     satellite: { available: boolean; isMock: boolean };
     regulation: { available: boolean };
@@ -583,6 +592,10 @@ export function LandIntelligencePanel() {
               dataSources={scoreData.dataSources}
               nearbyAmenities={scoreData.nearbyAmenities}
             />
+
+            {scoreData.uaeMarketData ? (
+              <DubaiLandContextCard data={scoreData.uaeMarketData} />
+            ) : null}
 
             {scoreData.terrain ? (
               <TerrainIntelligenceCard terrain={scoreData.terrain} />
