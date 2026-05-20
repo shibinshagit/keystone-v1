@@ -399,9 +399,13 @@ export const PunjabParcelService = {
       overlay: {
         highlightType: "wms",
         wmsPath: "/api/in/punjab/parcels/wms",
-        overlayCodes,
-        plotId: plot.ID || hit.id || undefined,
-        highlightStateCode: PUNJAB_STATE_CODE,
+        wmsParams: {
+          layers: "PLOT_LIST",
+          styles: "PLOT_SELECTION",
+          state: PUNJAB_STATE_CODE,
+          gis_code: plot.gisCode || hit.giscode || hit.gisCode || hit.gis_code,
+          plot_id: plot.ID || hit.id || "",
+        },
       },
     };
   },

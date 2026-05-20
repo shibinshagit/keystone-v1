@@ -8,6 +8,7 @@ type RequestOptions = {
   headers?: Record<string, string>;
   body?: string | Buffer;
   maxRedirects?: number;
+  rejectUnauthorized?: boolean;
 };
 
 type RawHttpResponse = {
@@ -57,6 +58,7 @@ function performRequest(
       {
         method: options.method || "GET",
         headers: options.headers,
+        rejectUnauthorized: options.rejectUnauthorized,
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -83,7 +85,7 @@ function performRequest(
   });
 }
 
-async function requestWithRedirects(
+export async function requestWithRedirects(
   input: string | URL,
   options: RequestOptions = {},
 ): Promise<RawHttpResponse> {
@@ -229,4 +231,21 @@ export async function getBhuNakshaBinary(options: {
   });
 
   return response;
+}
+
+export async function requestHttp(options: {
+  url: string;
+  method?: HttpMethod;
+  headers?: Record<string, string>;
+  body?: string | Buffer;
+  rejectUnauthorized?: boolean;
+  maxRedirects?: number;
+}) {
+  return requestWithRedirects(options.url, {
+    method: options.method,
+    headers: options.headers,
+    body: options.body,
+    rejectUnauthorized: options.rejectUnauthorized,
+    maxRedirects: options.maxRedirects,
+  });
 }

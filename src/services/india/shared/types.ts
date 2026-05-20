@@ -53,9 +53,7 @@ export interface IndiaParcelSelection {
   overlay?: {
     highlightType: "geometry" | "wms";
     wmsPath?: string;
-    overlayCodes?: string | null;
-    plotId?: string;
-    highlightStateCode?: string | null;
+    wmsParams?: Record<string, string>;
   } | null;
 }
 

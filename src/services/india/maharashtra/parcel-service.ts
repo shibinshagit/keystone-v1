@@ -356,8 +356,13 @@ export const MaharashtraParcelService = {
       overlay: {
         highlightType: "wms",
         wmsPath: "/api/in/maharashtra/parcels/wms",
-        plotId,
-        highlightStateCode: MAHARASHTRA_STATE_CODE,
+        wmsParams: {
+          layers: "PLOT_LIST",
+          styles: "PLOT_SELECTION",
+          state: MAHARASHTRA_STATE_CODE,
+          gis_code: gisCode,
+          plot_id: plotId,
+        },
       },
     };
   },

@@ -82,8 +82,11 @@ const SELECTION_HIGHLIGHT_SOURCE_ID = "selection-highlight-source";
 const SELECTION_HIGHLIGHT_LAYER_ID = "selection-highlight-layer";
 const DRAWING_LABELS_SOURCE_ID = "drawing-labels-source";
 const DRAWING_LABELS_LAYER_ID = "drawing-labels-layer";
-const INDIA_PARCEL_SOURCE_ID = "india-parcels-source";
-const INDIA_PARCEL_LAYER_ID = "india-parcels-layer";
+const INDIA_PARCEL_IMAGE_SOURCE_ID = "india-parcels-image-source";
+const INDIA_PARCEL_IMAGE_LAYER_ID = "india-parcels-image-layer";
+const INDIA_PARCEL_GEOJSON_SOURCE_ID = "india-parcels-geojson-source";
+const INDIA_PARCEL_GEOJSON_FILL_ID = "india-parcels-geojson-fill";
+const INDIA_PARCEL_GEOJSON_LINE_ID = "india-parcels-geojson-line";
 const HIGHLIGHT_SOURCE = "highlight-parcel-source";
 const HIGHLIGHT_FILL = "highlight-parcel-fill";
 const HIGHLIGHT_LINE = "highlight-parcel-line";
@@ -126,7 +129,7 @@ const buildKeralaParcelLocationLabel = (parcel: IndiaParcelSelection) => {
       parcel.surveyNo ? `Survey ${parcel.surveyNo}` : null,
       parcel.subdivisionNo ? `Subdiv ${parcel.subdivisionNo}` : null,
     ].filter(Boolean);
-    return `${bits.join(" · ")}${locality ? `, ${locality}` : ""}`;
+    return `${bits.join(" / ")}${locality ? `, ${locality}` : ""}`;
   }
 
   return locality || "Kerala Parcel";
@@ -242,6 +245,7 @@ export function MapEditor({
     gisCode: string;
     overlayCodes?: string | null;
     bounds: IndiaViewportBounds;
+    featureCollection?: FeatureCollection<Polygon> | null;
   } | null>(null);
   const hasNavigatedRef = useRef(false);
   const windStreamlineLayer = useRef<WindStreamlineLayer | null>(null);
@@ -382,18 +386,132 @@ export function MapEditor({
     if (!mapInst || !isMapLoaded) return;
 
     const overlay = indiaOverlayState;
-
-    if (!overlay) {
+    const hideImageOverlay = () => {
       indiaParcelOverlayKeyRef.current = null;
-      if (mapInst.getLayer(INDIA_PARCEL_LAYER_ID)) {
+      if (mapInst.getLayer(INDIA_PARCEL_IMAGE_LAYER_ID)) {
         mapInst.setLayoutProperty(
-          INDIA_PARCEL_LAYER_ID,
+          INDIA_PARCEL_IMAGE_LAYER_ID,
           "visibility",
           "none",
         );
       }
+    };
+    const hideGeoJsonOverlay = () => {
+      if (mapInst.getLayer(INDIA_PARCEL_GEOJSON_FILL_ID)) {
+        mapInst.setLayoutProperty(
+          INDIA_PARCEL_GEOJSON_FILL_ID,
+          "visibility",
+          "none",
+        );
+      }
+      if (mapInst.getLayer(INDIA_PARCEL_GEOJSON_LINE_ID)) {
+        mapInst.setLayoutProperty(
+          INDIA_PARCEL_GEOJSON_LINE_ID,
+          "visibility",
+          "none",
+        );
+      }
+    };
+
+    if (!overlay) {
+      hideImageOverlay();
+      hideGeoJsonOverlay();
       return;
     }
+
+    if (
+      overlay.adapter.overlaySourceType === "geojson" &&
+      overlay.featureCollection
+    ) {
+      hideImageOverlay();
+
+      const existingGeoJsonSource = mapInst.getSource(
+        INDIA_PARCEL_GEOJSON_SOURCE_ID,
+      ) as GeoJSONSource | undefined;
+      if (existingGeoJsonSource) {
+        existingGeoJsonSource.setData(overlay.featureCollection as any);
+      } else {
+        mapInst.addSource(INDIA_PARCEL_GEOJSON_SOURCE_ID, {
+          type: "geojson",
+          data: overlay.featureCollection as any,
+        });
+      }
+
+      if (!mapInst.getLayer(INDIA_PARCEL_GEOJSON_FILL_ID)) {
+        mapInst.addLayer({
+          id: INDIA_PARCEL_GEOJSON_FILL_ID,
+          type: "fill",
+          source: INDIA_PARCEL_GEOJSON_SOURCE_ID,
+          paint: {
+            "fill-color": "#3b82f6",
+            "fill-opacity": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              14,
+              0.03,
+              16,
+              0.05,
+              18,
+              0.08,
+            ],
+          },
+        });
+      }
+
+      if (!mapInst.getLayer(INDIA_PARCEL_GEOJSON_LINE_ID)) {
+        mapInst.addLayer({
+          id: INDIA_PARCEL_GEOJSON_LINE_ID,
+          type: "line",
+          source: INDIA_PARCEL_GEOJSON_SOURCE_ID,
+          paint: {
+            "line-color": "#3b82f6",
+            "line-opacity": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              14,
+              0.35,
+              16,
+              0.55,
+              18,
+              0.8,
+            ],
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              14,
+              0.6,
+              16,
+              0.9,
+              18,
+              1.4,
+            ],
+          },
+        });
+      }
+
+      mapInst.setLayoutProperty(
+        INDIA_PARCEL_GEOJSON_FILL_ID,
+        "visibility",
+        "visible",
+      );
+      mapInst.setLayoutProperty(
+        INDIA_PARCEL_GEOJSON_LINE_ID,
+        "visibility",
+        "visible",
+      );
+      return;
+    }
+
+    if (overlay.adapter.overlaySourceType === "geojson") {
+      hideImageOverlay();
+      hideGeoJsonOverlay();
+      return;
+    }
+
+    hideGeoJsonOverlay();
 
     const viewportWidth = Math.min(
       1024,
@@ -432,26 +550,26 @@ export function MapEditor({
       ];
 
     const overlayKey = `${adapter.id}:${gisCode}:${overlayCodes || ""}`;
-    const existingSource = mapInst.getSource(INDIA_PARCEL_SOURCE_ID);
+    const existingSource = mapInst.getSource(INDIA_PARCEL_IMAGE_SOURCE_ID);
     if (existingSource && indiaParcelOverlayKeyRef.current !== overlayKey) {
-      if (mapInst.getLayer(INDIA_PARCEL_LAYER_ID)) {
-        mapInst.removeLayer(INDIA_PARCEL_LAYER_ID);
+      if (mapInst.getLayer(INDIA_PARCEL_IMAGE_LAYER_ID)) {
+        mapInst.removeLayer(INDIA_PARCEL_IMAGE_LAYER_ID);
       }
-      mapInst.removeSource(INDIA_PARCEL_SOURCE_ID);
+      mapInst.removeSource(INDIA_PARCEL_IMAGE_SOURCE_ID);
     }
 
     indiaParcelOverlayKeyRef.current = overlayKey;
-    const refreshedSource = mapInst.getSource(INDIA_PARCEL_SOURCE_ID);
+    const refreshedSource = mapInst.getSource(INDIA_PARCEL_IMAGE_SOURCE_ID);
     if (!refreshedSource) {
-      mapInst.addSource(INDIA_PARCEL_SOURCE_ID, {
+      mapInst.addSource(INDIA_PARCEL_IMAGE_SOURCE_ID, {
         type: "image",
         url: imageUrl,
         coordinates,
       });
       mapInst.addLayer({
-        id: INDIA_PARCEL_LAYER_ID,
+        id: INDIA_PARCEL_IMAGE_LAYER_ID,
         type: "raster",
-        source: INDIA_PARCEL_SOURCE_ID,
+        source: INDIA_PARCEL_IMAGE_SOURCE_ID,
         paint: {
           "raster-opacity": [
             "interpolate",
@@ -481,9 +599,9 @@ export function MapEditor({
       coordinates,
     });
 
-    if (mapInst.getLayer(INDIA_PARCEL_LAYER_ID)) {
+    if (mapInst.getLayer(INDIA_PARCEL_IMAGE_LAYER_ID)) {
       mapInst.setLayoutProperty(
-        INDIA_PARCEL_LAYER_ID,
+        INDIA_PARCEL_IMAGE_LAYER_ID,
         "visibility",
         "visible",
       );
@@ -496,9 +614,23 @@ export function MapEditor({
 
     const hideIndiaOverlay = () => {
       setIndiaOverlayState(null);
-      if (mapInst.getLayer(INDIA_PARCEL_LAYER_ID)) {
+      if (mapInst.getLayer(INDIA_PARCEL_IMAGE_LAYER_ID)) {
         mapInst.setLayoutProperty(
-          INDIA_PARCEL_LAYER_ID,
+          INDIA_PARCEL_IMAGE_LAYER_ID,
+          "visibility",
+          "none",
+        );
+      }
+      if (mapInst.getLayer(INDIA_PARCEL_GEOJSON_FILL_ID)) {
+        mapInst.setLayoutProperty(
+          INDIA_PARCEL_GEOJSON_FILL_ID,
+          "visibility",
+          "none",
+        );
+      }
+      if (mapInst.getLayer(INDIA_PARCEL_GEOJSON_LINE_ID)) {
+        mapInst.setLayoutProperty(
+          INDIA_PARCEL_GEOJSON_LINE_ID,
           "visibility",
           "none",
         );
@@ -581,7 +713,32 @@ export function MapEditor({
           gisCode: village.gisCode,
           overlayCodes: village.overlayCodes || null,
           bounds: overlayBounds,
+          featureCollection: null,
         });
+
+        if (adapter.overlaySourceType === "geojson" && adapter.overlayFeaturesPath) {
+          const featuresResponse = await fetch(adapter.overlayFeaturesPath, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              bounds: overlayBounds,
+              gisCode: village.gisCode,
+            }),
+          });
+
+          if (featuresResponse.ok) {
+            const featuresPayload = await featuresResponse.json();
+            const featureCollection =
+              featuresPayload?.featureCollection as FeatureCollection<Polygon> | null;
+            setIndiaOverlayState({
+              adapter,
+              gisCode: village.gisCode,
+              overlayCodes: village.overlayCodes || null,
+              bounds: overlayBounds,
+              featureCollection,
+            });
+          }
+        }
       } catch (error) {
         console.warn("[IndiaOverlay] Failed to resolve village overlay:", error);
         hideIndiaOverlay();
@@ -1095,18 +1252,14 @@ export function MapEditor({
                   indiaParcel.overlay?.highlightType === "wms" &&
                   indiaParcel.extent &&
                   indiaParcel.overlay.wmsPath &&
-                  indiaParcel.overlay.plotId
+                  indiaParcel.overlay.wmsParams
                 ) {
                   window.dispatchEvent(
                     new CustomEvent("highlightParcel", {
                       detail: {
                         highlightType: "wms",
                         wmsPath: indiaParcel.overlay.wmsPath,
-                        stateCode:
-                          indiaParcel.overlay.highlightStateCode ||
-                          indiaParcel.stateCode,
-                        gisCode: indiaParcel.gisCode,
-                        plotId: indiaParcel.overlay.plotId,
+                        wmsParams: indiaParcel.overlay.wmsParams,
                         bounds: indiaParcel.extent,
                       },
                     }),
@@ -1504,9 +1657,7 @@ export function MapEditor({
         geometry,
         apn,
         wmsPath,
-        stateCode,
-        gisCode,
-        plotId,
+        wmsParams,
         bounds,
         fillColor = "rgba(16, 185, 129, 0.25)",
         outlineColor = "rgba(16, 185, 129, 0.8)",
@@ -1514,22 +1665,22 @@ export function MapEditor({
       } = (e as CustomEvent).detail;
 
       if (highlightType === "wms") {
-        if (!wmsPath || !gisCode || !plotId || !bounds || !stateCode) return;
+        if (!wmsPath || !bounds || !wmsParams) return;
         const params = new URLSearchParams();
         params.set("service", "WMS");
         params.set("version", "1.1.1");
         params.set("request", "GetMap");
-        params.set("layers", "PLOT_LIST");
-        params.set("styles", "PLOT_SELECTION");
         params.set("format", "image/png");
         params.set("transparent", "true");
         params.set("srs", "EPSG:4326");
         params.set("width", "512");
         params.set("height", "512");
         params.set("bbox", `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`);
-        params.set("state", stateCode);
-        params.set("gis_code", gisCode);
-        params.set("plot_id", plotId);
+        Object.entries(wmsParams).forEach(([key, value]) => {
+          if (typeof value === "string") {
+            params.set(key, value);
+          }
+        });
         const imageUrl = `${wmsPath}?${params.toString()}`;
         const coordinates: [[number, number], [number, number], [number, number], [number, number]] =
           [
