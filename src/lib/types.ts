@@ -851,7 +851,7 @@ export const REGULATION_SUB_GROUPS: Record<string, string[]> = {
     "Environment & Greens": ["open_space", "max_ground_coverage", "tree_plantation_green_cover", "leed_compliance", "igbc_compliance", "griha_compliance", "rainwater_harvesting", "solar_panels", "water_consumption_norm", "energy_efficiency"],
     "Fire & Life Safety": ["fire_safety", "fire_tender_access", "staircases_by_height", "fire_exits_travel_distance", "refuge_floors", "fire_fighting_systems", "fire_command_center", "fire_tender_movement"],
     "IFC Fire Code (US)": ["hydrant_spacing", "fire_lane_width", "standpipe_required", "fire_sprinkler_threshold", "fire_alarm_threshold_occupants", "travel_distance_sprinklered", "travel_distance_unsprinklered", "smoke_control_threshold"],
-    "ADA Accessibility (US)": ["accessible_route_width", "accessible_parking_pct", "accessible_parking_van", "ramp_max_slope", "door_clearance_width", "elevator_required_floors", "accessible_restrooms", "signage_compliance", "common_area_accessible"],
+    "Accessibility": ["accessible_route_width", "accessible_parking_pct", "accessible_parking_van", "ramp_max_slope", "door_clearance_width", "elevator_required_floors", "accessible_restrooms", "signage_compliance", "common_area_accessible"],
     "Utilities & MEP": ["water_supply_approval", "sewer_connection_stp", "stormwater_drainage", "electrical_load_sanction", "transformer_placement", "backup_power_norms", "gas_pipelines", "telecom_infrastructure", "sewage_treatment_plant", "solid_waste_management"],
     "Structural Engineering": ["seismic_zone", "wind_load", "soil_bearing_capacity"],
     "Financial & Legal": ["fee_rate", "saleable_vs_carpet_rera", "exit_compliance", "absorption_assumptions", "infra_load_vs_financial_viability"],

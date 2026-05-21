@@ -631,7 +631,17 @@ export function AdminPanel() {
         setSelectedCategory(null);
     };
 
-    const isUS = selectedRegulation ? (selectedRegulation.market === 'USA' || inferRegulationGeography(selectedRegulation.location).market === 'USA') : false;
+    const hasMeaningfulAccessibility = (() => {
+        const accessibility = selectedRegulation?.accessibility;
+        if (!accessibility) return false;
+        return Object.values(accessibility).some((field) => {
+            if (!field) return false;
+            if (field.value !== null && field.value !== undefined && String(field.value).trim() !== '') return true;
+            if (field.min !== null && field.min !== undefined && String(field.min).trim() !== '') return true;
+            if (field.max !== null && field.max !== undefined && String(field.max).trim() !== '') return true;
+            return Boolean(field.desc?.trim());
+        });
+    })();
 
     const categories: { key: keyof typeof DEFAULT_REGULATION_DATA, icon: React.ElementType }[] = [
         { key: 'geometry', icon: Scaling },
@@ -640,7 +650,7 @@ export function AdminPanel() {
         { key: 'sustainability', icon: Droplets },
         { key: 'safety_and_services', icon: ShieldCheck },
         { key: 'administration', icon: Banknote },
-        ...(isUS ? [{ key: 'accessibility' as const, icon: Accessibility }] : []),
+        ...(hasMeaningfulAccessibility ? [{ key: 'accessibility' as const, icon: Accessibility }] : []),
     ];
 
 

@@ -49,6 +49,17 @@ const getFieldProvenance = (
 const formatConfidenceLabel = (confidence?: string) =>
     confidence ? `${confidence.charAt(0).toUpperCase()}${confidence.slice(1)}` : null;
 
+const hasMeaningfulFields = (section?: Record<string, RegulationValue>) =>
+    Boolean(
+        section && Object.values(section).some((field) => {
+            if (!field) return false;
+            if (field.value !== null && field.value !== undefined && String(field.value).trim() !== '') return true;
+            if (field.min !== null && field.min !== undefined && String(field.min).trim() !== '') return true;
+            if (field.max !== null && field.max !== undefined && String(field.max).trim() !== '') return true;
+            return Boolean(field.desc?.trim());
+        })
+    );
+
 function RegulationCategory({
     title,
     section,
@@ -162,6 +173,7 @@ export function RegulationViewerModal({ isOpen, onOpenChange, plot }: Regulation
         { key: 'sustainability' as const, title: 'Sustainability', icon: Droplets, data: regulation.sustainability },
         { key: 'safety_and_services' as const, title: 'Safety & Services', icon: ShieldCheck, data: regulation.safety_and_services },
         { key: 'administration' as const, title: 'Administration', icon: Banknote, data: regulation.administration },
+        ...(hasMeaningfulFields(regulation.accessibility) ? [{ key: 'accessibility' as const, title: 'Accessibility', icon: AlertTriangle, data: regulation.accessibility || {} }] : []),
     ] : [];
 
     return (
