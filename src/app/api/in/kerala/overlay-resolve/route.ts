@@ -1,51 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import KeralaParcelService from "@/services/india/kerala";
-
-type BoundsPayload = {
-  west?: number;
-  south?: number;
-  east?: number;
-  north?: number;
-};
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
+import { handleIndiaOverlayResolve } from "@/services/india/shared/route-handlers";
 
 export async function POST(request: NextRequest) {
-  try {
-    const body = (await request.json()) as { bounds?: BoundsPayload };
-    const bounds = body?.bounds;
-
-    if (
-      !bounds ||
-      !isFiniteNumber(bounds.west) ||
-      !isFiniteNumber(bounds.south) ||
-      !isFiniteNumber(bounds.east) ||
-      !isFiniteNumber(bounds.north)
-    ) {
-      return NextResponse.json(
-        { success: false, error: "A valid bounds object is required." },
-        { status: 400 },
-      );
-    }
-
-    const village = await KeralaParcelService.resolveVillageOverlay({
-      west: bounds.west,
-      south: bounds.south,
-      east: bounds.east,
-      north: bounds.north,
-    });
-
-    return NextResponse.json({
-      success: true,
-      village,
-    });
-  } catch (error: any) {
-    console.error("[Kerala Overlay Resolve API] Error:", error);
-    return NextResponse.json(
-      { success: false, error: error?.message || "Failed to resolve Kerala overlay." },
-      { status: 500 },
-    );
-  }
+  return handleIndiaOverlayResolve(request, KeralaParcelService, "Kerala");
 }

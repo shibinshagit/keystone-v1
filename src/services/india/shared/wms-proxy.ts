@@ -17,6 +17,14 @@ export async function proxyIndiaParcelWms(
   try {
     const target = new URL(remoteWmsUrl);
     const searchParams = request.nextUrl.searchParams;
+    const inboundSrs =
+      searchParams.get("SRS") ||
+      searchParams.get("srs") ||
+      null;
+    const inboundCrs =
+      searchParams.get("CRS") ||
+      searchParams.get("crs") ||
+      null;
 
     searchParams.forEach((value, key) => {
       if (key.toLowerCase() === "srs" || key.toLowerCase() === "crs") return;
@@ -24,12 +32,7 @@ export async function proxyIndiaParcelWms(
       target.searchParams.set(key.toUpperCase(), value);
     });
 
-    const srs =
-      searchParams.get("SRS") ||
-      searchParams.get("srs") ||
-      searchParams.get("CRS") ||
-      searchParams.get("crs") ||
-      "";
+    const srs = inboundSrs || inboundCrs || "";
     const bbox = searchParams.get("BBOX") || searchParams.get("bbox") || "";
 
     if ((srs === "EPSG:3857" || srs === "EPSG:900913") && bbox) {
@@ -39,10 +42,16 @@ export async function proxyIndiaParcelWms(
         const [maxLng, maxLat] = webMercatorToLngLat(parts[2], parts[3]);
         target.searchParams.set("BBOX", `${minLng},${minLat},${maxLng},${maxLat}`);
         target.searchParams.set("SRS", "EPSG:4326");
+        if (inboundCrs !== null) {
+          target.searchParams.set("CRS", inboundCrs);
+        }
       }
     } else {
       if (bbox) target.searchParams.set("BBOX", bbox);
       target.searchParams.set("SRS", srs || "EPSG:4326");
+      if (inboundCrs !== null) {
+        target.searchParams.set("CRS", inboundCrs);
+      }
     }
 
     const response = remoteFetcher ? await remoteFetcher(target.toString()) : null;

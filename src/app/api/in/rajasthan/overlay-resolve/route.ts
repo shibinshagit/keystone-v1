@@ -1,7 +1,11 @@
 import { NextRequest } from "next/server";
-import HaryanaParcelService from "@/services/india/haryana";
+import RajasthanParcelService from "@/services/india/rajasthan";
 import { handleIndiaOverlayResolve } from "@/services/india/shared/route-handlers";
 
 export async function POST(request: NextRequest) {
-  return handleIndiaOverlayResolve(request, HaryanaParcelService, "Haryana");
+  return handleIndiaOverlayResolve(
+    request,
+    RajasthanParcelService,
+    "Rajasthan",
+  );
 }

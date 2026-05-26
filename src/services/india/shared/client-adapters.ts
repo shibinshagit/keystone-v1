@@ -4,7 +4,8 @@ export type IndiaParcelAdapterId =
   | "kerala"
   | "punjab"
   | "maharashtra"
-  | "haryana";
+  | "haryana"
+  | "rajasthan";
 
 export type IndiaParcelClientAdapter = {
   id: IndiaParcelAdapterId;
@@ -13,6 +14,7 @@ export type IndiaParcelClientAdapter = {
   overlayMinZoom: number;
   coverageBounds: IndiaViewportBounds;
   overlaySourceType?: "wms" | "geojson";
+  overlayRenderMode?: "image" | "tiles";
   overlayResolvePath: string;
   overlayFeaturesPath?: string;
   parcelClickPath: string;
@@ -51,6 +53,10 @@ function isInBounds(
     lat >= bounds.south &&
     lat <= bounds.north
   );
+}
+
+function boundsArea(bounds: IndiaViewportBounds) {
+  return Math.max(0, bounds.east - bounds.west) * Math.max(0, bounds.north - bounds.south);
 }
 
 function createOverlayParamsBuilder(options: WmsOverlayOptions) {
@@ -115,6 +121,7 @@ export const INDIA_PARCEL_CLIENT_ADAPTERS: IndiaParcelClientAdapter[] = [
     stateName: "Kerala",
     overlayMinZoom: 14,
     overlaySourceType: "wms",
+    overlayRenderMode: "image",
     coverageBounds: {
       west: 74.8,
       south: 8.0,
@@ -156,6 +163,7 @@ export const INDIA_PARCEL_CLIENT_ADAPTERS: IndiaParcelClientAdapter[] = [
     stateName: "Punjab",
     overlayMinZoom: 14,
     overlaySourceType: "wms",
+    overlayRenderMode: "tiles",
     coverageBounds: {
       west: 73.8,
       south: 29.5,
@@ -179,6 +187,7 @@ export const INDIA_PARCEL_CLIENT_ADAPTERS: IndiaParcelClientAdapter[] = [
     stateName: "Maharashtra",
     overlayMinZoom: 14,
     overlaySourceType: "wms",
+    overlayRenderMode: "tiles",
     coverageBounds: {
       west: 72.55,
       south: 15.6,
@@ -197,6 +206,32 @@ export const INDIA_PARCEL_CLIENT_ADAPTERS: IndiaParcelClientAdapter[] = [
     }),
     buildParcelLocationLabel: (parcel) =>
       buildDefaultParcelLocationLabel("Maharashtra Parcel", parcel),
+  },
+  {
+    id: "rajasthan",
+    stateCode: "08",
+    stateName: "Rajasthan",
+    overlayMinZoom: 14,
+    overlaySourceType: "wms",
+    overlayRenderMode: "tiles",
+    coverageBounds: {
+      west: 69.2,
+      south: 23.0,
+      east: 78.6,
+      north: 30.95,
+    },
+    overlayResolvePath: "/api/in/rajasthan/overlay-resolve",
+    parcelClickPath: "/api/in/rajasthan/parcel-click",
+    wmsPath: "/api/in/rajasthan/parcels/wms",
+    buildOverlayParams: createOverlayParamsBuilder({
+      layerName: "VILLAGE_MAP",
+      styles: "VILLAGE_MAP",
+      stateCode: "08",
+      includeOverlayCodes: true,
+      includeBlankCrs: true,
+    }),
+    buildParcelLocationLabel: (parcel) =>
+      buildDefaultParcelLocationLabel("Rajasthan Parcel", parcel),
   },
   {
     id: "haryana",
@@ -227,9 +262,14 @@ export const INDIA_PARCEL_CLIENT_ADAPTERS: IndiaParcelClientAdapter[] = [
 ];
 
 export function getIndiaParcelClientAdapter(coordinates: [number, number]) {
-  return (
-    INDIA_PARCEL_CLIENT_ADAPTERS.find((adapter) =>
-      isInBounds(coordinates, adapter.coverageBounds),
-    ) || null
+  return getIndiaParcelClientAdapters(coordinates)[0] || null;
+}
+
+export function getIndiaParcelClientAdapters(coordinates: [number, number]) {
+  return INDIA_PARCEL_CLIENT_ADAPTERS.filter((adapter) =>
+    isInBounds(coordinates, adapter.coverageBounds),
+  ).sort(
+    (a, b) =>
+      boundsArea(a.coverageBounds) - boundsArea(b.coverageBounds),
   );
 }
