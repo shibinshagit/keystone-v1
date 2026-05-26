@@ -27,7 +27,11 @@ interface FeasibilityReportProps {
   };
 }
 
-/* ── tiny helpers (moved inside component for currency awareness) ── */
+/* ── tiny helpers ─────────────────────────────────────────── */
+const fmt = (n: number | undefined | null, d = 0) =>
+  n != null ? n.toLocaleString("en-IN", { maximumFractionDigits: d }) : "—";
+const crore = (n: number) => `₹ ${(n / 10000000).toFixed(2)} Cr`;
+const lakh = (n: number) => `₹ ${(n / 100000).toFixed(1)} L`;
 
 const regLabel = (location?: string | null, withYear = false): string => {
   if (!location || location === "National (NBC)") {
@@ -113,21 +117,6 @@ export function FeasibilityReport({
   generationParams,
   siteCosts,
 }: FeasibilityReportProps) {
-  // ── Currency localization ──
-  const isUSD = project.market === 'USA' || project.countryCode === 'US' || (estimates as any)?.currency === 'USD';
-  const curr = isUSD ? '$' : '₹';
-  const cr = isUSD ? 'M' : 'Cr';
-  const unitLabel = isUSD ? 'Millions' : 'Crores';
-
-  const fmt = (n: number | undefined | null, d = 0) =>
-    n != null ? n.toLocaleString(isUSD ? 'en-US' : 'en-IN', { maximumFractionDigits: d }) : '—';
-  const crore = (n: number) => isUSD
-    ? `$ ${(n / 1000000).toFixed(2)} M`
-    : `₹ ${(n / 10000000).toFixed(2)} Cr`;
-  const lakh = (n: number) => isUSD
-    ? `$ ${(n / 1000).toFixed(1)} K`
-    : `₹ ${(n / 100000).toFixed(1)} L`;
-
   const stats = plot.developmentStats;
   let units = stats?.units?.breakdown || {};
   let totalUnits = stats?.units?.total || 0;
@@ -264,20 +253,9 @@ export function FeasibilityReport({
   const stampDuty = landCost * 0.065;
   const actualLandCost = landCost + stampDuty;
 
-  // Site Dev costs — match dashboard KPI tab logic exactly
-  const _sc = (estimates as any)?.site_costs || {};
-  const _rmin = (_sc as any).road_cost_per_sqm_min || (isUSD ? 150 : 5000);
-  const _pmin = (_sc as any).parking_cost_per_sqm_min || (isUSD ? 150 : 5000);
-  const _bmin = (_sc as any).boundary_cost_per_m_min || (isUSD ? 100 : 9000);
-  const siteDev = Math.round(_rmin * roadArea) + Math.round(_pmin * surfaceParkingArea) + Math.round(_bmin * plotPerimeter);
-
-  const simCostP10 = sim ? sim.cost_p10 + siteDev : 0;
-  const simCostP50 = sim ? sim.cost_p50 + siteDev : 0;
-  const simCostP90 = sim ? sim.cost_p90 + siteDev : 0;
-
   // Cost range from simulation
   const costRange = sim
-    ? `${crore(simCostP10)} – ${crore(simCostP90)}`
+    ? `${crore(sim.cost_p10)} – ${crore(sim.cost_p90)}`
     : totalCost
       ? crore(totalCost)
       : "Pending";
@@ -3421,7 +3399,7 @@ export function FeasibilityReport({
                     </li>
                     <li><strong>Zero Discharge:</strong> 100% sewage treated & reused on-site</li>
                     <li>
-                      <strong>Potable Savings:</strong> {fmt(potableSavingsLDay)} L/day (Annual: ~{curr}{potableSavingsAnnualLakhs} lakhs)
+                      <strong>Potable Savings:</strong> {fmt(potableSavingsLDay)} L/day (Annual: ~₹{potableSavingsAnnualLakhs} lakhs)
                     </li>
                   </ul>
                 </div>
@@ -3454,7 +3432,7 @@ export function FeasibilityReport({
                     <li><strong>C&D Segregation:</strong> Concrete (crushed for base), Metal (rebar), Wood (formwork)</li>
                     <li><strong>Target:</strong> 80% waste diverted from landfill during construction</li>
                     <li><strong>Green Incentive:</strong> 9% Additional FAR (for 3-star GRIHA equivalent)</li>
-                    <li><strong>Operational ROI:</strong> &lt;2 years on {curr}8-10 lakhs certification cost</li>
+                    <li><strong>Operational ROI:</strong> &lt;2 years on ₹8-10 lakhs certification cost</li>
                   </ul>
                   {stats?.greenAnalysis && (
                     <div className="mt-2 bg-green-50 border border-green-200 p-2 rounded">
@@ -3489,8 +3467,8 @@ export function FeasibilityReport({
         <SH>12. Detailed Cost Estimation Breakdown</SH>
         {cb ? (
           (() => {
-            const simRatio10 = sim ? simCostP10 / totalCost : 0.95;
-            const simRatio90 = sim ? simCostP90 / totalCost : 1.05;
+            const simRatio10 = sim ? sim.cost_p10 / totalCost : 0.95;
+            const simRatio90 = sim ? sim.cost_p90 / totalCost : 1.05;
             return (
               <>
                 <div className="grid grid-cols-2 gap-4 text-[9px] mb-4">
@@ -3503,7 +3481,7 @@ export function FeasibilityReport({
                         <tr>
                           <TH>Component</TH>
                           <TH>Area/Qty</TH>
-                          <TH>Est. Range ({curr} {cr})</TH>
+                          <TH>Est. Range (₹ Cr)</TH>
                         </tr>
                       </thead>
                       <tbody>
@@ -3513,11 +3491,11 @@ export function FeasibilityReport({
                           <TD>
                             {crore(
                               (cb.structure + cb.finishing) * 0.75 * simRatio10,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            ).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
                             {crore(
                               (cb.structure + cb.finishing) * 0.75 * simRatio90,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}
+                            ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
@@ -3526,11 +3504,11 @@ export function FeasibilityReport({
                           <TD>
                             {crore(
                               (cb.structure + cb.finishing) * 0.15 * simRatio10,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            ).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
                             {crore(
                               (cb.structure + cb.finishing) * 0.15 * simRatio90,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}
+                            ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
@@ -3539,11 +3517,11 @@ export function FeasibilityReport({
                           <TD>
                             {crore(
                               (cb.structure + cb.finishing) * 0.08 * simRatio10,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            ).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
                             {crore(
                               (cb.structure + cb.finishing) * 0.08 * simRatio90,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}
+                            ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
@@ -3552,11 +3530,11 @@ export function FeasibilityReport({
                           <TD>
                             {crore(
                               (cb.structure + cb.finishing) * 0.02 * simRatio10,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            ).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
                             {crore(
                               (cb.structure + cb.finishing) * 0.02 * simRatio90,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}
+                            ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr className="bg-slate-50 font-semibold">
@@ -3564,11 +3542,11 @@ export function FeasibilityReport({
                           <TD>
                             {crore(
                               (cb.structure + cb.finishing) * simRatio10,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            ).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
                             {crore(
                               (cb.structure + cb.finishing) * simRatio90,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}
+                            ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                       </tbody>
@@ -3582,7 +3560,7 @@ export function FeasibilityReport({
                         <tr>
                           <TH>Component</TH>
                           <TH>Area</TH>
-                          <TH>Est. Range ({curr} {cr})</TH>
+                          <TH>Est. Range (₹ Cr)</TH>
                         </tr>
                       </thead>
                       <tbody>
@@ -3592,20 +3570,26 @@ export function FeasibilityReport({
                           <TD>
                             {crore(
                               (cb.earthwork + cb.structure * 0.2) * simRatio10,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            ).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
                             {crore(
                               (cb.earthwork + cb.structure * 0.2) * simRatio90,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}
+                            ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
                           <TD>Foundation (Raft)</TD>
                           <TD>{fmt(plotArea * 0.25)} sqm</TD>
                           <TD>
-                            {crore(cb.earthwork * 0.5 * simRatio10).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(cb.earthwork * 0.5 * simRatio10).replace(
+                              /₹ | Cr/g,
+                              "",
+                            )}{" "}
                             –{" "}
-                            {crore(cb.earthwork * 0.5 * simRatio90).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(cb.earthwork * 0.5 * simRatio90).replace(
+                              /₹ | Cr/g,
+                              "",
+                            )}
                           </TD>
                         </tr>
                         <tr className="bg-slate-50 font-semibold">
@@ -3616,14 +3600,14 @@ export function FeasibilityReport({
                                 cb.structure * 0.2 +
                                 cb.earthwork * 0.5) *
                                 simRatio10,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            ).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
                             {crore(
                               (cb.earthwork +
                                 cb.structure * 0.2 +
                                 cb.earthwork * 0.5) *
                                 simRatio90,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}
+                            ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                       </tbody>
@@ -3637,7 +3621,7 @@ export function FeasibilityReport({
                         <tr>
                           <TH>Component</TH>
                           <TH>Area/Qty</TH>
-                          <TH>Est. Range ({curr} {cr})</TH>
+                          <TH>Est. Range (₹ Cr)</TH>
                         </tr>
                       </thead>
                       <tbody>
@@ -3645,36 +3629,36 @@ export function FeasibilityReport({
                           <TD>Landscaping (hard+soft)</TD>
                           <TD>{fmt(landscapeArea)} sqm</TD>
                           <TD>
-                            {crore(landscapeArea * 6000).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(landscapeArea * 6000).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
-                            {crore(landscapeArea * 8000).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(landscapeArea * 8000).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
                           <TD>Surface Parking</TD>
                           <TD>{fmt(surfaceParkingArea)} sqm</TD>
                           <TD>
-                            {crore(surfaceParkingArea * 5000).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(surfaceParkingArea * 5000).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
-                            {crore(surfaceParkingArea * 10000).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(surfaceParkingArea * 10000).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
                           <TD>Boundary wall</TD>
                           <TD>{fmt(plotPerimeter)} LM</TD>
                           <TD>
-                            {crore(plotPerimeter * 9000).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(plotPerimeter * 9000).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
-                            {crore(plotPerimeter * 12000).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(plotPerimeter * 12000).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
                           <TD>Roads & paving</TD>
                           <TD>{fmt(roadArea)} sqm</TD>
                           <TD>
-                            {crore(roadArea * 5000).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(roadArea * 5000).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
-                            {crore(roadArea * 10000).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(roadArea * 10000).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         {(() => {
@@ -3684,9 +3668,9 @@ export function FeasibilityReport({
                             <tr className="bg-slate-50 font-semibold">
                               <TD colSpan={2}>Sub-total (External)</TD>
                               <TD>
-                                {crore(extMin).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                                {crore(extMin).replace(/₹ | Cr/g, "")}{" "}
                                 –{" "}
-                                {crore(extMax).replace(/₹ |\$ | Cr| M/g, "")}
+                                {crore(extMax).replace(/₹ | Cr/g, "")}
                               </TD>
                             </tr>
                           );
@@ -3703,7 +3687,7 @@ export function FeasibilityReport({
                         <tr>
                           <TH>System</TH>
                           <TH>Specification</TH>
-                          <TH>Est. Range ({curr} {cr})</TH>
+                          <TH>Est. Range (₹ Cr)</TH>
                         </tr>
                       </thead>
                       <tbody>
@@ -3713,8 +3697,8 @@ export function FeasibilityReport({
                             <TD>{u.unit}</TD>
                             <TD>
                               {u.minAmount && u.maxAmount
-                                ? `${crore(u.minAmount).replace(/₹ |\$ | Cr| M/g, "")} – ${crore(u.maxAmount).replace(/₹ |\$ | Cr| M/g, "")}`
-                                : crore(u.amount).replace(/₹ |\$ | Cr| M/g, "")}
+                                ? `${crore(u.minAmount).replace(/₹ | Cr/g, "")} – ${crore(u.maxAmount).replace(/₹ | Cr/g, "")}`
+                                : crore(u.amount).replace(/₹ | Cr/g, "")}
                             </TD>
                           </tr>
                         ))}
@@ -3729,9 +3713,9 @@ export function FeasibilityReport({
                           <TD colSpan={2}>Sub-total (Services)</TD>
                           <TD>
                             {estimates?.simulation?.total_utility_cost_min && estimates?.simulation?.total_utility_cost_max
-                              ? `${crore(estimates.simulation.total_utility_cost_min).replace(/₹ |\$ | Cr| M/g, "")} – ${crore(estimates.simulation.total_utility_cost_max).replace(/₹ |\$ | Cr| M/g, "")}`
+                              ? `${crore(estimates.simulation.total_utility_cost_min).replace(/₹ | Cr/g, "")} – ${crore(estimates.simulation.total_utility_cost_max).replace(/₹ | Cr/g, "")}`
                               : estimates?.simulation?.total_utility_cost 
-                                ? crore(estimates.simulation.total_utility_cost).replace(/₹ |\$ | Cr| M/g, "") 
+                                ? crore(estimates.simulation.total_utility_cost).replace(/₹ | Cr/g, "") 
                                 : "-"}
                           </TD>
                         </tr>
@@ -3746,7 +3730,7 @@ export function FeasibilityReport({
                         <tr>
                           <TH>Item</TH>
                           <TH>Specification</TH>
-                          <TH>Est. Range ({curr} {cr})</TH>
+                          <TH>Est. Range (₹ Cr)</TH>
                         </tr>
                       </thead>
                       <tbody>
@@ -3754,27 +3738,27 @@ export function FeasibilityReport({
                           <TD>Gym equipment</TD>
                           <TD>Lumpsum</TD>
                           <TD>
-                            {crore(1200000 * simRatio10).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(1200000 * simRatio10).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
-                            {crore(1200000 * simRatio90).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(1200000 * simRatio90).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
                           <TD>Pool equipment</TD>
                           <TD>Lumpsum</TD>
                           <TD>
-                            {crore(800000 * simRatio10).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(800000 * simRatio10).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
-                            {crore(800000 * simRatio90).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(800000 * simRatio90).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
                           <TD>Play & Furniture</TD>
                           <TD>Lumpsum</TD>
                           <TD>
-                            {crore(2000000 * simRatio10).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(2000000 * simRatio10).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
-                            {crore(2000000 * simRatio90).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(2000000 * simRatio90).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr className="bg-slate-50 font-semibold">
@@ -3782,11 +3766,11 @@ export function FeasibilityReport({
                           <TD>
                             {crore(
                               (1200000 + 800000 + 2000000) * simRatio10,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            ).replace(/₹ | Cr/g, "")}{" "}
                             –{" "}
                             {crore(
                               (1200000 + 800000 + 2000000) * simRatio90,
-                            ).replace(/₹ |\$ | Cr| M/g, "")}
+                            ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                       </tbody>
@@ -3801,7 +3785,7 @@ export function FeasibilityReport({
                           <TH>Component</TH>
                           <TH>
                             <div className="text-right">
-                              Projected Range ({curr} {cr})
+                              Projected Range (₹ Cr)
                             </div>
                           </TH>
                         </tr>
@@ -3811,16 +3795,22 @@ export function FeasibilityReport({
                           <TD>Construction Cost (Dynamic)</TD>
                           <TD className="text-right">
                             {sim
-                              ? `${crore(simCostP10).replace(/₹ |\$ | Cr| M/g, "")} – ${crore(simCostP90).replace(/₹ |\$ | Cr| M/g, "")}`
-                              : crore(totalCost).replace(/₹ |\$ | Cr| M/g, "")}
+                              ? `${crore(sim.cost_p10).replace(/₹ | Cr/g, "")} – ${crore(sim.cost_p90).replace(/₹ | Cr/g, "")}`
+                              : crore(totalCost).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
                           <TD>Soft Costs (~15%)</TD>
                           <TD className="text-right">
-                            {crore(totalCost * 0.15 * simRatio10).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(totalCost * 0.15 * simRatio10).replace(
+                              /₹ | Cr/g,
+                              "",
+                            )}{" "}
                             –{" "}
-                            {crore(totalCost * 0.15 * simRatio90).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(totalCost * 0.15 * simRatio90).replace(
+                              /₹ | Cr/g,
+                              "",
+                            )}
                           </TD>
                         </tr>
                         <tr>
@@ -3831,15 +3821,21 @@ export function FeasibilityReport({
                               : "(Estimated)"}
                           </TD>
                           <TD className="text-right">
-                            {crore(actualLandCost).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(actualLandCost).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
                           <TD>Contingency (2%)</TD>
                           <TD className="text-right">
-                            {crore(totalCost * 0.02 * simRatio10).replace(/₹ |\$ | Cr| M/g, "")}{" "}
+                            {crore(totalCost * 0.02 * simRatio10).replace(
+                              /₹ | Cr/g,
+                              "",
+                            )}{" "}
                             –{" "}
-                            {crore(totalCost * 0.02 * simRatio90).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(totalCost * 0.02 * simRatio90).replace(
+                              /₹ | Cr/g,
+                              "",
+                            )}
                           </TD>
                         </tr>
                         <tr className="bg-slate-800 text-white font-bold">
@@ -3848,10 +3844,10 @@ export function FeasibilityReport({
                           </TD>
                           <TD className="text-right text-white font-bold">
                             {sim
-                              ? `${crore(simCostP10 + totalCost * 0.15 * simRatio10 + actualLandCost + totalCost * 0.02 * simRatio10).replace(/₹ |\$ | Cr| M/g, "")} – ${crore(simCostP90 + totalCost * 0.15 * simRatio90 + actualLandCost + totalCost * 0.02 * simRatio90).replace(/₹ |\$ | Cr| M/g, "")}`
+                              ? `${crore(sim.cost_p10 + totalCost * 0.15 * simRatio10 + actualLandCost + totalCost * 0.02 * simRatio10).replace(/₹ | Cr/g, "")} – ${crore(sim.cost_p90 + totalCost * 0.15 * simRatio90 + actualLandCost + totalCost * 0.02 * simRatio90).replace(/₹ | Cr/g, "")}`
                               : crore(
                                   totalCost * 1.17 + actualLandCost,
-                                ).replace(/₹ |\$ | Cr| M/g, "")}
+                                ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                       </tbody>
@@ -3864,7 +3860,7 @@ export function FeasibilityReport({
                   <div>
                     <ul className="list-disc pl-4 space-y-0.5 mb-2">
                       <li>
-                        <strong>Target Price:</strong> {curr}
+                        <strong>Target Price:</strong> ₹
                         {(() => {
                           const ratePerSqm = estimates?.market_rate_per_sqm;
                           if (ratePerSqm) return fmt(Math.round(ratePerSqm / 10.764));
@@ -3893,7 +3889,7 @@ export function FeasibilityReport({
                               totalRev || (estimates?.market_rate_per_sqm
                                 ? totalCarpet * estimates.market_rate_per_sqm
                                 : totalCarpet * 11000 * 10.764),
-                            ).replace(/₹ |\$ | Cr| M/g, "")}
+                            ).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         <tr>
@@ -3902,8 +3898,8 @@ export function FeasibilityReport({
                           </TD>
                           <TD className="text-right">
                             {sim
-                              ? `${crore(simCostP10 + actualLandCost).replace(/₹ |\$ | Cr| M/g, "")} – ${crore(simCostP90 + actualLandCost).replace(/₹ |\$ | Cr| M/g, "")}`
-                              : crore(totalCost * 1.17 + actualLandCost).replace(/₹ |\$ | Cr| M/g, "")}
+                              ? `${crore(sim.cost_p10 + actualLandCost).replace(/₹ | Cr/g, "")} – ${crore(sim.cost_p90 + actualLandCost).replace(/₹ | Cr/g, "")}`
+                              : crore(totalCost * 1.17 + actualLandCost).replace(/₹ | Cr/g, "")}
                           </TD>
                         </tr>
                         {(() => {
@@ -3911,8 +3907,8 @@ export function FeasibilityReport({
                             ? totalCarpet * estimates.market_rate_per_sqm
                             : totalCarpet * 11000 * 10.764);
                           // Match dashboard: totalCostWithLand = sim.cost + landCostWithStamp (actualLandCost)
-                          const bestCost  = sim ? simCostP10 + actualLandCost : totalCost * 1.17 + actualLandCost;
-                          const worstCost = sim ? simCostP90 + actualLandCost : totalCost * 1.17 + actualLandCost;
+                          const bestCost  = sim ? sim.cost_p10 + actualLandCost : totalCost * 1.17 + actualLandCost;
+                          const worstCost = sim ? sim.cost_p90 + actualLandCost : totalCost * 1.17 + actualLandCost;
                           const profitBest  = baseRev - bestCost;
                           const profitWorst = baseRev - worstCost;
                           const roiBest  = bestCost  > 0 ? (profitBest  / bestCost)  * 100 : 0;
@@ -3923,8 +3919,8 @@ export function FeasibilityReport({
                                 <TD className="font-bold">Gross Profit Range</TD>
                                 <TD className={`font-bold text-right ${profitWorst < 0 ? "text-red-600" : "text-green-700"}`}>
                                   {sim
-                                    ? `${crore(profitWorst).replace(/₹ |\$ | Cr| M/g, "")} – ${crore(profitBest).replace(/₹ |\$ | Cr| M/g, "")}`
-                                    : crore(profitBest).replace(/₹ |\$ | Cr| M/g, "")}
+                                    ? `${crore(profitWorst).replace(/₹ | Cr/g, "")} – ${crore(profitBest).replace(/₹ | Cr/g, "")}`
+                                    : crore(profitBest).replace(/₹ | Cr/g, "")}
                                 </TD>
                               </tr>
                               <tr className="font-bold bg-blue-50">
@@ -3982,7 +3978,7 @@ export function FeasibilityReport({
                                 {pct >= 0 ? "+" : ""}
                                 {pct}%
                                 {pct === 0
-                                  ? ` (${curr}${fmt(basePricePerSqft)})`
+                                  ? ` (₹${fmt(basePricePerSqft)})`
                                   : ""}
                               </TD>
                               <TD>{crore(adjRev)}</TD>
@@ -4004,7 +4000,7 @@ export function FeasibilityReport({
                       </tbody>
                     </table>
                     <div className="mt-2 text-[8px] italic text-slate-500 text-right">
-                      Break-even Price: {curr}
+                      Break-even Price: ₹
                       {fmt(
                         (totalCost * 1.17 + actualLandCost) /
                           (totalCarpet * 10.764),
@@ -4053,7 +4049,7 @@ export function FeasibilityReport({
                 {
                   label: "Project Cost (P10–P90)",
                   value: sim
-                    ? `${crore(simCostP10).replace(/₹ |\$ | Cr| M/g, "")} – ${crore(simCostP90).replace(/₹ |\$ | Cr| M/g, "")} ${cr}`
+                    ? `${crore(sim.cost_p10).replace(/₹ | Cr/g, "")} – ${crore(sim.cost_p90).replace(/₹ | Cr/g, "")} Cr`
                     : crore(totalCost),
                   sub: "Simulation Range",
                   color: "bg-slate-800",
@@ -4067,9 +4063,9 @@ export function FeasibilityReport({
                 {
                   label: "Profit (P10–P90)",
                   value: sim
-                    ? `${crore(totalRev - simCostP90).replace(/₹ |\$ | Cr| M/g, "")} – ${crore(totalRev - simCostP10).replace(/₹ |\$ | Cr| M/g, "")} ${cr}`
+                    ? `${crore(totalRev - sim.cost_p90).replace(/₹ | Cr/g, "")} – ${crore(totalRev - sim.cost_p10).replace(/₹ | Cr/g, "")} Cr`
                     : crore(profit),
-                  sub: `ROI: ${sim ? (((totalRev - simCostP90) / simCostP90) * 100).toFixed(1) : roi.toFixed(1)}% – ${sim ? (((totalRev - simCostP10) / simCostP10) * 100).toFixed(1) : roi.toFixed(1)}%`,
+                  sub: `ROI: ${sim ? (((totalRev - sim.cost_p90) / sim.cost_p90) * 100).toFixed(1) : roi.toFixed(1)}% – ${sim ? (((totalRev - sim.cost_p10) / sim.cost_p10) * 100).toFixed(1) : roi.toFixed(1)}%`,
                   color: "bg-green-800",
                 },
                 {
@@ -4100,7 +4096,7 @@ export function FeasibilityReport({
                     <tr>
                       <TH>Component</TH>
                       <TH className="text-right">
-                        Amount Range (P10–P90) {curr} {cr}
+                        Amount Range (P10–P90) ₹ Cr
                       </TH>
                       <TH className="text-right">% of Total</TH>
                     </tr>
@@ -4129,10 +4125,10 @@ export function FeasibilityReport({
                       },
                     ].map((row, i) => {
                       const p10 = sim
-                        ? simCostP10 * row.ratio
+                        ? sim.cost_p10 * row.ratio
                         : totalCost * row.ratio * 0.95;
                       const p90 = sim
-                        ? simCostP90 * row.ratio
+                        ? sim.cost_p90 * row.ratio
                         : totalCost * row.ratio * 1.05;
                       return (
                         <tr
@@ -4141,8 +4137,8 @@ export function FeasibilityReport({
                         >
                           <TD>{row.label}</TD>
                           <TD className="text-right font-mono text-slate-600">
-                            {crore(p10).replace(/₹ |\$ | Cr| M/g, "")} –{" "}
-                            {crore(p90).replace(/₹ |\$ | Cr| M/g, "")}
+                            {crore(p10).replace(/₹ | Cr/g, "")} –{" "}
+                            {crore(p90).replace(/₹ | Cr/g, "")}
                           </TD>
                           <TD className="text-right">
                             {(row.ratio * 100).toFixed(1)}%
@@ -4154,7 +4150,7 @@ export function FeasibilityReport({
                       <TD className="font-bold text-white">Total Cost Range</TD>
                       <TD className="font-bold text-white text-right font-mono">
                         {sim
-                          ? `${crore(simCostP10).replace(/₹ |\$ | Cr| M/g, "")} – ${crore(simCostP90).replace(/₹ |\$ | Cr| M/g, "")}`
+                          ? `${crore(sim.cost_p10).replace(/₹ | Cr/g, "")} – ${crore(sim.cost_p90).replace(/₹ | Cr/g, "")}`
                           : crore(totalCost)}
                       </TD>
                       <TD className="font-bold text-white text-right">100%</TD>
@@ -4259,7 +4255,7 @@ export function FeasibilityReport({
                       <TH>Floors</TH>
                       <TH>GFA (sqm)</TH>
                       <TH>Rate/sqm</TH>
-                      <TH>Tower Cost ({curr} {cr})</TH>
+                      <TH>Tower Cost (₹ Cr)</TH>
                       <TH>Utility Cost</TH>
                       <TH>Duration</TH>
                       <TH>Structure</TH>
@@ -4666,8 +4662,8 @@ export function FeasibilityReport({
                 <tr>
                   <TH>Category</TH>
                   <TH>Quantity</TH>
-                  <TH>Rate ({curr}/day)</TH>
-                  <TH>Monthly Cost ({curr} {isUSD ? 'K' : 'L'})</TH>
+                  <TH>Rate (₹/day)</TH>
+                  <TH>Monthly Cost (₹ L)</TH>
                 </tr>
               </thead>
               <tbody>
@@ -4782,9 +4778,9 @@ export function FeasibilityReport({
                 <tr>
                   <TH>Equipment</TH>
                   <TH>Qty</TH>
-                  <TH>Monthly ({curr})</TH>
+                  <TH>Monthly (₹)</TH>
                   <TH>Dur (mo)</TH>
-                  <TH>Total ({curr} {isUSD ? 'K' : 'L'})</TH>
+                  <TH>Total (₹ L)</TH>
                 </tr>
               </thead>
               <tbody>
@@ -5044,7 +5040,7 @@ export function FeasibilityReport({
                     <thead>
                       <tr>
                         <TH>Component</TH>
-                        <TH className="text-right">Amount ({curr} {cr})</TH>
+                        <TH className="text-right">Amount (₹ Cr)</TH>
                         <TH className="text-right">%</TH>
                       </tr>
                     </thead>
@@ -5073,7 +5069,7 @@ export function FeasibilityReport({
                                 {c as string}
                               </TD>
                               <TD className="text-right">
-                                {crore(a as number).replace(/₹ |\$ | Cr| M/g, "")}
+                                {crore(a as number).replace(/₹ | Cr/g, "")}
                               </TD>
                               <TD className="text-right">
                                 {(p as number).toFixed(1)}%
@@ -5084,7 +5080,7 @@ export function FeasibilityReport({
                       <tr className="bg-slate-800 text-white font-bold">
                         <TD className="font-bold text-white">Total</TD>
                         <TD className="font-bold text-white text-right">
-                          {cb ? crore(totalCapReq).replace(/₹ |\$ | Cr| M/g, "") : "—"}
+                          {cb ? crore(totalCapReq).replace(/₹ | Cr/g, "") : "—"}
                         </TD>
                         <TD className="font-bold text-white text-right">
                           100%
@@ -5117,7 +5113,7 @@ export function FeasibilityReport({
                     <thead>
                       <tr>
                         <TH>Source</TH>
-                        <TH className="text-right">{curr} {cr}</TH>
+                        <TH className="text-right">₹ Cr</TH>
                         <TH>Rate</TH>
                         <TH>Remarks</TH>
                       </tr>
@@ -5128,7 +5124,7 @@ export function FeasibilityReport({
                           Equity (40%)
                         </TD>
                         <TD className="text-right">
-                          {crore(eqCost).replace(/₹ |\$ | Cr| M/g, "")}
+                          {crore(eqCost).replace(/₹ | Cr/g, "")}
                         </TD>
                         <TD>—</TD>
                         <TD>Promoter + investors</TD>
@@ -5138,7 +5134,7 @@ export function FeasibilityReport({
                           Debt ({((debtCost / totalCapReq) * 100).toFixed(0)}%)
                         </TD>
                         <TD className="text-right">
-                          {crore(debtCost).replace(/₹ |\$ | Cr| M/g, "")}
+                          {crore(debtCost).replace(/₹ | Cr/g, "")}
                         </TD>
                         <TD>{interestRateText}</TD>
                         <TD>Bank/NBFC loan</TD>
@@ -5148,7 +5144,7 @@ export function FeasibilityReport({
                           Advances (14%)
                         </TD>
                         <TD className="text-right">
-                          {crore(advCost).replace(/₹ |\$ | Cr| M/g, "")}
+                          {crore(advCost).replace(/₹ | Cr/g, "")}
                         </TD>
                         <TD>—</TD>
                         <TD>Pre-launch bookings</TD>
@@ -5156,7 +5152,7 @@ export function FeasibilityReport({
                       <tr className="bg-slate-800 text-white font-bold">
                         <TD className="font-bold text-white">Total</TD>
                         <TD className="font-bold text-white text-right">
-                          {crore(totalCapReq).replace(/₹ |\$ | Cr| M/g, "")}
+                          {crore(totalCapReq).replace(/₹ | Cr/g, "")}
                         </TD>
                         <TD colSpan={2}>&nbsp;</TD>
                       </tr>
@@ -5212,7 +5208,7 @@ export function FeasibilityReport({
                     <TH>Quarter</TH>
                     <TH>Units Sold</TH>
                     <TH>% of Total</TH>
-                    <TH className="text-right">Sales Value ({curr} {cr})</TH>
+                    <TH className="text-right">Sales Value (₹ Cr)</TH>
                     <TH className="text-right">Collections (80%)</TH>
                   </tr>
                 </thead>
@@ -5256,7 +5252,7 @@ export function FeasibilityReport({
                 </tbody>
               </table>
               <p className="text-[8px] text-slate-500 italic mb-3">
-                * Balance on possession: ~{curr}{(revCr * 0.2).toFixed(1)} Cr (20% at
+                * Balance on possession: ~₹{(revCr * 0.2).toFixed(1)} Cr (20% at
                 handover)
               </p>
 
@@ -5266,7 +5262,7 @@ export function FeasibilityReport({
                   <thead>
                     <tr>
                       <TH>Particulars</TH>
-                      <TH className="text-right">{curr} {unitLabel}</TH>
+                      <TH className="text-right">₹ Crores</TH>
                     </tr>
                   </thead>
                   <tbody>
@@ -5291,31 +5287,31 @@ export function FeasibilityReport({
                     <tr>
                       <TD>Land</TD>
                       <TD className="text-right">
-                        {crore(landCost).replace(/₹ |\$ | Cr| M/g, "")}
+                        {crore(landCost).replace(/₹ | Cr/g, "")}
                       </TD>
                     </tr>
                     <tr>
                       <TD>Construction</TD>
                       <TD className="text-right">
-                        {crore(constructionCost).replace(/₹ |\$ | Cr| M/g, "")}
+                        {crore(constructionCost).replace(/₹ | Cr/g, "")}
                       </TD>
                     </tr>
                     <tr>
                       <TD>Soft Costs</TD>
                       <TD className="text-right">
-                        {crore(softCosts).replace(/₹ |\$ | Cr| M/g, "")}
+                        {crore(softCosts).replace(/₹ | Cr/g, "")}
                       </TD>
                     </tr>
                     <tr>
                       <TD>Contingency</TD>
                       <TD className="text-right">
-                        {crore(contingency).replace(/₹ |\$ | Cr| M/g, "")}
+                        {crore(contingency).replace(/₹ | Cr/g, "")}
                       </TD>
                     </tr>
                     <tr className="font-semibold bg-slate-50">
                       <TD>Total Cost</TD>
                       <TD className="text-right">
-                        {crore(totalCapReq).replace(/₹ |\$ | Cr| M/g, "")}
+                        {crore(totalCapReq).replace(/₹ | Cr/g, "")}
                       </TD>
                     </tr>
                     <tr className="font-bold text-green-700">
@@ -5340,7 +5336,7 @@ export function FeasibilityReport({
                   <thead>
                     <tr>
                       <TH>Particulars</TH>
-                      <TH className="text-right">{curr} {unitLabel}</TH>
+                      <TH className="text-right">₹ Crores</TH>
                     </tr>
                   </thead>
                   <tbody>
@@ -5430,8 +5426,8 @@ export function FeasibilityReport({
           <thead>
             <tr>
               <TH>Price Change</TH>
-              <TH>Revenue ({curr} {cr})</TH>
-              <TH>PAT ({curr} {cr})</TH>
+              <TH>Revenue (₹ Cr)</TH>
+              <TH>PAT (₹ Cr)</TH>
               <TH>PAT Margin</TH>
               <TH>ROE</TH>
             </tr>
@@ -5488,7 +5484,7 @@ export function FeasibilityReport({
           </tbody>
         </table>
         <p className="text-[8px] text-slate-500 italic mb-4">
-          Break-even Price: {curr}
+          Break-even Price: ₹
           {fmt((totalCost * 1.17 + actualLandCost) / (totalCarpet * 10.764))}
           /sq.ft carpet
         </p>
@@ -5498,8 +5494,8 @@ export function FeasibilityReport({
           <thead>
             <tr>
               <TH>Cost Change</TH>
-              <TH>Total Cost ({curr} {cr})</TH>
-              <TH>PAT ({curr} {cr})</TH>
+              <TH>Total Cost (₹ Cr)</TH>
+              <TH>PAT (₹ Cr)</TH>
               <TH>PAT Margin</TH>
               <TH>ROE</TH>
             </tr>
@@ -5556,7 +5552,7 @@ export function FeasibilityReport({
               <li>Site plan (1:500) + Building plans (1:100) — 3 copies</li>
               <li>Structural drawings + BR-V(A2) safety certificate</li>
               <li>Drainage & zoning compliance certificate</li>
-              <li>Scrutiny fee ({curr}10/sq.m of covered area)</li>
+              <li>Scrutiny fee (₹10/sq.m of covered area)</li>
             </ul>
             <p className="mt-1 text-[8px]">
               <strong>Timeline:</strong> 20 days &nbsp;|&nbsp;{" "}
@@ -5602,7 +5598,7 @@ export function FeasibilityReport({
             </ul>
             <p className="mt-1 text-[8px]">
               <strong>Timeline:</strong> 30 days &nbsp;|&nbsp;{" "}
-              <strong>Fee:</strong> {curr}5L + {curr}5/sq.m carpet
+              <strong>Fee:</strong> ₹5L + ₹5/sq.m carpet
             </p>
 
             <strong className="block text-slate-700 mb-1 border-b pb-1">
@@ -5628,7 +5624,7 @@ export function FeasibilityReport({
               Electricity (UHBVN/DHBVN) | Water (MC/HUDA)
             </p>
             <ul className="list-disc pl-3 space-y-[1px] text-slate-600">
-              <li>100 kW Construction load (30-45 days, ~{curr}5L cost)</li>
+              <li>100 kW Construction load (30-45 days, ~₹5L cost)</li>
               <li>Temporary water tanker setup (15-30 days)</li>
             </ul>
 
@@ -6520,7 +6516,7 @@ export function FeasibilityReport({
 
                   return [
                     ...(hasSolar
-                      ? [["Solar Power", `${solarKW} kWp (rooftop, ${roofAreaCalc} m² roof)`, `${curr}${Math.round(solarKW * 0.8)}K/year savings`]]
+                      ? [["Solar Power", `${solarKW} kWp (rooftop, ${roofAreaCalc} m² roof)`, `₹${Math.round(solarKW * 0.8)}K/year savings`]]
                       : [["Solar Power", "Not yet configured", "Recommend addition"]]),
                     ["ECBC Compliance", "Insulation, double glazing, shading", "~29% energy reduction"],
                     ...(hasSTP
@@ -6529,7 +6525,7 @@ export function FeasibilityReport({
                     ...(hasRWH
                       ? [["Rainwater Harvesting", `${towers * 2} bores, 20,000L tank`, `${fmt(rwhM3)} cu.m/year recharge`]]
                       : [["Rainwater Harvesting", "Not yet configured", "Recommend addition"]]),
-                    ["LED Lighting", "100% common areas", "{curr}1.2L/year savings"],
+                    ["LED Lighting", "100% common areas", "₹1.2L/year savings"],
                   ];
                 })().map(([f, s, b], i) => (
                   <tr key={i} className={i % 2 === 0 ? "bg-slate-50" : ""}>

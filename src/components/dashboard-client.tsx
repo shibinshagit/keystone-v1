@@ -5,7 +5,7 @@ import { useBuildingStore } from '@/hooks/use-building-store';
 import { useEffect, useState } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './ui/card';
-import { Building2, Map, Plus, Trash2 } from 'lucide-react';
+import { Building2, Plus, Trash2 } from 'lucide-react';
 import { CreateProjectDialog } from './create-project-dialog';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -97,12 +97,6 @@ export function DashboardClient() {
             <h1 className="text-2xl font-headline font-bold">Key Stone AI</h1>
           </div>
           <div className="flex items-center gap-4">
-            <Button variant="outline" asChild>
-              <Link href="/evaluate-land">
-                <Map className="mr-2 h-4 w-4" />
-                Evaluate Land
-              </Link>
-            </Button>
             <CreateProjectDialog>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
@@ -143,20 +137,12 @@ export function DashboardClient() {
         {projects.length === 0 ? (
           <div className="text-center py-16 border-2 border-dashed border-border rounded-lg">
             <p className="text-muted-foreground mb-4">You have no projects yet.</p>
-            <div className="flex items-center justify-center gap-3">
-              <Button variant="outline" asChild>
-                <Link href="/evaluate-land">
-                  <Map className="mr-2 h-4 w-4" />
-                  Evaluate Land First
-                </Link>
+            <CreateProjectDialog>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Your First Project
               </Button>
-              <CreateProjectDialog>
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create Your First Project
-                </Button>
-              </CreateProjectDialog>
-            </div>
+            </CreateProjectDialog>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -183,7 +169,7 @@ export function DashboardClient() {
                         </p>
                       </CardContent>
                     </div>
-                    <div className="h-10" /> {/* Spacer for the absolute delete button */}
+                    <div className="h-10" />
                   </Card>
                 </Link>
 

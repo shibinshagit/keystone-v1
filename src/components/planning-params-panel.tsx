@@ -31,7 +31,6 @@ export function PlanningParamsPanel() {
     const [isSaving, setIsSaving] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
 
-    // Form state
     const [formData, setFormData] = useState<Partial<PlanningParameter>>({
         category_name: '',
         building_type: 'Residential',
