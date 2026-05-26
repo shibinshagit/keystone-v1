@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
-import { RegulationData, RegulationFieldProvenance, RegulationSectionName, RegulationValue, Plot, REGULATION_SUB_GROUPS } from '@/lib/types';
+import { RegulationData, RegulationFieldProvenance, RegulationSectionName, RegulationValue, Plot, REGULATION_SUB_GROUPS, isConditionalRegulationPayload } from '@/lib/types';
 import { ScrollArea } from './ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
@@ -21,6 +21,23 @@ interface RegulationViewerModalProps {
 const renderValue = (value: any) => {
     if (value === null || value === undefined) return '-';
     if (typeof value === 'string' && value.trim().length === 0) return '-';
+    if (isConditionalRegulationPayload(value)) {
+        return (
+            <div className="space-y-2">
+                <Badge variant="secondary">{value.summary}</Badge>
+                <div className="text-xs text-muted-foreground space-y-1">
+                    {value.conditions.slice(0, 4).map((condition, index) => (
+                        <div key={index}>
+                            {condition.when}
+                            {condition.value !== undefined ? `: ${condition.value}` : ''}
+                            {condition.note ? ` - ${condition.note}` : ''}
+                        </div>
+                    ))}
+                    {value.conditions.length > 4 && <div>+{value.conditions.length - 4} more conditions</div>}
+                </div>
+            </div>
+        );
+    }
     if (typeof value === 'object' && value !== null) {
         return <Badge variant="secondary">{Object.entries(value).map(([k, v]) => `${k}: ${v}`).join(', ')}</Badge>;
     }
@@ -122,7 +139,7 @@ function RegulationCategory({
                                                     <div className="font-medium capitalize flex items-center gap-2 flex-wrap">
                                                         <span>{key.replace(/_/g, ' ')}</span>
                                                         {provenance?.status && (
-                                                            <Badge variant={provenance.status === 'missing' ? 'destructive' : provenance.status === 'inferred' ? 'secondary' : 'outline'}>
+                                                            <Badge variant={provenance.status === 'missing' ? 'destructive' : provenance.status === 'inferred' || provenance.status === 'partial' ? 'secondary' : 'outline'}>
                                                                 {provenance.status}
                                                             </Badge>
                                                         )}

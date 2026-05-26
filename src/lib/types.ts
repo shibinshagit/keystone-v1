@@ -776,7 +776,7 @@ export interface RegulationValue {
 
 export type RegulationProvider = 'gridics' | 'firestore' | 'national-fallback' | 'hybrid';
 export type RegulationSourceConfidence = 'explicit' | 'inferred' | 'partial';
-export type RegulationFieldStatus = 'explicit' | 'inferred' | 'missing' | 'override';
+export type RegulationFieldStatus = 'explicit' | 'inferred' | 'missing' | 'override' | 'partial';
 export type RegulationSectionName =
   | 'geometry'
   | 'highrise'
@@ -793,6 +793,19 @@ export interface RegulationFieldProvenance {
   basis?: string;
   rawField?: string | string[];
   assumption?: string;
+}
+
+export interface ConditionalRegulationCondition {
+  when: string;
+  value?: number | string;
+  note?: string;
+}
+
+export interface ConditionalRegulationPayload {
+  kind: 'conditional';
+  summary: string;
+  basis?: string;
+  conditions: ConditionalRegulationCondition[];
 }
 
 export type RegulationFieldProvenanceMap = Partial<Record<RegulationSectionName, Record<string, RegulationFieldProvenance>>>;
@@ -1524,3 +1537,12 @@ export const getPrimarySetback = (regulation?: RegulationData | null): number | 
 
     return undefined;
 };
+
+export const isConditionalRegulationPayload = (value: unknown): value is ConditionalRegulationPayload =>
+    Boolean(
+        value &&
+        typeof value === 'object' &&
+        (value as ConditionalRegulationPayload).kind === 'conditional' &&
+        typeof (value as ConditionalRegulationPayload).summary === 'string' &&
+        Array.isArray((value as ConditionalRegulationPayload).conditions)
+    );
