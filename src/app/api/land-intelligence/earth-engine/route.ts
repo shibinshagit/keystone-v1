@@ -13,10 +13,11 @@ export async function GET(request: NextRequest) {
   const location = searchParams.get('location') || 'Delhi';
 
   try {
-    const [satelliteData, landChange, ndviSeries] = await Promise.all([
+    const [satelliteData, landChange, ndviSeries, terrain] = await Promise.all([
       EarthEngineService.getUrbanGrowthIndex([lng, lat], location),
       EarthEngineService.getLandChangeDetection([lng, lat], 5, location),
       EarthEngineService.getNDVITimeSeries([lng, lat], 5, location),
+      EarthEngineService.getTerrainIntelligence([lng, lat], { location }),
     ]);
 
     return NextResponse.json({
@@ -25,6 +26,7 @@ export async function GET(request: NextRequest) {
       location,
       coordinates: { lat, lng },
       satellite: satelliteData,
+      terrain,
       landChange,
       ndviTimeSeries: ndviSeries,
     });

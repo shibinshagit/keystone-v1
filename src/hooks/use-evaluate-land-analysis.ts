@@ -10,7 +10,7 @@ import type { TransportationScreeningReport } from "@/lib/land-intelligence/tran
 import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import type { LandUseSummary } from "@/lib/land-intelligence/land-use";
 import { inferRegulationGeography } from "@/lib/geography";
-import { lookupRegulationForLocationAndUse } from "@/lib/regulation-lookup";
+import type { DubaiLandContextResult } from "@/services/uae/dubai-land-service";
 import type {
   BuildingIntendedUse,
   DevelopabilityScore,
@@ -19,11 +19,13 @@ import type {
   PopulationMigrationAnalysis,
   Plot,
   RegulationData,
+  TerrainIntelligenceData,
 } from "@/lib/types";
 
 interface ScoreResult {
   score: DevelopabilityScore;
   isUS?: boolean;
+  uaeMarketData?: DubaiLandContextResult | null;
   usMarketData?: {
     city: string;
     state: string;
@@ -35,8 +37,17 @@ interface ScoreResult {
     demandDensity: { population: number; medianIncome: number; tier: string };
     buyabilityScore: number | null;
     developmentProspect: string | null;
+    environmental?: {
+      floodZone?: {
+        zone: string;
+        zoneDescription: string;
+        isHighRisk: boolean;
+        panelNumber: string;
+      } | null;
+    } | null;
     parcel?: {
       parcelId: string;
+      source?: "realie" | "llm" | "fallback";
       lotAreaSqFt?: number;
       zoning?: {
         zoningCode: string;
@@ -63,6 +74,7 @@ interface ScoreResult {
     } | null;
     aiSummary?: string | null;
   } | null;
+  terrain: TerrainIntelligenceData | null;
   environmentalScreening: EnvironmentalScreeningReport | null;
   transportationScreening: TransportationScreeningReport | null;
   populationMigration: PopulationMigrationAnalysis | null;
@@ -97,8 +109,16 @@ interface ScoreResult {
     populationMigration: { count: number; available: boolean };
     fdi: { count: number; available: boolean };
     sez: { count: number; available: boolean };
+    dubaiLand?: {
+      count: number;
+      available: boolean;
+      source?: string;
+      integrationStatus?: string;
+    };
     usEconomy?: { available: boolean; source: string };
     usPermits?: { available: boolean; source: string };
+    usProperty?: { available: boolean; source: string };
+    terrain: { available: boolean; isMock: boolean; source?: string };
     satellite: { available: boolean; isMock: boolean };
     regulation: { available: boolean };
     googlePlaces: { count: number; available: boolean };
@@ -121,6 +141,7 @@ interface AnalysisTargetSnapshot {
 
 interface RegulationMatchSnapshot {
   source:
+    | "gridics"
     | "specific-id"
     | "generic-id"
     | "location-query"
@@ -134,6 +155,21 @@ interface BhuvanAnalysisResponse {
   report: LandUseSummary;
   error?: string;
 }
+
+const parsePriceRangeValueToUsd = (value: string): number => {
+  const numericValue = Number(value.replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return 0;
+
+  const normalizedValue = value.toLowerCase();
+  if (/\bcr\b|crore|crores/.test(normalizedValue)) {
+    return numericValue * 10000000;
+  }
+  if (/\bm\b|million|millions/.test(normalizedValue)) {
+    return numericValue * 1000000;
+  }
+
+  return numericValue;
+};
 
 export function useEvaluateLandAnalysis({
   selectedPlot,
@@ -254,7 +290,7 @@ export function useEvaluateLandAnalysis({
     // Build initial step list — US gets parcel step, non-US gets Bhuvan
     const baseSteps = [
       { id: 'market', label: isUS ? 'Fetching US market data' : 'Fetching census & FDI data', status: 'loading' as const },
-      { id: 'connectivity', label: 'Checking location & connectivity', status: 'pending' as const },
+      { id: 'connectivity', label: 'Checking location, connectivity & terrain', status: 'pending' as const },
       { id: 'legal', label: isUS ? 'Running legal & zoning checks' : 'Matching regulations & zoning', status: 'pending' as const },
       ...(isUS && (Boolean(plotForAnalysis) || Boolean(pointTarget))
         ? [{ id: 'parcel', label: 'Fetching parcel data', status: 'pending' as const }]
@@ -299,8 +335,8 @@ export function useEvaluateLandAnalysis({
             landSizeSqm: Number(values.landSize),
             intendedUse: values.intendedUse,
             parcelAware: Boolean(plotForAnalysis) || Boolean(pointTarget),
-            market: geography.market,
-            countryCode: geography.countryCode,
+            market: isUS ? "USA" : geography.market,
+            countryCode: isUS ? "US" : geography.countryCode,
           }),
         }).then(async (response) => {
           const payload = await response.json();
@@ -325,10 +361,21 @@ export function useEvaluateLandAnalysis({
           }
           return payload.report;
         }),
-        lookupRegulationForLocationAndUse({
-          location: values.location.trim(),
-          intendedUse: values.intendedUse,
-          market: geography.market,
+        fetch("/api/regulations/lookup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: values.location.trim(),
+            intendedUse: values.intendedUse,
+            market: geography.market,
+            coordinates: coords,
+          }),
+        }).then(async (response) => {
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload?.error || "Failed to fetch regulations.");
+          }
+          return payload;
         }),
       ]);
 
@@ -364,7 +411,7 @@ export function useEvaluateLandAnalysis({
           : null,
       );
 
-      if (!nextLandUse) {
+      if (!nextLandUse && !scoreData) {
         errors.push(
           bhuvanRes.status === "rejected"
             ? bhuvanRes.reason?.message || "Land use unavailable."
@@ -389,7 +436,7 @@ export function useEvaluateLandAnalysis({
         setBuildVerdict(null);
       }
 
-      setScoreError(errors.length > 0 ? errors.join(" ") : null);
+      setScoreError(scoreRes.status === "fulfilled" ? null : errors.length > 0 ? errors.join(" ") : null);
 
       // After score loads — fire AI summary separately (non-blocking)
       if (scoreRes.status === 'fulfilled' && isUS) {
@@ -433,19 +480,9 @@ export function useEvaluateLandAnalysis({
         } else {
           setIsSearchingParcels(true);
           const landSizeSqft = Number(values.landSize) * 10.7639;
-          const priceStr = values.priceRange || '';
-          const [minLakhs, maxLakhs] = priceStr.split('-').map(s => {
-            const numStr = s.replace(/[^0-9.]/g, '');
-            let num = Number(numStr);
-            if (s.toLowerCase().includes('cr')) num *= 100; // convert Cr to Lakhs
-            if (s.toLowerCase().includes('m')) num *= 10;   // convert Million to Lakhs (rough)
-            return num;
-          });
-          // Note: The US ArcGIS query will use `minValue` in USD, so we convert the "Lakhs" value.
-          // 1 Lakh INR is roughly 1,200 USD, but if they mean 1 Lakh USD, it's 100,000 USD.
-          // Let's assume the user means USD if they are looking in the US.
-          const minValue = (minLakhs || 0) * 100000;
-          const maxValue = (maxLakhs || 0) * 100000;
+          const [minValue, maxValue] = (values.priceRange || '')
+            .split('-')
+            .map(parsePriceRangeValueToUsd);
 
           fetch('/api/us/parcel-search', {
             method: 'POST',

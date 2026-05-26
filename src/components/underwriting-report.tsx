@@ -84,11 +84,13 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
     const parkReq = metrics?.parking?.required ?? Math.ceil(totalUnits * 1.5);
     const parkProv = metrics?.parking?.provided ?? 0;
 
-    const totalCost = estimates?.total_construction_cost ?? 0;
+    const constructionCostTotal = estimates?.total_construction_cost ?? 0;
+    const totalCost = estimates?.total_project_cost ?? constructionCostTotal;
     const totalRev = estimates?.total_revenue ?? 0;
     const profit = estimates?.potential_profit ?? 0;
     const roi = estimates?.roi_percentage ?? 0;
     const cb = estimates?.cost_breakdown;
+    const softCosts = estimates?.soft_cost_breakdown;
     const tl = estimates?.timeline;
     const sim = estimates?.simulation;
 
@@ -113,17 +115,16 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
     const boundaryMin = Math.round(uwBmin * uwPerimeter);
     const siteDev = roadMin + parkingMin + boundaryMin;
 
-    // Use simulated P50 if available, else fallback
-    const constructionAmt = sim ? (sim.cost_p50 + siteDev) : (cb ? (cb.structure + cb.finishing + cb.services + cb.earthwork * 0.2 + siteDev) : totalCost * 0.555);
+    const contingencyAmt = cb?.contingency || constructionCostTotal * 0.05;
+    // Use estimate construction subtotal excluding contingency so the contingency line stays separate below.
+    const constructionAmt = Math.max(0, constructionCostTotal - contingencyAmt) + siteDev;
     
     const professionalAmt = 19500000; // 1.95 Cr
     const approvalsAmt = 4500000; // 0.45 Cr
-    const marketingAmt = 34000000; // 3.4 Cr
+    const marketingAmt = softCosts?.marketing || 34000000;
     
     const targetInterestRate = uw.targetInterestRate ?? 10.0;
     const loanTenure = uw.loanTenureMonths || (sim ? Math.round(sim.time_p50) : (tl ? Math.round(tl.total_months) : 36));
-
-    const contingencyAmt = cb?.contingency || totalCost * 0.0465;
 
     // Fixed Soft Costs
     const fixedSoftCosts = professionalAmt + approvalsAmt + marketingAmt + contingencyAmt;
@@ -157,7 +158,7 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
     const loanPct = loanAmount / (loanAmount + equityAmount || 1);
 
     // Recalculate true grand total with precise finance Amt 
-    const financeAmt = loanAmount > 0 ? loanAmount * (targetInterestRate / 100) * (loanTenure / 12) : 48000000;
+    const financeAmt = softCosts?.finance || (loanAmount > 0 ? loanAmount * (targetInterestRate / 100) * (loanTenure / 12) : 48000000);
     
     // Final Fully Loaded Cost (Matches Dashboard P50 + Soft Costs)
     const trueGrandTotal = landTotal + constructionAmt + fixedSoftCosts + financeAmt;
@@ -835,6 +836,7 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                                     ['Civil & structural work', cb.structure, '', `${curr}${fmt(cb.structure / sqftArea)}/sq.ft × ${fmt(sqftArea)} sq.ft`],
                                     ['Finishing & interiors', cb.finishing, '', 'Premium specifications'],
                                     ['MEP / Services', cb.services, '', 'Elevators, fire safety, electrical'],
+                                    ['Closeout & commissioning', cb.closeout, '', 'Testing, punch list, handover'],
                                     ['External dev & landscaping', cb.earthwork * 0.2, '', 'Common areas, driveways'],
                                     ['Sub-total: Construction', constructionAmt, '', ''],
 
@@ -848,7 +850,7 @@ export function UnderwritingReport({ project, plot, metrics, estimates, generati
                                     ['Sub-total: Approvals', approvalsAmt, '', ''],
 
                                     ['5. MARKETING & SALES', '', '', ''],
-                                    ['Branding, marketing, comm.', marketingAmt, '', '@ ~3.5% of gross sales'],
+                                    ['Branding, marketing, comm.', marketingAmt, '', 'Admin-configured percentage of gross sales'],
                                     ['Sub-total: Marketing', marketingAmt, '', ''],
 
                                     ['6. FINANCING COSTS & CONTINGENCY', '', '', ''],

@@ -722,8 +722,8 @@ export class RegulationEngine {
             greenItems.push(this.createScoreItem(`${c.code} ${c.name}`, this.greenStandards ? 'pass' : 'warn', this.greenStandards ? 'Standard match' : 'Fallback credit', c.points, this.greenStandards ? 1 : 0));
         });
 
-        // ========== IFC / ADA (US) ==========
-        // Only score IFC/ADA items when the regulation includes accessibility data (US regulations)
+        // ========== IFC / Accessibility ==========
+        // Only score these items when the regulation includes accessibility data
         const accessibility = (this.regulations as any)?.accessibility;
         if (accessibility && typeof accessibility === 'object') {
             const hasLift = visibleBuildings.some((b: any) => b.cores?.some((c: any) => c.type === 'Lift'));
@@ -798,81 +798,84 @@ export class RegulationEngine {
                 ));
             }
 
-            // ADA: Elevator Access
+            const accessibilityPrefix = this.regulations?.market === 'USA' ? 'ADA' : 'Accessibility';
+            const accessibilityCodeRef = this.regulations?.market === 'USA' ? 'ADA' : 'the applicable accessibility code';
+
+            // Elevator Access
             const elevatorThreshold = Number(accessibility.elevator_required_floors?.value) || 0;
             if (elevatorThreshold > 0 && visibleBuildings.some((b: any) => b.numFloors > elevatorThreshold)) {
                 bylawItems.push(this.createScoreItem(
-                    `ADA: Elevator Access (≥${elevatorThreshold + 1} floors)`,
+                    `${accessibilityPrefix}: Elevator Access (≥${elevatorThreshold + 1} floors)`,
                     hasLift ? 'pass' : 'fail',
-                    hasLift ? 'Elevator core present (ADA 206.2.3)' : 'No elevator detected — ADA violation',
+                    hasLift ? `Elevator core present (${accessibilityCodeRef} 206.2.3)` : `No elevator detected — ${accessibilityPrefix} violation`,
                     50
                 ));
             }
 
-            // ADA: Accessible Route Width
+            // Accessible Route Width
             const routeWidth = Number(accessibility.accessible_route_width?.value) || 0;
             if (routeWidth > 0) {
                 const corridorWidth = Number(this.regulations?.facilities?.corridor_widths?.value) || 0;
                 bylawItems.push(this.createScoreItem(
-                    `ADA: Accessible Route (≥${routeWidth}m)`,
+                    `${accessibilityPrefix}: Accessible Route (≥${routeWidth}m)`,
                     corridorWidth >= routeWidth ? 'pass' : corridorWidth > 0 ? 'fail' : 'warn',
-                    corridorWidth > 0 ? `${corridorWidth}m corridor vs ${routeWidth}m required (ADA 403)` : 'Verify accessible route width',
+                    corridorWidth > 0 ? `${corridorWidth}m corridor vs ${routeWidth}m required (${accessibilityCodeRef} 403)` : 'Verify accessible route width',
                     40
                 ));
             }
 
-            // ADA: Accessible Parking
+            // Accessible Parking
             const parkingPct = Number(accessibility.accessible_parking_pct?.value) || 0;
             if (parkingPct > 0 && provParking > 0) {
                 const requiredAccessible = Math.max(1, Math.ceil(provParking * parkingPct / 100));
                 bylawItems.push(this.createScoreItem(
-                    `ADA: Accessible Parking (≥${requiredAccessible} spaces)`,
+                    `${accessibilityPrefix}: Accessible Parking (≥${requiredAccessible} spaces)`,
                     'warn',
-                    `${requiredAccessible} accessible of ${provParking} total (ADA 208) — verify placement`,
+                    `${requiredAccessible} accessible of ${provParking} total (${accessibilityCodeRef} 208) — verify placement`,
                     30
                 ));
             }
 
-            // ADA: Door Clearance
+            // Door Clearance
             const doorWidth = Number(accessibility.door_clearance_width?.value) || 0;
             if (doorWidth > 0) {
                 bylawItems.push(this.createScoreItem(
-                    `ADA: Door Clearance (≥${doorWidth}m)`,
+                    `${accessibilityPrefix}: Door Clearance (≥${doorWidth}m)`,
                     'warn',
-                    `Verify ≥${doorWidth}m clear width on all accessible doors (ADA 404)`,
+                    `Verify ≥${doorWidth}m clear width on all accessible doors (${accessibilityCodeRef} 404)`,
                     20
                 ));
             }
 
-            // ADA: Ramp Slope
+            // Ramp Slope
             const rampSlope = Number(accessibility.ramp_max_slope?.value) || 0;
             if (rampSlope > 0) {
                 bylawItems.push(this.createScoreItem(
-                    `ADA: Ramp Slope (≤1:12 / ${rampSlope})`,
+                    `${accessibilityPrefix}: Ramp Slope (≤1:12 / ${rampSlope})`,
                     'warn',
-                    `Verify all ramps ≤${rampSlope} slope ratio (ADA 405)`,
+                    `Verify all ramps ≤${rampSlope} slope ratio (${accessibilityCodeRef} 405)`,
                     20
                 ));
             }
 
-            // ADA: Signage
+            // Signage
             const signage = Number(accessibility.signage_compliance?.value) || 0;
             if (signage) {
                 bylawItems.push(this.createScoreItem(
-                    'ADA: Braille & Tactile Signage',
+                    `${accessibilityPrefix}: Braille & Tactile Signage`,
                     'warn',
-                    'Verify Braille + visual contrast signage (ADA 703)',
+                    `Verify Braille + visual contrast signage (${accessibilityCodeRef} 703)`,
                     15
                 ));
             }
 
-            // ADA: Accessible Restrooms
+            // Accessible Restrooms
             const restrooms = Number(accessibility.accessible_restrooms?.value) || 0;
             if (restrooms) {
                 bylawItems.push(this.createScoreItem(
-                    'ADA: Accessible Restrooms',
+                    `${accessibilityPrefix}: Accessible Restrooms`,
                     'warn',
-                    `≥${restrooms} accessible restroom per floor (ADA 213)`,
+                    `≥${restrooms} accessible restroom per floor (${accessibilityCodeRef} 213)`,
                     20
                 ));
             }

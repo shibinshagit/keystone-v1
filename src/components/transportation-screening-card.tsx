@@ -56,7 +56,7 @@ export function TransportationScreeningCard({
           </p>
         </div>
         <Badge variant="outline" className="text-[11px] font-semibold">
-          {report.pilotCity || report.city || report.stateCode || "USA"}
+          {report.city || report.stateCode || "USA"}
         </Badge>
       </div>
 

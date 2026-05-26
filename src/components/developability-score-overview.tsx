@@ -25,6 +25,8 @@ import { cn } from "@/lib/utils";
 interface DataSourceStatus {
   count?: number;
   available: boolean;
+  source?: string;
+  integrationStatus?: string;
 }
 
 interface NearbyAmenitySummaryItem {
@@ -41,6 +43,8 @@ interface DevelopabilityOverviewProps {
     populationMigration: DataSourceStatus;
     fdi: DataSourceStatus;
     sez: DataSourceStatus;
+    dubaiLand?: DataSourceStatus;
+    terrain: { available: boolean; isMock?: boolean; source?: string };
     satellite: { available: boolean; isMock?: boolean };
     regulation: { available: boolean };
     googlePlaces: DataSourceStatus;
@@ -70,6 +74,8 @@ const DATA_SOURCE_META = [
   { key: "populationMigration", label: "Migration Model" },
   { key: "fdi", label: "FDI" },
   { key: "sez", label: "SEZ" },
+  { key: "dubaiLand", label: "Dubai Land" },
+  { key: "terrain", label: "SRTM Terrain" },
   { key: "satellite", label: "Satellite" },
   { key: "regulation", label: "Regulation" },
   { key: "googlePlaces", label: "Google Places" },
@@ -178,6 +184,7 @@ export function DevelopabilityScoreOverview({
             <div className="flex flex-wrap gap-1.5">
               {DATA_SOURCE_META.map(({ key, label }) => {
                 const ds = dataSources[key];
+                if (!ds) return null;
                 const available = ds?.available;
                 return (
                   <Badge

@@ -167,7 +167,7 @@ export function UploadRegulationDialog({ isOpen, onOpenChange, onExtracted }: Up
                                     </SelectContent>
                                 </Select>
                                 <p className="text-xs text-muted-foreground">
-                                    Forces the AI to tag all extracted rules under this specific pilot location.
+                                    Forces the AI to tag all extracted rules under this specific location.
                                 </p>
                             </div>
 

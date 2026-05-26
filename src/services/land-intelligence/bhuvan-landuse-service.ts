@@ -44,41 +44,112 @@ interface LayerConfig {
   parseLandUse: (properties: Record<string, any>) => string;
 }
 
+function looksLikeBhuvanClassCode(value: unknown): boolean {
+  const text = String(value ?? "").trim().toUpperCase();
+  return /^[A-Z]{4,}\d{0,3}$/.test(text);
+}
+
+function decodeBhuvanClassCode(code: unknown): string | null {
+  const text = String(code ?? "").trim().toUpperCase();
+  if (!text) return null;
+
+  if (text.startsWith("ALCL")) return "Agricultural Land - Crop Land";
+  if (text.startsWith("ALAP")) return "Agricultural Land - Plantation";
+  if (text.startsWith("ALFL")) return "Agricultural Land - Fallow Land";
+  if (text.startsWith("ALSC")) return "Agricultural Land - Shifting Cultivation";
+
+  if (text.startsWith("BU")) return "Built-up";
+  if (text.startsWith("TR")) return "Transportation";
+  if (text.startsWith("MI")) return "Mining / Industrial";
+
+  if (text.startsWith("FO")) return "Forest";
+  if (text.startsWith("FP")) return "Forest Plantation";
+  if (text.startsWith("SF")) return "Scrub Forest";
+  if (text.startsWith("MG")) return "Mangrove / Swamp";
+
+  if (text.startsWith("GL")) return "Grassland / Grazing Land";
+
+  if (text.startsWith("WS")) return "Wasteland - Scrub Land";
+  if (text.startsWith("WG")) return "Wasteland - Gullied / Ravenous";
+  if (text.startsWith("WW")) return "Wasteland - Waterlogged";
+  if (text.startsWith("WB")) return "Water Bodies";
+  if (text.startsWith("RS")) return "River / Stream / Drain";
+  if (text.startsWith("CN")) return "Canal";
+  if (text.startsWith("LP")) return "Lakes / Ponds";
+  if (text.startsWith("RT")) return "Reservoir / Tanks";
+  if (text.startsWith("SN")) return "Snow / Glacial Area";
+
+  if (text.startsWith("AL")) return "Agricultural Land";
+  if (text.startsWith("WL")) return "Wetlands / Water Bodies";
+
+  return null;
+}
+
+function getReadableLandUse(properties: Record<string, any>): string {
+  const direct =
+    properties.Classname ||
+    properties.classname ||
+    properties.CLASS ||
+    properties.class_ ||
+    properties.LULC;
+
+  if (typeof direct === "string" && direct.trim() && !looksLikeBhuvanClassCode(direct)) {
+    return direct.trim();
+  }
+
+  const code =
+    properties.Classcode ||
+    properties.classcode ||
+    properties.CODE ||
+    properties.code;
+
+  const decoded = decodeBhuvanClassCode(code);
+  if (decoded) return decoded;
+
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+  const fallback = extractFirstStringProp(properties);
+  if (looksLikeBhuvanClassCode(fallback)) {
+    return decodeBhuvanClassCode(fallback) || fallback;
+  }
+  return fallback;
+}
+
 const LAYERS: LayerConfig[] = [
   {
     id: 'sisdp_phase2',
     label: 'SIS-DP Phase 2 (10K, 2018-23)',
     server: 'https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms',
     layerName: (sc) => `sisdp_phase2:SISDP_P2_LULC_10K_2016_2019_${sc}`,
-    parseLandUse: (p) => p.Classname || p.classname || p.CLASS || p.class_ || p.LULC || extractFirstStringProp(p),
+    parseLandUse: (p) => getReadableLandUse(p),
   },
   {
     id: 'lulc_50k_1516',
     label: 'LULC 50K (2015-16)',
     server: 'https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms',
     layerName: (sc) => `lulc:${sc}_LULC50K_1516`,
-    parseLandUse: (p) => p.Classname || p.classname || p.CLASS || p.LULC || extractFirstStringProp(p),
+    parseLandUse: (p) => getReadableLandUse(p),
   },
   {
     id: 'lulc_50k_1112',
     label: 'LULC 50K (2011-12)',
     server: 'https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms',
     layerName: (sc) => `lulc:${sc}_LULC50K_1112`,
-    parseLandUse: (p) => p.Classname || p.classname || p.CLASS || p.LULC || extractFirstStringProp(p),
+    parseLandUse: (p) => getReadableLandUse(p),
   },
   {
     id: 'lulc_50k_0506',
     label: 'LULC 50K (2005-06)',
     server: 'https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms',
     layerName: (sc) => `lulc:${sc}_LULC50K_0506`,
-    parseLandUse: (p) => p.Classname || p.classname || p.CLASS || p.LULC || extractFirstStringProp(p),
+    parseLandUse: (p) => getReadableLandUse(p),
   },
   {
     id: 'wasteland',
     label: 'Wasteland (50K, 2015-16)',
     server: 'https://bhuvan-vec2.nrsc.gov.in/bhuvan/wms',
     layerName: (sc) => `wasteland:${sc}_WL50K_1516`,
-    parseLandUse: (p) => p.Classname || p.classname || p.CLASS || extractFirstStringProp(p),
+    parseLandUse: (p) => getReadableLandUse(p),
   },
 ];
 

@@ -828,7 +828,7 @@ export function SimScatterCostTime({ costData, timeData, title = 'Cost vs Durati
                         dataKey="cost"
                         type="number"
                         name="Cost"
-                        tickFormatter={fmtCr}
+                        tickFormatter={(value) => fmtCr(Number(value), isUSD)}
                         tick={{ fill: '#9ca3af', fontSize: 10 }}
                         label={{ value: 'Total Cost', position: 'bottom', fill: '#6b7280', fontSize: 10 }}
                     />

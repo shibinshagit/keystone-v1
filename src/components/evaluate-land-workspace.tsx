@@ -34,12 +34,18 @@ import {
 } from "lucide-react";
 
 import { DrawingToolbar } from "@/components/drawing-toolbar";
+import { DubaiLandContextCard } from "@/components/dubai-land-context-card";
 import { MapEditor } from "@/components/map-editor";
 import { MapSearch } from "@/components/map-search";
 import { PopulationMigrationCard } from "@/components/population-migration-card";
 import { DevelopabilityScoreOverview } from "@/components/developability-score-overview";
 import { DrawingStatus } from "@/components/drawing-status";
 import { TransportationScreeningCard } from "@/components/transportation-screening-card";
+import {
+  TerrainIntelligenceCard,
+  TerrainIntelligenceStateCard,
+} from "@/components/terrain-intelligence-card";
+import { IndiaParcelDetailsCard } from "@/components/india-parcel-details-card";
 import { AnalysisMode } from "@/components/solar-controls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,6 +76,12 @@ import { useEvaluateLandAnalysis } from "@/hooks/use-evaluate-land-analysis";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useToast } from "@/hooks/use-toast";
 import {
+  LAND_CONVERSION_CATEGORIES,
+  getLandConversionCell,
+  normalizeLandConversionCategory,
+} from "@/lib/land-intelligence/land-conversion-matrix";
+import { getStateForUSLocation } from "@/lib/geography";
+import {
   BuildingIntendedUse,
   LandPlotType,
   LandProximity,
@@ -92,6 +104,12 @@ const DEFAULT_SIDEBAR_WIDTH = 380;
 const ANALYSIS_SIDEBAR_WIDTH = 500;
 const MAPBOX_GEOCODING_API = 'https://api.mapbox.com/geocoding/v5/mapbox.places/';
 
+const landConversionToneClasses = {
+  good: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+  caution: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+  risk: "border-red-500/30 bg-red-500/10 text-red-300",
+} as const;
+
 interface GeocodingSuggestion {
   id: string;
   place_name: string;
@@ -112,7 +130,7 @@ const evaluateLandFormSchema = z.object({
   intendedUse: z.enum(INTENDED_USE_OPTIONS, {
     errorMap: () => ({ message: "Select an intended use case." }),
   }),
-  priceRange: z.string().trim().min(1, "Enter a price range or land value."),
+  priceRange: z.string().trim().min(1, "Enter a price range or land value in millions."),
   plotType: z.nativeEnum(LandPlotType, {
     errorMap: () => ({ message: "Select a plot type." }),
   }),
@@ -149,6 +167,15 @@ const formatNumber = (value: number, digits = 0) =>
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
+
+const formatUsdMillions = (value?: number | null) => {
+  if (!value || value <= 0) return "N/A";
+
+  return `$${(value / 1000000).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}M`;
+};
 
 function ScoreSummary({
   score,
@@ -265,11 +292,7 @@ export function EvaluateLandWorkspace() {
     if (location) {
       const loc = location.toLowerCase();
       return /united states|usa|u\.s\.a/.test(loc)
-        || loc.includes(', tx') || loc.includes(', az') || loc.includes(', wa')
-        || loc.includes(', ca') || loc.includes(', ny') || loc.includes(', fl')
-        || loc.includes('texas') || loc.includes('arizona') || loc.includes('washington')
-        || loc.includes('california') || loc.includes('new york') || loc.includes('florida')
-        || loc.includes('austin') || loc.includes('phoenix') || loc.includes('seattle');
+        || Boolean(getStateForUSLocation(location));
     }
     return false;
   }, []);
@@ -451,11 +474,17 @@ export function EvaluateLandWorkspace() {
         zoningPreference: values.zoningPreference,
         proximity: values.proximity,
       };
+      const analyzedLandCost =
+        scoreData?.usMarketData?.parcel?.title?.assessedValue &&
+        scoreData.usMarketData.parcel.title.assessedValue > 0
+          ? scoreData.usMarketData.parcel.title.assessedValue
+          : undefined;
 
       const result = await actions.startProjectFromEvaluateLand(
         evaluateLandInput,
         plots,
         selectedPlot.id,
+        analyzedLandCost,
       );
 
       if (!result?.project) return;
@@ -532,11 +561,9 @@ export function EvaluateLandWorkspace() {
     },
     validateRequired: () =>
       trigger([
-        "projectName",
         "location",
         "landSize",
         "intendedUse",
-        "priceRange",
         "plotType",
         "zoningPreference",
       ]),
@@ -559,6 +586,9 @@ export function EvaluateLandWorkspace() {
     }
     autoRunRequestKeyRef.current = instantAnalysisTarget.requestKey;
     setActivePanelTab("analysis");
+    setSidebarWidth((currentWidth) =>
+      Math.max(currentWidth, ANALYSIS_SIDEBAR_WIDTH),
+    );
     void runAnalysis();
   }, [instantAnalysisTarget?.requestKey, runAnalysis]);
 
@@ -575,7 +605,9 @@ export function EvaluateLandWorkspace() {
         ? "border-amber-500/40 text-amber-600"
         : "border-border text-muted-foreground";
   const verdictSourceLabel =
-    regulationMatch?.source === "specific-id"
+    regulationMatch?.source === "gridics"
+      ? "Gridics parcel zoning"
+      : regulationMatch?.source === "specific-id"
       ? "Specific regulation"
       : regulationMatch?.source === "generic-id"
         ? "Direct location/use match"
@@ -584,6 +616,26 @@ export function EvaluateLandWorkspace() {
           : regulationMatch?.source === "national-fallback"
             ? "National (NBC) fallback"
             : "No zoning match";
+  const conversionSignal = buildVerdict?.signals.find((signal) =>
+    signal.toLowerCase().startsWith("conversion status:"),
+  );
+  const landConversionMarket = scoreData?.isUS ? "USA" : "India";
+  const landConversionFromCategory = normalizeLandConversionCategory(
+    scoreData?.isUS
+      ? scoreData.usMarketData?.parcel?.zoning?.zoningDescription ||
+          scoreData.usMarketData?.parcel?.zoning?.description ||
+          scoreData.usMarketData?.parcel?.zoning?.zoningCode
+      : landUseData?.primaryLandUse || getValues("zoningPreference"),
+  );
+  const currentLandConversionLabel = scoreData?.isUS
+    ? scoreData.usMarketData?.parcel?.zoning?.zoningDescription ||
+      scoreData.usMarketData?.parcel?.zoning?.description ||
+      scoreData.usMarketData?.parcel?.zoning?.zoningCode ||
+      "Unavailable"
+    : landUseData?.primaryLandUse || "Unavailable";
+  const showLandConversionMatrix =
+    Boolean(buildVerdict && !scoreData?.isUS) ||
+    Boolean(scoreData?.isUS && scoreData.usMarketData?.parcel?.zoning);
 
   const handleRunDevelopabilityScore = useCallback(async () => {
     const didRun = await runAnalysis();
@@ -626,8 +678,8 @@ export function EvaluateLandWorkspace() {
       )}
 
       <div className="pointer-events-none absolute inset-0 z-20">
-        <div className="pointer-events-auto absolute left-3 top-3 right-3 flex items-center gap-3">
-          <div className="flex items-center gap-3 rounded-xl border bg-background/95 px-3 py-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="absolute left-3 top-3 right-3 flex items-center gap-3">
+          <div className="pointer-events-auto flex items-center gap-3 rounded-xl border bg-background/95 px-3 py-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/60">
             <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
               <Link href="/">
                 <ArrowLeft className="h-4 w-4" />
@@ -636,7 +688,7 @@ export function EvaluateLandWorkspace() {
             <h1 className="text-sm font-semibold">Evaluate a Land</h1>
           </div>
 
-          <div className="hidden md:block absolute left-1/2 -translate-x-1/2 w-full max-w-md">
+          <div className="pointer-events-auto hidden md:block absolute left-1/2 -translate-x-1/2 w-full max-w-md">
             <MapSearch />
           </div>
         </div>
@@ -742,7 +794,10 @@ export function EvaluateLandWorkspace() {
                         <FormItem>
                           <FormLabel>Project Name *</FormLabel>
                           <FormControl>
-                            <Input {...field} />
+                            <Input
+                              {...field}
+                              placeholder="e.g. East Austin Mixed-Use Opportunity"
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -793,37 +848,6 @@ export function EvaluateLandWorkspace() {
                             )}
                           </div>
                           <FormMessage />
-                          <div className="flex items-center gap-1.5 mt-1.5">
-                            <span className="text-[10px] text-muted-foreground shrink-0">US Cities:</span>
-                            {([
-                              { label: 'Austin, TX', fullName: 'Austin, Texas, United States', center: [-97.7431, 30.2672] as [number, number] },
-                              { label: 'Seattle, WA', fullName: 'Seattle, Washington, United States', center: [-122.3321, 47.6062] as [number, number] },
-                              { label: 'Phoenix, AZ', fullName: 'Phoenix, Arizona, United States', center: [-112.0740, 33.4484] as [number, number] },
-                            ]).map((city) => (
-                              <button
-                                key={city.label}
-                                type="button"
-                                className={cn(
-                                  "px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors",
-                                  field.value === city.fullName
-                                    ? "bg-blue-500/20 border-blue-500/40 text-blue-400"
-                                    : "bg-secondary/40 border-border/40 text-muted-foreground hover:bg-secondary/80 hover:text-foreground"
-                                )}
-                                onClick={() => {
-                                  setValue('location', city.fullName, { shouldDirty: true, shouldTouch: true, shouldValidate: true });
-                                  setIsLocationManuallyEdited(false);
-                                  setLocationSuggestions([]);
-                                  setShowLocationDropdown(false);
-                                  actions.setMapLocation(city.fullName);
-                                  geocodedCoordsRef.current = city.center;
-                                  useBuildingStore.setState({ mapCommand: { type: 'flyTo', center: city.center } });
-                                  window.dispatchEvent(new CustomEvent('flyTo', { detail: { center: city.center } }));
-                                }}
-                              >
-                                {city.label}
-                              </button>
-                            ))}
-                          </div>
                         </FormItem>
                       )}
                     />
@@ -927,11 +951,11 @@ export function EvaluateLandWorkspace() {
                       name="priceRange"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Price Range / Value *</FormLabel>
+                          <FormLabel>Price Range / Value (Millions) *</FormLabel>
                           <FormControl>
                             <Input
                               {...field}
-                              placeholder="e.g. 6 Cr - 9 Cr or 18,000 per sqm"
+                              placeholder="e.g. 6M - 9M"
                               onChange={(event) =>
                                 field.onChange(
                                   normalizePriceRangeInput(event.target.value),
@@ -1138,6 +1162,117 @@ export function EvaluateLandWorkspace() {
                     </div>
                   ) : null}
 
+                  {instantAnalysisTarget?.indiaParcel ? (
+                    <IndiaParcelDetailsCard
+                      parcel={instantAnalysisTarget.indiaParcel}
+                      title={`${instantAnalysisTarget.indiaParcel.stateName} Parcel Matched`}
+                    />
+                  ) : null}
+
+                  {false && instantAnalysisTarget?.keralaParcel ? (
+                    <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-emerald-700">
+                            Kerala Parcel Matched
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {instantAnalysisTarget?.keralaParcel?.gisInfo ||
+                              instantAnalysisTarget?.locationLabel}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px]">
+                          Official eMaps
+                        </Badge>
+                      </div>
+                      <div className="mt-3 rounded-md border bg-background/70 p-2 text-xs">
+                        <div className="text-muted-foreground">
+                          Parcel reference
+                        </div>
+                        <div className="mt-1 font-medium break-words">
+                          {[
+                            instantAnalysisTarget?.keralaParcel?.blockNo
+                              ? `Block ${instantAnalysisTarget?.keralaParcel?.blockNo}`
+                              : null,
+                            instantAnalysisTarget?.keralaParcel?.surveyNo
+                              ? `Survey ${instantAnalysisTarget?.keralaParcel?.surveyNo}`
+                              : null,
+                            instantAnalysisTarget?.keralaParcel?.subdivisionNo
+                              ? `Subdiv ${instantAnalysisTarget?.keralaParcel?.subdivisionNo}`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "N/A"}
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-md border bg-background/80 p-2">
+                          <div className="text-muted-foreground">Block</div>
+                          <div className="font-semibold">
+                            {instantAnalysisTarget?.keralaParcel?.blockNo || "N/A"}
+                          </div>
+                        </div>
+                        <div className="rounded-md border bg-background/80 p-2">
+                          <div className="text-muted-foreground">Survey</div>
+                          <div className="font-semibold">
+                            {instantAnalysisTarget?.keralaParcel?.surveyNo || "N/A"}
+                          </div>
+                        </div>
+                        <div className="rounded-md border bg-background/80 p-2">
+                          <div className="text-muted-foreground">Subdivision</div>
+                          <div className="font-semibold">
+                            {instantAnalysisTarget?.keralaParcel?.subdivisionNo || "N/A"}
+                          </div>
+                        </div>
+                        <div className="rounded-md border bg-background/80 p-2">
+                          <div className="text-muted-foreground">Area</div>
+                          <div className="font-semibold">
+                            {instantAnalysisTarget?.keralaParcel?.areaSqm != null
+                              ? `${formatNumber(
+                                  instantAnalysisTarget?.keralaParcel?.areaSqm ?? 0,
+                                  0,
+                                )} sqm`
+                              : instantAnalysisTarget?.keralaParcel?.areaLabel || "N/A"}
+                          </div>
+                        </div>
+                      </div>
+                      {instantAnalysisTarget?.keralaParcel?.owners?.length ? (
+                        <div className="mt-3 rounded-md border bg-background/70 p-2 text-xs">
+                          <div className="font-medium text-muted-foreground">
+                            Owners
+                          </div>
+                          <div className="mt-1 space-y-1">
+                            {instantAnalysisTarget?.keralaParcel?.owners
+                              ?.slice(0, 2)
+                              ?.map((owner) => (
+                                <p key={owner} className="break-words">
+                                  {owner}
+                                </p>
+                              ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {instantAnalysisTarget?.keralaParcel?.mapSketchUrl ? (
+                          <Button asChild size="sm" variant="outline">
+                            <Link
+                              href={instantAnalysisTarget?.keralaParcel?.mapSketchUrl || "#"}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open Official Map Sketch
+                            </Link>
+                          </Button>
+                        ) : null}
+                        {instantAnalysisTarget?.keralaParcel?.remarks ? (
+                          <div className="rounded-md border bg-background/70 px-2 py-1 text-[11px] text-muted-foreground">
+                            {instantAnalysisTarget?.keralaParcel?.remarks}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -1174,9 +1309,20 @@ export function EvaluateLandWorkspace() {
                   </div>
 
                   {scoreError ? (
-                    <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                    <div
+                      className={cn(
+                        "flex items-start gap-2 rounded-md p-3 text-xs",
+                        scoreData
+                          ? "border border-amber-500/30 bg-amber-500/5 text-amber-300"
+                          : "border border-destructive/30 bg-destructive/5 text-destructive",
+                      )}
+                    >
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>{scoreError}</span>
+                      <span>
+                        {scoreData && /timeout|aborted/i.test(scoreError)
+                          ? `Some supplemental checks timed out, but the main land-intelligence score still loaded. ${scoreError}`
+                          : scoreError}
+                      </span>
                     </div>
                   ) : null}
 
@@ -1321,6 +1467,10 @@ export function EvaluateLandWorkspace() {
                         nearbyAmenities={scoreData.nearbyAmenities}
                       />
 
+                      {scoreData.uaeMarketData ? (
+                        <DubaiLandContextCard data={scoreData.uaeMarketData} />
+                      ) : null}
+
                       {/* -- US Market Intelligence */}
                       {scoreData.isUS && scoreData.usMarketData && (
                         <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-3">
@@ -1407,8 +1557,24 @@ export function EvaluateLandWorkspace() {
                         </div>
                       )}
 
+                      {scoreData.terrain ? (
+                        <TerrainIntelligenceCard terrain={scoreData.terrain} />
+                      ) : (
+                        <TerrainIntelligenceStateCard
+                          available={scoreData.dataSources.terrain.available}
+                          message={
+                            scoreData.dataSources.terrain.available
+                              ? "Terrain data source was available for this run, but the detailed terrain metrics were not attached to the current response."
+                              : "SRTM terrain metrics were not returned for this run. The chip in Data Sources is still listed for consistency, but the gray x state means terrain did not contribute to this result."
+                          }
+                        />
+                      )}
+
                       {scoreData.environmentalScreening ? (
                         <div className="rounded-lg border border-border/50 bg-background/70 p-3">
+                          {(() => {
+                            return (
+                              <>
                           <div className="flex items-start gap-2">
                             <Globe className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
                             <div>
@@ -1500,6 +1666,53 @@ export function EvaluateLandWorkspace() {
                               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                                 {scoreData.environmentalScreening.airQuality.summary}
                               </p>
+                              {scoreData.environmentalScreening.airQuality.observedAqi == null ? (
+                                <p className="mt-2 text-[11px] text-muted-foreground">
+                                  "Live AQI data was unavailable for this request."
+                                </p>
+                              ) : null}
+                              {scoreData.environmentalScreening.airQuality.observedAqi != null ||
+                              scoreData.environmentalScreening.airQuality.primaryPollutant ||
+                              scoreData.environmentalScreening.airQuality.reportingArea ||
+                              scoreData.environmentalScreening.airQuality.observationTime ? (
+                                <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
+                                  {scoreData.environmentalScreening.airQuality.observedAqi != null ? (
+                                    <div>
+                                      AQI:{" "}
+                                      <span className="font-medium text-foreground">
+                                        {scoreData.environmentalScreening.airQuality.observedAqi}
+                                        {scoreData.environmentalScreening.airQuality.observedCategory
+                                          ? ` (${scoreData.environmentalScreening.airQuality.observedCategory})`
+                                          : ""}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {scoreData.environmentalScreening.airQuality.primaryPollutant ? (
+                                    <div>
+                                      Primary pollutant:{" "}
+                                      <span className="font-medium text-foreground">
+                                        {scoreData.environmentalScreening.airQuality.primaryPollutant}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {scoreData.environmentalScreening.airQuality.reportingArea ? (
+                                    <div>
+                                      Reporting area:{" "}
+                                      <span className="font-medium text-foreground">
+                                        {scoreData.environmentalScreening.airQuality.reportingArea}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {scoreData.environmentalScreening.airQuality.observationTime ? (
+                                    <div>
+                                      Observed:{" "}
+                                      <span className="font-medium text-foreground">
+                                        {scoreData.environmentalScreening.airQuality.observationTime}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
                             <div className="rounded border border-border/40 bg-secondary/20 p-2">
                               <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1508,40 +1721,58 @@ export function EvaluateLandWorkspace() {
                               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                                 {scoreData.environmentalScreening.waterQuality.summary}
                               </p>
+                              {scoreData.environmentalScreening.waterQuality.nearestAssessmentUnit ||
+                              scoreData.environmentalScreening.waterQuality.overallStatus ||
+                              scoreData.environmentalScreening.waterQuality.irCategory ||
+                              scoreData.environmentalScreening.waterQuality.impairmentSignals?.length ? (
+                                <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
+                                  {scoreData.environmentalScreening.waterQuality.nearestAssessmentUnit ? (
+                                    <div>
+                                      Waterbody:{" "}
+                                      <span className="font-medium text-foreground">
+                                        {scoreData.environmentalScreening.waterQuality.nearestAssessmentUnit}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {scoreData.environmentalScreening.waterQuality.overallStatus ? (
+                                    <div>
+                                      Status:{" "}
+                                      <span className="font-medium text-foreground">
+                                        {scoreData.environmentalScreening.waterQuality.overallStatus}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {scoreData.environmentalScreening.waterQuality.irCategory ? (
+                                    <div>
+                                      IR category:{" "}
+                                      <span className="font-medium text-foreground">
+                                        {scoreData.environmentalScreening.waterQuality.irCategory}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {typeof scoreData.environmentalScreening.waterQuality.impaired === "boolean" ? (
+                                    <div>
+                                      Impaired:{" "}
+                                      <span className="font-medium text-foreground">
+                                        {scoreData.environmentalScreening.waterQuality.impaired ? "Yes" : "No"}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                  {scoreData.environmentalScreening.waterQuality.impairmentSignals?.length ? (
+                                    <div>
+                                      Observed indicators:{" "}
+                                      <span className="font-medium text-foreground">
+                                        {scoreData.environmentalScreening.waterQuality.impairmentSignals.join(", ")}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
                           </div>
-
-                          {scoreData.environmentalScreening.nepa.triggers.length > 0 ? (
-                            <div className="mt-3 space-y-1">
-                              <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                Review Triggers
-                              </div>
-                              {scoreData.environmentalScreening.nepa.triggers.map((trigger, index) => (
-                                <div
-                                  key={`${trigger}-${index}`}
-                                  className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
-                                >
-                                  {trigger}
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-
-                          <div className="mt-3 space-y-1">
-                            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                              Due-Diligence Documents
-                            </div>
-                            {scoreData.environmentalScreening.nepa.recommendedDocuments.map(
-                              (document, index) => (
-                                <div
-                                  key={`${document}-${index}`}
-                                  className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
-                                >
-                                  {document}
-                                </div>
-                              ),
-                            )}
-                          </div>
+                              </>
+                            );
+                          })()}
                         </div>
                       ) : null}
 
@@ -1701,11 +1932,11 @@ export function EvaluateLandWorkspace() {
                                     )}
                                     <div className="flex justify-between text-xs">
                                       <span className="text-muted-foreground">Assessed Value</span>
-                                      <span className="font-bold text-emerald-400">${p.title.assessedValue?.toLocaleString()}</span>
+                                      <span className="font-bold text-emerald-400">{formatUsdMillions(p.title.assessedValue)}</span>
                                     </div>
                                     <div className="flex justify-between text-xs">
                                       <span className="text-muted-foreground">Last Sale Price</span>
-                                      <span className="font-semibold tabular-nums">${p.title.lastSalePrice?.toLocaleString()}</span>
+                                      <span className="font-semibold tabular-nums">{formatUsdMillions(p.title.lastSalePrice)}</span>
                                     </div>
                                     <div className="flex justify-between text-xs">
                                       <span className="text-muted-foreground">Last Sale Date</span>
@@ -1927,7 +2158,7 @@ export function EvaluateLandWorkspace() {
                                       </p>
                                       {parcel.assessedValue > 0 && (
                                         <span className="text-[10px] font-bold text-emerald-400 shrink-0">
-                                          ${(parcel.assessedValue / 1000).toFixed(0)}K
+                                          {formatUsdMillions(parcel.assessedValue)}
                                         </span>
                                       )}
                                     </div>
@@ -2150,6 +2381,109 @@ export function EvaluateLandWorkspace() {
                             ))}
                           </div>
                         </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {showLandConversionMatrix ? (
+                    <div className="min-w-0 overflow-hidden rounded-xl border border-border/60 bg-background/80 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="mt-1 text-sm font-bold">
+                            Land Conversion Matrix
+                          </h3>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            CLU-style reference matrix for {landConversionMarket} land-use conversion.
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] font-medium">
+                          {landConversionMarket}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-4 rounded-xl border border-border/50 bg-gradient-to-br from-background/90 via-background/75 to-muted/10 p-4">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                          Current land classification
+                        </p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className="max-w-full text-[11px] font-medium">
+                            {currentLandConversionLabel}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                            Conversion outlook from this land
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {LAND_CONVERSION_CATEGORIES.map((toCategory) => {
+                            const fromCategory = landConversionFromCategory;
+                            const cell = fromCategory
+                              ? getLandConversionCell(
+                                  landConversionMarket,
+                                  fromCategory,
+                                  toCategory.id,
+                                )
+                              : null;
+                            return (
+                              <div
+                                key={`selected-row-${toCategory.id}`}
+                                className={cn(
+                                  "min-w-0 rounded-xl border p-3 transition-colors",
+                                  cell
+                                    ? landConversionToneClasses[cell.tone]
+                                    : "border-border/50 bg-background/40 text-muted-foreground",
+                                  "opacity-90",
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="min-w-0 text-[11px] font-semibold uppercase tracking-[0.08em]">
+                                    {toCategory.label}
+                                  </p>
+                                </div>
+                                <p className="mt-3 text-sm font-semibold leading-tight">
+                                  {cell?.label || "Unavailable"}
+                                </p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-2 rounded-lg border border-border/50 bg-background/70 p-3">
+                        <div className="flex items-center justify-between gap-3 text-xs">
+                          <span className="text-muted-foreground">
+                            Current land use
+                          </span>
+                          <span className="text-right font-semibold">
+                            {currentLandConversionLabel}
+                          </span>
+                        </div>
+                        {!scoreData?.isUS && conversionSignal ? (
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="text-muted-foreground">
+                              Conversion status
+                            </span>
+                            <span className="text-right font-semibold">
+                              {conversionSignal.replace(/^Conversion status:\s*/i, "")}
+                            </span>
+                          </div>
+                        ) : null}
+                        {!scoreData?.isUS ? (
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="text-muted-foreground">
+                              Rule source
+                            </span>
+                            <span className="text-right font-semibold">
+                              {regulationMatch?.matchedLocation
+                                ? `${verdictSourceLabel} (${regulationMatch.matchedLocation})`
+                                : verdictSourceLabel}
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}

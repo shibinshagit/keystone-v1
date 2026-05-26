@@ -6,7 +6,8 @@ import { GoogleMapsServerService } from '@/services/land-intelligence/google-map
 import { PopulationMigrationService } from '@/services/land-intelligence/population-migration-service';
 import { ProposedInfraService } from '@/services/land-intelligence/proposed-infra-service';
 import { TransportationService } from '@/services/land-intelligence/transportation-service';
-import { lookupRegulationForLocationAndUse } from '@/lib/regulation-lookup';
+import { inferRegulationGeography } from '@/lib/geography';
+import { lookupRegulationForLocationAndUse } from '@/lib/regulation-lookup-server';
 import { getUSScoreInputs, isUSCoordinates } from '@/services/us/us-score-data-service';
 import { evaluateDevelopability, toDevelopabilityScore } from '@/lib/scoring/developability-engine';
 import type { ItemResult } from '@/lib/scoring/schema-engine';
@@ -19,6 +20,7 @@ import type {
   RegulationData,
   SEZData,
   SatelliteChangeData,
+  TerrainIntelligenceData,
 } from '@/lib/types';
 
 type Coordinates = [number, number];
@@ -50,7 +52,7 @@ const EMPTY_PROPOSED_INFRA_SIGNAL = {
 const TRANSIT_PLACE_TYPES = ['bus_station', 'train_station', 'subway_station'];
 const SCHOOL_PLACE_TYPES = ['school', 'primary_school', 'secondary_school', 'university'];
 const MALL_PLACE_TYPES = ['shopping_mall', 'department_store'];
-const AIRPORT_DISTANCE_OPTIMAL_RANGE: [number, number] = [5000, 40000];
+const AIRPORT_DISTANCE_OPTIMAL_RANGE: [number, number] = [0, 40000];
 
 function normalizeText(value: unknown): string {
   return String(value ?? '')
@@ -322,10 +324,18 @@ export async function POST(request: NextRequest) {
     const isUS = isUSCoordinates(coords[0], coords[1]);
     console.log(`[Land Intel] Computing Developability Score for ${state}${district ? ` / ${district}` : ''} [${isUS ? 'US' : 'Global'}]`);
 
+    const fullLocation = query.rawLocation || (district ? `${district}, ${state}` : state);
+    const inferredGeography = inferRegulationGeography(fullLocation);
+    const isUaeRequest =
+      !isUS &&
+      (query.market === 'UAE' ||
+        query.countryCode === 'AE' ||
+        inferredGeography.market === 'UAE');
+
     // The US data services expect "City, State" to properly map to Census/BLS FIPS codes.
     // In our payload, query.location is usually the State and query.district is the City.
     // However, we now pass query.rawLocation to preserve the original unmodified search string (like "Parcel X, Austin, Texas").
-    const fullUSLocation = query.rawLocation || (district ? `${district}, ${state}` : state);
+    const fullUSLocation = fullLocation;
 
     const usScoreInputsPromise = isUS ? getUSScoreInputs(fullUSLocation) : Promise.resolve(null);
     // Fetch US parcel data inline ONLY if a parcel-aware request is made (drawn plot or clicked point)
@@ -335,6 +345,23 @@ export async function POST(request: NextRequest) {
     // Fetch expanded US environmental data (FEMA flood, EPA EJScreen, Historic Places)
     const usEnvironmentalPromise = isUS
       ? import('@/services/us/us-environmental-service').then(m => m.USEnvironmentalService.getEnvironmentalData(coords)).catch(() => null)
+      : Promise.resolve(null);
+    // UAE currently only has Dubai-specific market enrichment, so keep this
+    // branch narrow and non-invasive for the rest of the global flow.
+    const uaeDubaiContextPromise = isUaeRequest
+      ? import('@/services/uae/dubai-land-service')
+          .then((m) =>
+            m.DubaiLandService.getContext({
+              location: state,
+              rawLocation: query.rawLocation || fullLocation,
+              district,
+              coordinates: coords,
+            }),
+          )
+          .catch((error) => {
+            console.warn('[Land Intel] Dubai Land fetch issue:', error);
+            return null;
+          })
       : Promise.resolve(null);
 
     // AI Summary is intentionally excluded from this response to keep latency low.
@@ -355,6 +382,7 @@ export async function POST(request: NextRequest) {
       fdiData,
       sezData,
       satelliteData,
+      terrainData,
       regulationData,
       transitData,
       schoolData,
@@ -370,10 +398,15 @@ export async function POST(request: NextRequest) {
       DataGovService.getFDIData(state),
       DataGovService.getSEZData(state),
       EarthEngineService.getUrbanGrowthIndex(coords, district || state),
+      EarthEngineService.getTerrainIntelligence(coords, {
+        plotGeometry: query.plotGeometry,
+        location: district || state,
+      }),
       lookupRegulationForLocationAndUse({
         location: district ? `${district}, ${state}` : state,
         intendedUse: query.intendedUse || 'Residential',
         market: query.market,
+        coordinates: coords,
       }),
       GoogleMapsServerService.searchNearbyPlaces(coords, {
         includedTypes: TRANSIT_PLACE_TYPES,
@@ -410,12 +443,12 @@ export async function POST(request: NextRequest) {
         state,
         district,
       }),
-      query.market === 'USA' || query.countryCode === 'US'
+      isUS
         ? EnvironmentalService.getEnvironmentalScreening({
             coordinates: coords,
             location: district ? `${district}, ${state}` : state,
-            market: query.market,
-            countryCode: query.countryCode,
+            market: query.market || 'USA',
+            countryCode: query.countryCode || 'US',
           })
         : Promise.resolve(null),
     ]);
@@ -426,6 +459,8 @@ export async function POST(request: NextRequest) {
     const fdi = fdiData.status === 'fulfilled' ? fdiData.value : [];
     const sez: SEZData[] = sezData.status === 'fulfilled' ? sezData.value : [];
     const satellite: SatelliteChangeData | null = satelliteData.status === 'fulfilled' ? satelliteData.value : null;
+    const terrain: TerrainIntelligenceData | null = terrainData.status === 'fulfilled' ? terrainData.value : null;
+    const terrainIsMock = terrain?.source?.toLowerCase().includes('mock') ?? EarthEngineService.isMockMode();
     const regulation = regulationData.status === 'fulfilled' ? regulationData.value.regulation : null;
     const transitPlaces = transitData.status === 'fulfilled' ? transitData.value : [];
     const schools = schoolData.status === 'fulfilled' ? schoolData.value : [];
@@ -449,6 +484,7 @@ export async function POST(request: NextRequest) {
     const usInputs = await usScoreInputsPromise;
     const usParcel = await usParcelPromise;
     const usEnvironmental = await usEnvironmentalPromise;
+    const uaeMarketData = await uaeDubaiContextPromise;
 
     // Compute buyability score server-side (no AI needed) from parcel + market data
     let usBuyabilityScore: number | null = null;
@@ -696,19 +732,16 @@ export async function POST(request: NextRequest) {
 
     let lc5Score = 0;
     if (nearestAirport != null) {
-      lc5Score =
-        nearestAirport < 5000
-          ? 12
-          : scoreByDistance(
-              nearestAirport,
-              [
-                { maxMeters: 10000, score: 24 },
-                { maxMeters: 25000, score: 40 },
-                { maxMeters: 40000, score: 30 },
-                { maxMeters: 60000, score: 20 },
-              ],
-              10,
-            );
+      lc5Score = scoreByDistance(
+        nearestAirport,
+        [
+          { maxMeters: 10000, score: 40 },
+          { maxMeters: 25000, score: 30 },
+          { maxMeters: 40000, score: 20 },
+          { maxMeters: 60000, score: 10 },
+        ],
+        5,
+      );
       results['LC5'] = {
         score: lc5Score,
         status:
@@ -864,17 +897,13 @@ export async function POST(request: NextRequest) {
         value: { altaSurveyAvailable: altaAvailable, floodZone },
       };
     } else if (isUS && !usParcel) {
-      // US city-level search: no parcel data available — assign moderate baseline scores
-      // LR1: US zoning frameworks are generally well-defined, give partial credit
-      results['LR1'] = { score: 45, status: true, value: { zoningCode: 'N/A', zoningDescription: 'Parcel-level zoning not available for city-level search. Draw or click a parcel for details.', jurisdiction: state } };
-      // LR2: Without parcel data, CLU check is inconclusive
-      results['LR2'] = { score: 25, status: true, value: { zoningCode: 'N/A', intendedUse: query.intendedUse || 'Unknown', compatible: null } };
-      // LR3: No encumbrances data without parcel
-      results['LR3'] = { score: 30, status: true, value: { encumbrances: [], count: 0 } };
-      // LR4: No title data without parcel
-      results['LR4'] = { score: 15, status: true, value: null };
-      // LR5: No survey data without parcel
-      results['LR5'] = { score: 15, status: true, value: { altaSurveyAvailable: false, floodZone: 'Unknown' } };
+      // US city-level search: parcel-dependent legal checks should stay pending
+      // until the user draws or clicks a parcel with title/zoning/survey detail.
+      results['LR1'] = undefined;
+      results['LR2'] = undefined;
+      results['LR3'] = undefined;
+      results['LR4'] = undefined;
+      results['LR5'] = undefined;
     } else if (regulation) {
       if (regulationPermitsUse) {
         results['LR1'] = { score: 80, status: true };
@@ -895,8 +924,42 @@ export async function POST(request: NextRequest) {
       // LR3 remains intentionally unscored until we have a reliable legal-risk source.
       results['LR3'] = undefined;
     }
+    // A matched registry/unit/building record is the strongest official signal
+    // we have today for Dubai ownership/title context without inventing fields.
+    const hasDubaiRegistryMatch = Boolean(
+      uaeMarketData?.landRecord ||
+        uaeMarketData?.unitRecord ||
+        uaeMarketData?.buildingRecord,
+    );
+    const hasDubaiVerificationIdentifiers = Boolean(
+      (uaeMarketData?.titleDeedVerification.availableIdentifiers.length || 0) > 0 ||
+        (uaeMarketData?.propertyStatus.availableIdentifiers.length || 0) > 0,
+    );
     const reraRegistration = underwriting?.approvals?.reraRegistration?.trim();
-    if (!isUS && reraRegistration) {
+    if (!isUS && hasDubaiRegistryMatch) {
+      results['LR4'] = {
+        score: 30,
+        status: true,
+        value: {
+          source: 'Dubai Land Department',
+          landRecord: uaeMarketData?.landRecord,
+          unitRecord: uaeMarketData?.unitRecord,
+          buildingRecord: uaeMarketData?.buildingRecord,
+          titleDeedVerification: uaeMarketData?.titleDeedVerification,
+          propertyStatus: uaeMarketData?.propertyStatus,
+        },
+      };
+    } else if (!isUS && hasDubaiVerificationIdentifiers) {
+      results['LR4'] = {
+        score: 20,
+        status: true,
+        value: {
+          source: 'Dubai Land Department',
+          titleDeedVerification: uaeMarketData?.titleDeedVerification,
+          propertyStatus: uaeMarketData?.propertyStatus,
+        },
+      };
+    } else if (!isUS && reraRegistration) {
       results['LR4'] = {
         score: reraRegistration.toLowerCase() !== 'pending' ? 30 : 10,
         status: reraRegistration.toLowerCase() !== 'pending',
@@ -907,8 +970,35 @@ export async function POST(request: NextRequest) {
       // LR5 is deferred until master-plan extraction is wired into the score flow.
       results['LR5'] = undefined;
     }
-    // ME1 stays blank until we have historical price-trend data by locality/micro-market.
-    results['ME1'] = undefined;
+    if (!isUS && uaeMarketData?.saleIndex) {
+      // ME1 expects an appreciation/trend signal. For Dubai we map the official
+      // residential sale index into that slot using YoY first, then MoM.
+      const priceTrendPct =
+        uaeMarketData.saleIndex.yearlyChangePct ??
+        uaeMarketData.saleIndex.monthlyChangePct ??
+        null;
+      let me1Score = 12;
+      if (priceTrendPct != null) {
+        if (priceTrendPct >= 10) me1Score = 60;
+        else if (priceTrendPct >= 6) me1Score = 48;
+        else if (priceTrendPct >= 3) me1Score = 36;
+        else if (priceTrendPct >= 0) me1Score = 24;
+        else if (priceTrendPct >= -5) me1Score = 12;
+        else me1Score = 4;
+      }
+
+      results['ME1'] = {
+        score: me1Score,
+        status: (priceTrendPct ?? 0) >= 3,
+        value: {
+          source: 'Dubai Land Department + Dubai Pulse',
+          ...uaeMarketData.saleIndex,
+        },
+      };
+    } else {
+      // ME1 stays blank until we have historical price-trend data by locality/micro-market.
+      results['ME1'] = undefined;
+    }
 
     // ME2 — US: Market zone / permit growth tier / India: SEZ distance
     if (isUS && usInputs) {
@@ -1032,6 +1122,7 @@ export async function POST(request: NextRequest) {
       query: responseQuery,
       score: developabilityScore,
       isUS,
+      uaeMarketData: !isUS ? uaeMarketData : null,
       usMarketData: isUS && usInputs ? {
         city: usInputs.resolvedCity,
         state: usInputs.resolvedState,
@@ -1048,6 +1139,9 @@ export async function POST(request: NextRequest) {
           zoning: usParcel.zoning,
           title: usParcel.title,
           encumbrances: usParcel.encumbrances,
+          source: usParcel.source,
+          address: usParcel.address,
+          lotAreaSqFt: usParcel.lotAreaSqFt,
         } : null,
         environmental: usEnvironmental ? {
           elevationMeters: usEnvironmental.elevationMeters,
@@ -1057,6 +1151,7 @@ export async function POST(request: NextRequest) {
         } : null,
         aiSummary: usAiSummary,
       } : null,
+      terrain,
       environmentalScreening,
       transportationScreening,
       populationMigration: (!isUS ? populationMigration : null) as PopulationMigrationResponse | null,
@@ -1074,6 +1169,10 @@ export async function POST(request: NextRequest) {
           : { count: sez.length, available: sez.length > 0 },
         usEconomy: isUS ? { available: usInputs !== null, source: 'Bureau of Labor Statistics' } : undefined,
         usPermits: isUS ? { available: usInputs !== null, source: 'US Census BPS' } : undefined,
+        usProperty: isUS ? {
+          available: usParcel !== null,
+          source: usParcel?.source === 'realie' ? 'Realie Property Data API' : usParcel?.source || 'Unavailable',
+        } : undefined,
         usEnvironmental: isUS ? {
           available: usEnvironmental !== null,
           femaFlood: usEnvironmental?.floodZone?.source === 'fema-nfhl',
@@ -1081,8 +1180,22 @@ export async function POST(request: NextRequest) {
           historicPlaces: usEnvironmental?.historicDistrict?.source === 'nps-api',
           source: 'FEMA NFHL + EPA EJScreen + NPS NRHP',
         } : undefined,
+        dubaiLand: !isUS && uaeMarketData ? {
+          count: uaeMarketData.datasetStatuses.filter((dataset) => dataset.status === 'live').length,
+          available: uaeMarketData.integrationStatus === 'live',
+          source: 'Dubai Land Department + Dubai Pulse official datasets',
+          integrationStatus: uaeMarketData.integrationStatus,
+        } : undefined,
         satellite: { available: satellite !== null, isMock: EarthEngineService.isMockMode() },
-        regulation: { available: regulation !== null },
+        terrain: {
+          available: terrain !== null,
+          isMock: terrainIsMock,
+          source: terrain?.source || terrain?.dataset || 'USGS/SRTMGL1_003',
+        },
+        regulation: {
+          available: regulation !== null,
+          source: regulation?.sourceInfo?.label || undefined,
+        },
         googlePlaces: {
           count:
             storedAmenities.length +

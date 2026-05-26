@@ -2,6 +2,11 @@ import { collection, doc, getDoc, getDocs, query, where } from "firebase/firesto
 
 import { db } from "@/lib/firebase";
 import {
+  getDefaultLocationForMarket,
+  getStateForUSLocation,
+  inferRegulationGeography,
+} from "@/lib/geography";
+import {
   getRegulationCollectionNameForMarket,
   shouldUseNationalIndiaFallback,
 } from "@/lib/regulation-collections";
@@ -25,18 +30,22 @@ function normalizeIntendedUse(intendedUse: string): string {
   return value;
 }
 
-function buildLocationCandidates(location: string): string[] {
+function buildLocationCandidates(location: string, market?: GeographyMarket): string[] {
   const cleaned = location.trim();
-  if (!cleaned) return ["Delhi"];
+  if (!cleaned) return [getDefaultLocationForMarket(market || "India")];
 
+  const inferred = inferRegulationGeography(cleaned);
+  const state = market === "USA" ? getStateForUSLocation(cleaned) : inferred.stateOrProvince;
   const parts = cleaned
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean)
-    .filter((part) => !/^(india|usa|us|uae)$/i.test(part));
+    .filter((part) => !/^(india|usa|us|uae|united arab emirates)$/i.test(part));
 
   return Array.from(
     new Set([
+      ...(state ? [state] : []),
+      ...(inferred.city ? [inferred.city] : []),
       cleaned,
       ...parts,
       ...(parts.length > 1 ? [parts[parts.length - 1], parts[0]] : []),
@@ -65,6 +74,19 @@ function findBestMatch(
   );
 }
 
+function getStatewiseRegulationId(
+  regulationId?: string,
+  market?: GeographyMarket,
+): string | undefined {
+  if (!regulationId || market !== "USA") return regulationId;
+
+  const [locationPart, ...rest] = regulationId.split("-");
+  if (rest.length === 0) return regulationId;
+
+  const state = getStateForUSLocation(locationPart);
+  return state ? `${state}-${rest.join("-")}` : regulationId;
+}
+
 export async function getAvailableRegulationsForLocation({
   location,
   market,
@@ -75,18 +97,25 @@ export async function getAvailableRegulationsForLocation({
   if (!location.trim()) return [];
 
   const collectionName = getRegulationCollectionNameForMarket(market);
-  const locationQuery = query(
-    collection(db, collectionName),
-    where("location", "==", location),
-  );
-  const snapshot = await getDocs(locationQuery);
-  const firestoreRegulations = snapshot.docs.map(
-    (entry) =>
-      ({
+  const candidates = buildLocationCandidates(location, market);
+  const seen = new Set<string>();
+  const firestoreRegulations: RegulationData[] = [];
+
+  for (const candidate of candidates) {
+    const locationQuery = query(
+      collection(db, collectionName),
+      where("location", "==", candidate),
+    );
+    const snapshot = await getDocs(locationQuery);
+    snapshot.docs.forEach((entry) => {
+      if (seen.has(entry.id)) return;
+      seen.add(entry.id);
+      firestoreRegulations.push({
         id: entry.id,
         ...entry.data(),
-      }) as RegulationData,
-  );
+      } as RegulationData);
+    });
+  }
 
   if (firestoreRegulations.length > 0) {
     return firestoreRegulations;
@@ -107,11 +136,12 @@ export async function lookupRegulationForLocationAndUse({
   market?: GeographyMarket;
 }): Promise<RegulationLookupResult> {
   const normalizedUse = normalizeIntendedUse(String(intendedUse || "Residential"));
-  const locationCandidates = buildLocationCandidates(location);
+  const locationCandidates = buildLocationCandidates(location, market);
   const collectionName = getRegulationCollectionNameForMarket(market);
+  const effectiveRegulationId = getStatewiseRegulationId(regulationId, market);
 
-  if (regulationId) {
-    const specificDoc = await getDoc(doc(db, collectionName, regulationId));
+  if (effectiveRegulationId) {
+    const specificDoc = await getDoc(doc(db, collectionName, effectiveRegulationId));
     if (specificDoc.exists()) {
       const regulation = specificDoc.data() as RegulationData;
       return {
@@ -126,7 +156,7 @@ export async function lookupRegulationForLocationAndUse({
         location: candidate,
         market,
       });
-      const matchedBaseline = regulations.find((reg) => reg.id === regulationId);
+      const matchedBaseline = regulations.find((reg) => reg.id === effectiveRegulationId);
       if (matchedBaseline) {
         return {
           regulation: matchedBaseline,

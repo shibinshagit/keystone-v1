@@ -47,9 +47,60 @@ export interface PlotIntelligenceResult {
     keyOpportunities: string[];
 }
 
+function formatZoningSource(parcel: USParcelData): string {
+    switch (parcel.zoning.source) {
+        case 'gridics':
+            return 'Gridics parcel zoning';
+        case 'realie':
+            return 'Realie parcel profile';
+        case 'fallback':
+            return 'Fallback zoning estimate';
+        default:
+            return 'Parcel zoning data';
+    }
+}
+
+function buildBuildabilitySummary(parcel: USParcelData): string {
+    const buildability = parcel.zoning.buildability;
+    if (!buildability) return 'Not available';
+
+    const parts: string[] = [];
+
+    if (typeof buildability.far === 'number') parts.push(`FAR ${buildability.far}`);
+    if (typeof buildability.maxCoverage === 'number') parts.push(`coverage ${buildability.maxCoverage}%`);
+    if (typeof buildability.maxFloors === 'number') parts.push(`up to ${buildability.maxFloors} floors`);
+    if (typeof buildability.maxHeightMeters === 'number') parts.push(`height ${buildability.maxHeightMeters} m`);
+    if (typeof buildability.frontSetbackMeters === 'number') parts.push(`front setback ${buildability.frontSetbackMeters} m`);
+    if (typeof buildability.rearSetbackMeters === 'number') parts.push(`rear setback ${buildability.rearSetbackMeters} m`);
+    if (typeof buildability.sideSetbackMeters === 'number') parts.push(`side setback ${buildability.sideSetbackMeters} m`);
+    if (typeof buildability.allowedUnits === 'number') parts.push(`allowed units ${buildability.allowedUnits}`);
+    if (typeof buildability.frontageMeters === 'number') parts.push(`frontage ${buildability.frontageMeters} m`);
+
+    return parts.length > 0 ? parts.join('; ') : 'Not available';
+}
+
+function buildAllowedUsesSummary(parcel: USParcelData): string {
+    if (!parcel.zoning.allowedUses || parcel.zoning.allowedUses.length === 0) return 'Not available';
+    return parcel.zoning.allowedUses.slice(0, 8).join(', ');
+}
+
+function buildEnvelopeSummary(parcel: USParcelData): string {
+    if (!parcel.regulationArtifacts?.gridics) return 'Not available';
+
+    const parts: string[] = [];
+    if (parcel.regulationArtifacts.gridics.envelopeGeometryView) {
+        parts.push(`view ${parcel.regulationArtifacts.gridics.envelopeGeometryView}`);
+    }
+    if (parcel.regulationArtifacts.gridics.availableViews.length > 0) {
+        parts.push(`${parcel.regulationArtifacts.gridics.availableViews.length} geometry view(s)`);
+    }
+
+    return parts.length > 0 ? `Available via ${parts.join(', ')}` : 'Available';
+}
+
 export const USPlotIntelligenceService = {
     /**
-     * Main entry point — aggregates all US data sources and generates an AI summary.
+     * Main entry point - aggregates all US data sources and generates an AI summary.
      */
     async analyze(input: PlotIntelligenceInput): Promise<PlotIntelligenceResult> {
         // 1. Fetch all data in parallel
@@ -96,7 +147,7 @@ export const USPlotIntelligenceService = {
         }
 
         // 5. Extract structured insights from the AI response
-        const parsed = this.parseAIResponse(aiResponse, dataGov, parcel);
+        const parsed = this.parseAIResponse(aiResponse);
 
         return {
             demographics: dataGov.demographics,
@@ -127,6 +178,11 @@ export const USPlotIntelligenceService = {
         ifcResult: any,
         adaResult: any
     ): string {
+        const zoningSource = formatZoningSource(parcel);
+        const buildabilitySummary = buildBuildabilitySummary(parcel);
+        const allowedUsesSummary = buildAllowedUsesSummary(parcel);
+        const envelopeSummary = buildEnvelopeSummary(parcel);
+
         return `You are a senior US real estate analyst and development advisor. Analyze the following US plot data and provide a comprehensive investment intelligence summary.
 
 ## PLOT DETAILS
@@ -134,8 +190,13 @@ export const USPlotIntelligenceService = {
 - Plot Area: ${input.plotAreaSqm.toLocaleString()} sqm (${Math.round(input.plotAreaSqm * 10.7639).toLocaleString()} sqft)
 - Elevation (USGS): ${environmental?.elevationMeters ? `${environmental.elevationMeters} meters` : 'Unknown'}
 - Parcel ID: ${parcel.parcelId}
-- Zoning: ${parcel.zoning.zoningCode} — ${parcel.zoning.zoningDescription}
+- Zoning: ${parcel.zoning.zoningCode} - ${parcel.zoning.zoningDescription}
 - Jurisdiction: ${parcel.zoning.jurisdiction}
+- Zoning Source: ${zoningSource}
+- Allowed Uses: ${allowedUsesSummary}
+- Buildability Limits: ${buildabilitySummary}
+- Envelope Geometry: ${envelopeSummary}
+- Zoning Regulation Link: ${parcel.zoning.zoningRegulationLink || 'Not available'}
 - FEMA Flood Zone: ${parcel.zoning.floodZone}
 - ALTA Survey Available: ${parcel.altaSurveyAvailable ? 'Yes' : 'No'}
 
@@ -143,7 +204,7 @@ export const USPlotIntelligenceService = {
 - Owner: ${parcel.title.ownerName} (${parcel.title.ownerType})
 - Last Sale: ${parcel.title.lastSaleDate} at $${parcel.title.lastSalePrice.toLocaleString()}
 - Current Assessed Value: $${parcel.title.assessedValue.toLocaleString()}
-- Encumbrances: ${parcel.encumbrances.length > 0 ? parcel.encumbrances.map(e => `${e.type}: ${e.description} [${e.status}]`).join('; ') : 'None'}
+- Encumbrances: ${parcel.encumbrances.length > 0 ? parcel.encumbrances.map((e) => `${e.type}: ${e.description} [${e.status}]`).join('; ') : 'None'}
 
 ## DEMOGRAPHICS (US Census ACS)
 - Population: ${dataGov.demographics?.population?.toLocaleString() || 'N/A'}
@@ -205,26 +266,33 @@ Be specific and data-driven. Reference actual numbers from the data provided.`;
         const appreciation = parcel.title.assessedValue > parcel.title.lastSalePrice
             ? ((parcel.title.assessedValue / parcel.title.lastSalePrice - 1) * 100).toFixed(1)
             : '0';
+        const zoningSource = formatZoningSource(parcel);
+        const buildabilitySummary = buildBuildabilitySummary(parcel);
+        const allowedUsesSummary = buildAllowedUsesSummary(parcel);
+        const envelopeSummary = buildEnvelopeSummary(parcel);
 
-        return `## Plot Intelligence Summary — ${input.location}
+        return `## Plot Intelligence Summary - ${input.location}
 
 ### BUYABILITY ASSESSMENT (Score: 72/100)
-This ${parcel.zoning.zoningDescription} parcel (${parcel.zoning.zoningCode}) in ${parcel.zoning.jurisdiction} shows a ${appreciation}% assessed value appreciation since its last sale in ${parcel.title.lastSaleDate}. ${parcel.encumbrances.length > 0 ? `There are ${parcel.encumbrances.length} active encumbrance(s) that require review.` : 'No active encumbrances — clean title.'}
+This ${parcel.zoning.zoningDescription} parcel (${parcel.zoning.zoningCode}) in ${parcel.zoning.jurisdiction} shows a ${appreciation}% assessed value appreciation since its last sale in ${parcel.title.lastSaleDate}. Zoning guidance is currently sourced from ${zoningSource.toLowerCase()}. ${parcel.encumbrances.length > 0 ? `There are ${parcel.encumbrances.length} active encumbrance(s) that require review.` : 'No active encumbrances - clean title.'}
 
 ### DEVELOPMENT PROSPECT: Good
 The local market shows strong permit activity with ${dataGov.permits?.totalUnits?.toLocaleString() || 'significant'} units permitted annually. The median household income of $${dataGov.demographics?.medianIncome?.toLocaleString() || 'N/A'} supports premium residential and mixed-use development.
 
 ### KEY RISKS
-- FEMA Flood Zone: ${parcel.zoning.floodZone} — ${parcel.zoning.floodZone === 'X' ? 'minimal flood risk' : 'flood insurance required'}
+- FEMA Flood Zone: ${parcel.zoning.floodZone} - ${parcel.zoning.floodZone === 'X' ? 'minimal flood risk' : 'flood insurance required'}
 - IFC compliance gaps: ${ifcResult.items?.filter((i: any) => i.status !== 'pass').length || 0} items need attention
 - ADA compliance gaps: ${adaResult.items?.filter((i: any) => i.status !== 'pass').length || 0} items need attention
-- ${parcel.altaSurveyAvailable ? 'ALTA survey available — review for boundary discrepancies' : 'No ALTA survey on file — commission one before acquisition'}
+- ${parcel.altaSurveyAvailable ? 'ALTA survey available - review for boundary discrepancies' : 'No ALTA survey on file - commission one before acquisition'}
 
 ### KEY OPPORTUNITIES
 - Strong population base: ${dataGov.demographics?.population?.toLocaleString() || 'N/A'}
 - Low unemployment: ${dataGov.economy?.unemploymentRate || 'N/A'}%
 - Active construction market: $${dataGov.permits?.valuation ? (dataGov.permits.valuation / 1e9).toFixed(1) + 'B' : 'N/A'} annual permit valuation
-- ${parcel.zoning.zoningCode} zoning supports intended use`;
+- ${parcel.zoning.zoningCode} zoning supports intended use
+- Allowed uses in record: ${allowedUsesSummary}
+- Envelope geometry: ${envelopeSummary}
+- Buildability snapshot: ${buildabilitySummary}`;
     },
 
     /**
@@ -232,8 +300,6 @@ The local market shows strong permit activity with ${dataGov.permits?.totalUnits
      */
     parseAIResponse(
         aiText: string,
-        dataGov: any,
-        parcel: USParcelData
     ): {
         buyabilityScore: number;
         developmentProspect: 'Excellent' | 'Good' | 'Moderate' | 'Risky';
@@ -275,10 +341,10 @@ The local market shows strong permit activity with ${dataGov.permits?.totalUnits
             : text.substring(startIdx + startHeader.length);
 
         const lines = section.split('\n')
-            .map(l => l.trim())
-            .filter(l => l.startsWith('-') || l.startsWith('•') || l.startsWith('*'))
-            .map(l => l.replace(/^[-•*]\s*/, '').trim())
-            .filter(l => l.length > 5);
+            .map((line) => line.trim())
+            .filter((line) => line.startsWith('-') || line.startsWith('*') || line.startsWith('•'))
+            .map((line) => line.replace(/^[-•*]\s*/, '').trim())
+            .filter((line) => line.length > 5);
 
         return lines.slice(0, 5);
     }

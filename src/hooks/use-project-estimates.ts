@@ -97,8 +97,11 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
 
     const estimates: ProjectEstimates | null = useMemo(() => {
         if (!project || !metrics || isLoading) return null;
+        const isUSProject = project.market === 'USA' || project.countryCode === 'US';
+        const defaultUsCostLocation = 'Chicago';
+        const defaultIndiaCostLocation = 'Delhi';
 
-        let location = "Delhi";
+        let location = defaultIndiaCostLocation;
         if (typeof project.location === 'string') {
             location = project.location;
         } else if (project.locationLabel) {
@@ -120,29 +123,49 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
         // console.log("Estimating for:", { location, buildingType, heightCategory });
 
         // 1. MATCH COST PARAMETERS
-        const US_LOCATIONS = new Set(['Austin', 'Seattle', 'Phoenix', 'New York', 'Chicago', 'Los Angeles', 'San Francisco', 'Houston', 'Dallas']);
         const lookupType = buildingType === 'Mixed-Use' ? 'Mixed Use' : buildingType;
+        const mergeCostParamDefaults = (
+            param: CostRevenueParameters | undefined,
+            bType: string
+        ): CostRevenueParameters | undefined => {
+            const normalizedType = bType === 'Mixed-Use' ? 'Mixed Use' : bType;
+            const fallbackLocation = isUSProject ? defaultUsCostLocation : defaultIndiaCostLocation;
+            const fallbackParam = DEFAULT_COST_PARAMETERS.find(
+                c => c.location === location && c.building_type === normalizedType
+            ) || DEFAULT_COST_PARAMETERS.find(
+                c => c.location === fallbackLocation && c.building_type === normalizedType
+            ) || DEFAULT_COST_PARAMETERS[0];
+
+            if (!param) return fallbackParam as CostRevenueParameters;
+
+            return {
+                ...fallbackParam,
+                ...param,
+                utility_costs: {
+                    ...(fallbackParam.utility_costs || {}),
+                    ...(param.utility_costs || {})
+                },
+                site_costs: {
+                    ...(fallbackParam.site_costs || {}),
+                    ...(param.site_costs || {})
+                }
+            } as CostRevenueParameters;
+        };
+
         let costParam = costs.find(c => c.location === location && c.building_type === lookupType);
         if (!costParam) {
-            // console.log("Exact match not found. Trying Delhi fallback...");
-            costParam = costs.find(c => c.location === 'Delhi' && c.building_type === lookupType);
+            const fallbackLocation = isUSProject ? defaultUsCostLocation : defaultIndiaCostLocation;
+            costParam = costs.find(c => c.location === fallbackLocation && c.building_type === lookupType);
         }
         if (!costParam) {
             // console.log("Delhi fallback not found. Using first available.");
             costParam = costs[0];
         }
+        costParam = mergeCostParamDefaults(costParam, lookupType);
 
         // Ensure US locations always have USD currency, even if the DB record is stale
-        if (costParam && US_LOCATIONS.has(location) && costParam.currency !== 'USD') {
+        if (costParam && isUSProject && costParam.currency !== 'USD') {
             costParam = { ...costParam, currency: 'USD' };
-        }
-        
-        // Fallback for missing site_costs (since Firebase docs might be stale)
-        if (costParam && !costParam.site_costs) {
-            const fallbackParam = DEFAULT_COST_PARAMETERS.find(c => c.location === location && c.building_type === lookupType)
-                               || DEFAULT_COST_PARAMETERS.find(c => c.location === 'Delhi' && c.building_type === lookupType)
-                               || DEFAULT_COST_PARAMETERS[0];
-            costParam = { ...costParam, site_costs: fallbackParam.site_costs };
         }
 
         // 2. MATCH TIME PARAMETERS
@@ -161,12 +184,15 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
         }
 
         // --- CALCULATIONS ---
-        let totalCost = 0;
         let totalRev = 0;
         let totalEarthwork = 0;
         let totalStructure = 0;
         let totalFinishing = 0;
         let totalServices = 0;
+        let totalCloseout = 0;
+        let totalFinance = 0;
+        let totalMarketing = 0;
+        let totalHardConstructionCost = 0;
         const perBuildingBreakdown: any[] = [];
         let maxTimelineMonths = 0;
         let criticalPathPhases = { excavation: 0, foundation: 0, structure: 0, finishing: 0, overlap: 0, contingency: 0 };
@@ -185,8 +211,11 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
         };
 
         const getCostParam = (bType: string) => {
-            return costs.find(c => c.location === location && c.building_type === bType) || costParam;
-        }
+            return mergeCostParamDefaults(
+                costs.find(c => c.location === location && c.building_type === (bType === 'Mixed-Use' ? 'Mixed Use' : bType)),
+                bType
+            ) || costParam;
+        };
 
         if (buildings.length > 0) {
             buildings.forEach(b => {
@@ -222,6 +251,7 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                 const bStructure = bGFA * bCostParam.structure_cost_per_sqm * heightMultiplier;
                 const bFinishing = bGFA * bCostParam.finishing_cost_per_sqm;
                 const bServices = bGFA * bCostParam.services_cost_per_sqm * heightMultiplier;
+                const bCloseout = bGFA * (bCostParam.closeout_cost_per_sqm || 0);
                 
                 // Basement cost adjustment (additional earthwork & waterproofing)
                 // Each basement level adds ~15% to earthwork cost (deeper excavation, more waterproofing)
@@ -231,17 +261,24 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                 }
                 const adjustedEarthwork = bEarthwork * basementCostMultiplier;
                 
-                const bCost = adjustedEarthwork + bStructure + bFinishing + bServices;
+                const bHardConstructionCost = adjustedEarthwork + bStructure + bFinishing + bServices + bCloseout;
                 const bRev = bGFA * bCostParam.sellable_ratio * bCostParam.market_rate_per_sqm;
+                const bFinance = bHardConstructionCost * ((bCostParam.finance_pct || 0) / 100);
+                const bMarketing = bRev * ((bCostParam.marketing_pct || 0) / 100);
+                const bContingency = bHardConstructionCost * 0.05;
+                const bTotalCost = bHardConstructionCost + bContingency + bFinance + bMarketing;
                 
-                totalCost += bCost;
+                totalHardConstructionCost += bHardConstructionCost;
                 totalRev += bRev;
+                totalFinance += bFinance;
+                totalMarketing += bMarketing;
                 
                 // Aggregate components
                 totalEarthwork += adjustedEarthwork;
                 totalStructure += bStructure;
                 totalFinishing += bFinishing;
                 totalServices += bServices;
+                totalCloseout += bCloseout;
 
                 // Timeline
                 const isTower = b.id.includes('-tower');
@@ -320,7 +357,7 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
                         contingency: bTimeParam.contingency_buffer_months
                     },
                     cost: {
-                        total: bCost,
+                        total: bTotalCost,
                         ratePerSqm: bCostParam.total_cost_per_sqm
                     },
                     gfa: bGFA,
@@ -343,9 +380,12 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
             totalStructure = gfa * costParam.structure_cost_per_sqm;
             totalFinishing = gfa * costParam.finishing_cost_per_sqm;
             totalServices = gfa * costParam.services_cost_per_sqm;
-            totalCost = totalEarthwork + totalStructure + totalFinishing + totalServices;
+            totalCloseout = gfa * (costParam.closeout_cost_per_sqm || 0);
+            totalHardConstructionCost = totalEarthwork + totalStructure + totalFinishing + totalServices + totalCloseout;
             
             totalRev = gfa * costParam.sellable_ratio * costParam.market_rate_per_sqm;
+            totalFinance = totalHardConstructionCost * ((costParam.finance_pct || 0) / 100);
+            totalMarketing = totalRev * ((costParam.marketing_pct || 0) / 100);
             
             // Standard timeline for potential
             if (gfa > 0) {
@@ -396,8 +436,9 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
         // Let's apply limiting factors.
         
         // Add 5% contingency on top of everything
-        const contingency = totalCost * 0.05;
-        const finalTotalCost = totalCost + contingency; 
+        const contingency = totalHardConstructionCost * 0.05;
+        const finalConstructionCost = totalHardConstructionCost + contingency;
+        const finalTotalCost = finalConstructionCost + totalFinance + totalMarketing;
 
         // Profit
         const profit = totalRev - finalTotalCost; 
@@ -533,13 +574,22 @@ export function useProjectEstimates(project: Project | null, metrics: AdvancedKP
         return {
             isPotential,
             currency: costParam.currency || 'INR',
-            total_construction_cost: finalTotalCost,
+            total_construction_cost: finalConstructionCost,
+            total_project_cost: finalTotalCost,
             cost_breakdown: {
                 earthwork: totalEarthwork,
                 structure: totalStructure,
                 finishing: totalFinishing,
                 services: totalServices,
+                closeout: totalCloseout,
                 contingency: contingency
+            },
+            soft_cost_breakdown: {
+                finance: totalFinance,
+                marketing: totalMarketing,
+                total: totalFinance + totalMarketing,
+                finance_pct: costParam.finance_pct || 0,
+                marketing_pct: costParam.marketing_pct || 0
             },
             total_revenue: totalRev,
             potential_profit: profit,

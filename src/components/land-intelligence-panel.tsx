@@ -10,6 +10,7 @@ import {
   Loader2,
   Map,
   MapPin,
+  FileText,
   RefreshCw,
   Satellite,
   TrendingUp,
@@ -21,18 +22,38 @@ import type { EnvironmentalScreeningReport } from "@/lib/land-intelligence/envir
 import { inferScoreQueryLocation } from "@/lib/land-intelligence/infer-score-query-location";
 import type { LandUseSummary } from "@/lib/land-intelligence/land-use";
 import type { TransportationScreeningReport } from "@/lib/land-intelligence/transportation";
-import type { DevelopabilityScore, PopulationMigrationAnalysis } from "@/lib/types";
+import type { DubaiLandContextResult } from "@/services/uae/dubai-land-service";
+import type { DevelopabilityScore, PopulationMigrationAnalysis, TerrainIntelligenceData } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useRegulations } from "@/hooks/use-regulations";
+import { DubaiLandContextCard } from "./dubai-land-context-card";
 import { PopulationMigrationCard } from "./population-migration-card";
+import {
+  TerrainIntelligenceCard,
+  TerrainIntelligenceStateCard,
+} from "./terrain-intelligence-card";
 import { TransportationScreeningCard } from "./transportation-screening-card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { DevelopabilityScoreOverview } from "./developability-score-overview";
+import { IndiaParcelDetailsCard } from "./india-parcel-details-card";
 
 interface ScoreResult {
   score: DevelopabilityScore;
+  isUS?: boolean;
+  uaeMarketData?: DubaiLandContextResult | null;
+  usMarketData?: {
+    environmental?: {
+      floodZone?: {
+        zone: string;
+        zoneDescription: string;
+        isHighRisk: boolean;
+        panelNumber: string;
+      } | null;
+    } | null;
+  } | null;
+  terrain: TerrainIntelligenceData | null;
   environmentalScreening: EnvironmentalScreeningReport | null;
   transportationScreening: TransportationScreeningReport | null;
   populationMigration: PopulationMigrationAnalysis | null;
@@ -67,6 +88,13 @@ interface ScoreResult {
     populationMigration: { count: number; available: boolean };
     fdi: { count: number; available: boolean };
     sez: { count: number; available: boolean };
+    dubaiLand?: {
+      count: number;
+      available: boolean;
+      source?: string;
+      integrationStatus?: string;
+    };
+    terrain: { available: boolean; isMock: boolean; source?: string };
     satellite: { available: boolean; isMock: boolean };
     regulation: { available: boolean };
     googlePlaces: { count: number; available: boolean };
@@ -454,6 +482,13 @@ export function LandIntelligencePanel() {
           </div>
         ) : null}
 
+        {instantAnalysisTarget?.indiaParcel ? (
+          <IndiaParcelDetailsCard
+            parcel={instantAnalysisTarget.indiaParcel}
+            title={`${instantAnalysisTarget.indiaParcel.stateName} Parcel Details`}
+          />
+        ) : null}
+
         <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-secondary/20 p-3">
           <MapPin className="h-4 w-4 shrink-0 text-primary" />
           <div className="min-w-0 flex-1">
@@ -481,9 +516,25 @@ export function LandIntelligencePanel() {
         </div>
 
         {error ? (
-          <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-xs text-red-400">{error}</p>
+          <div
+            className={cn(
+              "flex items-start gap-2 rounded-lg p-3",
+              scoreData
+                ? "border border-amber-500/30 bg-amber-500/5"
+                : "border border-red-500/30 bg-red-500/5",
+            )}
+          >
+            <AlertTriangle
+              className={cn(
+                "mt-0.5 h-4 w-4 shrink-0",
+                scoreData ? "text-amber-400" : "text-red-500",
+              )}
+            />
+            <p className={cn("text-xs", scoreData ? "text-amber-300" : "text-red-400")}>
+              {scoreData && /timeout|aborted/i.test(error)
+                ? `Some supplemental checks timed out, but the main land-intelligence score still loaded. ${error}`
+                : error}
+            </p>
           </div>
         ) : null}
 
@@ -542,12 +593,32 @@ export function LandIntelligencePanel() {
               nearbyAmenities={scoreData.nearbyAmenities}
             />
 
+            {scoreData.uaeMarketData ? (
+              <DubaiLandContextCard data={scoreData.uaeMarketData} />
+            ) : null}
+
+            {scoreData.terrain ? (
+              <TerrainIntelligenceCard terrain={scoreData.terrain} />
+            ) : (
+              <TerrainIntelligenceStateCard
+                available={scoreData.dataSources.terrain.available}
+                message={
+                  scoreData.dataSources.terrain.available
+                    ? "Terrain data source was available for this run, but the detailed terrain metrics were not attached to the current response."
+                    : "SRTM terrain metrics were not returned for this run. The chip in Data Sources is still listed for consistency, but the gray x state means terrain did not contribute to this result."
+                }
+              />
+            )}
+
             {scoreData.environmentalScreening ? (
               <InfoCard
                 icon={Globe}
                 title="EPA Environmental Screening"
                 color="text-emerald-500"
               >
+                {(() => {
+                  return (
+                    <>
                 <DataRow
                   label="Wetland Risk"
                   value={scoreData.environmentalScreening.wetlandScreening.status}
@@ -596,7 +667,7 @@ export function LandIntelligencePanel() {
 
                 <div className="mt-2 rounded border border-border/40 bg-secondary/20 p-2">
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Summary
+                    Overview
                   </div>
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {scoreData.environmentalScreening.nepa.summary}
@@ -619,6 +690,53 @@ export function LandIntelligencePanel() {
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                       {scoreData.environmentalScreening.airQuality.summary}
                     </p>
+                    {scoreData.environmentalScreening.airQuality.observedAqi == null ? (
+                      <p className="mt-2 text-[11px] text-muted-foreground">
+                        "Live AQI data was unavailable for this request."
+                      </p>
+                    ) : null}
+                    {scoreData.environmentalScreening.airQuality.observedAqi != null ||
+                    scoreData.environmentalScreening.airQuality.primaryPollutant ||
+                    scoreData.environmentalScreening.airQuality.reportingArea ||
+                    scoreData.environmentalScreening.airQuality.observationTime ? (
+                      <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
+                        {scoreData.environmentalScreening.airQuality.observedAqi != null ? (
+                          <div>
+                            AQI:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.airQuality.observedAqi}
+                              {scoreData.environmentalScreening.airQuality.observedCategory
+                                ? ` (${scoreData.environmentalScreening.airQuality.observedCategory})`
+                                : ""}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.airQuality.primaryPollutant ? (
+                          <div>
+                            Primary pollutant:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.airQuality.primaryPollutant}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.airQuality.reportingArea ? (
+                          <div>
+                            Reporting area:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.airQuality.reportingArea}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.airQuality.observationTime ? (
+                          <div>
+                            Observed:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.airQuality.observationTime}
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="rounded border border-border/40 bg-secondary/20 p-2">
                     <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -627,38 +745,58 @@ export function LandIntelligencePanel() {
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                       {scoreData.environmentalScreening.waterQuality.summary}
                     </p>
-                  </div>
-                </div>
-
-                {scoreData.environmentalScreening.nepa.triggers.length > 0 ? (
-                  <div className="space-y-1">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Review Triggers
-                    </div>
-                    {scoreData.environmentalScreening.nepa.triggers.map((trigger, index) => (
-                      <div
-                        key={`${trigger}-${index}`}
-                        className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
-                      >
-                        {trigger}
+                    {scoreData.environmentalScreening.waterQuality.nearestAssessmentUnit ||
+                    scoreData.environmentalScreening.waterQuality.overallStatus ||
+                    scoreData.environmentalScreening.waterQuality.irCategory ||
+                    scoreData.environmentalScreening.waterQuality.impairmentSignals?.length ? (
+                      <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
+                        {scoreData.environmentalScreening.waterQuality.nearestAssessmentUnit ? (
+                          <div>
+                            Waterbody:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.nearestAssessmentUnit}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.waterQuality.overallStatus ? (
+                          <div>
+                            Status:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.overallStatus}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.waterQuality.irCategory ? (
+                          <div>
+                            IR category:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.irCategory}
+                            </span>
+                          </div>
+                        ) : null}
+                        {typeof scoreData.environmentalScreening.waterQuality.impaired === "boolean" ? (
+                          <div>
+                            Impaired:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.impaired ? "Yes" : "No"}
+                            </span>
+                          </div>
+                        ) : null}
+                        {scoreData.environmentalScreening.waterQuality.impairmentSignals?.length ? (
+                          <div>
+                            Observed indicators:{" "}
+                            <span className="font-medium text-foreground">
+                              {scoreData.environmentalScreening.waterQuality.impairmentSignals.join(", ")}
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
-                    ))}
+                    ) : null}
                   </div>
-                ) : null}
-
-                <div className="space-y-1">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Due-Diligence Documents
-                  </div>
-                  {scoreData.environmentalScreening.nepa.recommendedDocuments.map((document, index) => (
-                    <div
-                      key={`${document}-${index}`}
-                      className="rounded bg-secondary/30 px-2 py-1.5 text-xs text-muted-foreground"
-                    >
-                      {document}
-                    </div>
-                  ))}
                 </div>
+                    </>
+                  );
+                })()}
               </InfoCard>
             ) : null}
 

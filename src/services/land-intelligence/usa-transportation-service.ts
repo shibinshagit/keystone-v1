@@ -238,7 +238,7 @@ export const UsaTransportationService = {
   }: {
     coordinates: [number, number];
     location?: string;
-    heuristicInput?: Omit<TransportationHeuristicInput, "pilotContext" | "location">;
+    heuristicInput?: Omit<TransportationHeuristicInput, "jurisdictionContext" | "location">;
   }): Promise<TransportationScreeningReport> {
     const context = resolveUsaTransportationContext(location);
     if (!context) {
@@ -260,7 +260,7 @@ export const UsaTransportationService = {
       registryAvailable = registryEntries.length > 0;
 
       if (!registryAvailable) {
-        notes.push("No WZDx registry entry was returned for the pilot state.");
+        notes.push("No WZDx registry entry was returned for the mapped state.");
       } else {
         const registryEntry = pickRegistryEntry(registryEntries, context);
         if (!registryEntry?.url?.url) {
@@ -314,7 +314,7 @@ export const UsaTransportationService = {
     const heuristics = evaluateTransportationHeuristics({
       ...heuristicInput,
       location,
-      pilotContext: context,
+      jurisdictionContext: context,
       nearbyWorkZoneCountWithin1Km: countWithin1Km,
       nearbyWorkZoneCountWithin5Km: countWithin5Km,
       nearestWorkZoneDistanceMeters: nearestWorkZoneDistance,
@@ -326,7 +326,6 @@ export const UsaTransportationService = {
       location,
       city: context.city,
       stateCode: context.stateCode,
-      pilotCity: context.pilotCity,
       tia: heuristics.tia,
       transitAccess: heuristics.transit,
       roadwayContext: heuristics.roadway,

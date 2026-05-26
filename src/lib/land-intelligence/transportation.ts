@@ -93,7 +93,6 @@ export interface TransportationScreeningReport {
   location: string;
   city?: string;
   stateCode?: string;
-  pilotCity?: "Austin" | "Phoenix" | "Seattle";
   tia: TransportationTiaSummary;
   transitAccess: TransportationTransitAccessSummary;
   roadwayContext: TransportationRoadwayContextSummary;
@@ -111,7 +110,6 @@ export interface TransportationScreeningReport {
 
 export interface UsaTransportationContext {
   city?: string;
-  pilotCity?: "Austin" | "Phoenix" | "Seattle";
   stateCode: string;
   stateName: string;
   localAuthority: string;
@@ -135,16 +133,15 @@ export interface TransportationHeuristicInput {
   nearbyWorkZoneCountWithin1Km?: number;
   nearbyWorkZoneCountWithin5Km?: number;
   nearestWorkZoneDistanceMeters?: number | null;
-  pilotContext?: UsaTransportationContext | null;
+  jurisdictionContext?: UsaTransportationContext | null;
 }
 
-export const USA_TRANSPORTATION_PILOT_CONTEXT: Record<
+export const USA_TRANSPORTATION_CITY_CONTEXT: Record<
   "Austin" | "Phoenix" | "Seattle",
   UsaTransportationContext
 > = {
   Austin: {
     city: "Austin",
-    pilotCity: "Austin",
     stateCode: "TX",
     stateName: "Texas",
     localAuthority: "Austin Transportation and Public Works Department",
@@ -155,7 +152,6 @@ export const USA_TRANSPORTATION_PILOT_CONTEXT: Record<
   },
   Phoenix: {
     city: "Phoenix",
-    pilotCity: "Phoenix",
     stateCode: "AZ",
     stateName: "Arizona",
     localAuthority: "Phoenix Street Transportation Department",
@@ -166,7 +162,6 @@ export const USA_TRANSPORTATION_PILOT_CONTEXT: Record<
   },
   Seattle: {
     city: "Seattle",
-    pilotCity: "Seattle",
     stateCode: "WA",
     stateName: "Washington",
     localAuthority: "Seattle Department of Transportation (SDOT)",
@@ -343,19 +338,19 @@ export function resolveUsaTransportationContext(
   const inferredState =
     typeof inferred.stateOrProvince === "string" ? inferred.stateOrProvince : undefined;
 
-  if (city && city in USA_TRANSPORTATION_PILOT_CONTEXT) {
-    return USA_TRANSPORTATION_PILOT_CONTEXT[city as "Austin" | "Phoenix" | "Seattle"];
+  if (city && city in USA_TRANSPORTATION_CITY_CONTEXT) {
+    return USA_TRANSPORTATION_CITY_CONTEXT[city as "Austin" | "Phoenix" | "Seattle"];
   }
 
   const normalized = normalizeText(location);
   if (normalized.includes("austin")) {
-    return USA_TRANSPORTATION_PILOT_CONTEXT.Austin;
+    return USA_TRANSPORTATION_CITY_CONTEXT.Austin;
   }
   if (normalized.includes("phoenix")) {
-    return USA_TRANSPORTATION_PILOT_CONTEXT.Phoenix;
+    return USA_TRANSPORTATION_CITY_CONTEXT.Phoenix;
   }
   if (normalized.includes("seattle")) {
-    return USA_TRANSPORTATION_PILOT_CONTEXT.Seattle;
+    return USA_TRANSPORTATION_CITY_CONTEXT.Seattle;
   }
 
   const parts = normalized
@@ -400,11 +395,11 @@ export function resolveUsaTransportationContext(
   };
 }
 
-export function resolveUsaTransportationPilotContext(
+export function resolveUsaTransportationCityContext(
   location: string,
 ): UsaTransportationContext | null {
   const context = resolveUsaTransportationContext(location);
-  return context?.pilotCity ? context : null;
+  return context?.city ? context : null;
 }
 
 export function evaluateTransportationHeuristics(
@@ -570,10 +565,10 @@ export function evaluateTransportationHeuristics(
           ? "Nearby work-zone activity exists but does not look like a dominant access constraint from this first-pass screen."
           : "No reliable nearby work-zone signal was available.";
 
-  const pilotContext = input.pilotContext || null;
+  const jurisdictionContext = input.jurisdictionContext || null;
   const authorities = uniqueStrings([
-    pilotContext?.localAuthority,
-    pilotContext?.stateAuthority,
+    jurisdictionContext?.localAuthority,
+    jurisdictionContext?.stateAuthority,
   ]);
   const approvalTriggers = uniqueStrings([
     tiaLikelihood !== "unlikely"
@@ -582,7 +577,7 @@ export function evaluateTransportationHeuristics(
     accessStatus !== "low"
       ? "Driveway spacing, curb management, and site-access geometry should be reviewed early."
       : "Basic driveway/access review is still needed even if the first-pass access risk is low.",
-    pilotContext?.stateRouteTriggerNote,
+    jurisdictionContext?.stateRouteTriggerNote,
     workZones1Km > 0
       ? "Nearby work zones make construction traffic management planning more important."
       : null,
@@ -602,11 +597,11 @@ export function evaluateTransportationHeuristics(
   ]);
 
   const approvalNotes = uniqueStrings([
-    pilotContext
-      ? `${pilotContext.localAuthority} should be treated as the primary transportation reviewer for this pilot market.`
+    jurisdictionContext
+      ? `${jurisdictionContext.localAuthority} should be treated as the primary transportation reviewer for this mapped jurisdiction.`
       : "Primary local transportation review authority should be confirmed for this site.",
-    pilotContext
-      ? `${pilotContext.stateAuthority} review is conditional rather than automatic and usually depends on whether the project touches a state route or controlled-access system.`
+    jurisdictionContext
+      ? `${jurisdictionContext.stateAuthority} review is conditional rather than automatic and usually depends on whether the project touches a state route or controlled-access system.`
       : null,
   ]);
 

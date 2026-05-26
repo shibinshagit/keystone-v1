@@ -1,5 +1,6 @@
 
-import type { Feature, Polygon, Point } from 'geojson';
+import type { Feature, Polygon, Point, MultiPolygon, GeoJsonObject } from 'geojson';
+import type { IndiaParcelSelection } from '@/services/india/shared/types';
 import { z } from 'zod';
 
 export interface SoilData {
@@ -216,8 +217,10 @@ export interface Plot {
   visible: boolean;
   location: string | null;
   availableRegulations: RegulationData[] | null;
+  availableRegulationArtifacts?: Record<string, RegulationArtifacts> | null;
   selectedRegulationType: string | null;
   regulation: RegulationData | null;
+  regulationArtifacts?: RegulationArtifacts | null;
   // Regulation-derived constraints
   maxBuildingHeight?: number; // Maximum building height in meters (from regulations)
   far?: number; // Floor Area Ratio (from regulations)
@@ -307,6 +310,8 @@ export interface EvaluateLandInput {
   proximity: LandProximity[];
   notes?: string;
 }
+
+export type KeralaParcelSelection = IndiaParcelSelection;
 
 export type GeographyMarket = 'India' | 'USA' | 'UAE';
 export type CountryCode = 'IN' | 'US' | 'AE';
@@ -769,6 +774,65 @@ export interface RegulationValue {
   exampleStr?: string;
 }
 
+export type RegulationProvider = 'gridics' | 'firestore' | 'national-fallback' | 'hybrid';
+export type RegulationSourceConfidence = 'explicit' | 'inferred' | 'partial';
+export type RegulationFieldStatus = 'explicit' | 'inferred' | 'missing' | 'override' | 'partial';
+export type RegulationSectionName =
+  | 'geometry'
+  | 'highrise'
+  | 'facilities'
+  | 'sustainability'
+  | 'safety_and_services'
+  | 'administration'
+  | 'accessibility';
+
+export interface RegulationFieldProvenance {
+  provider: RegulationProvider;
+  status: RegulationFieldStatus;
+  detail?: string;
+  basis?: string;
+  rawField?: string | string[];
+  assumption?: string;
+}
+
+export interface ConditionalRegulationCondition {
+  when: string;
+  value?: number | string;
+  note?: string;
+}
+
+export interface ConditionalRegulationPayload {
+  kind: 'conditional';
+  summary: string;
+  basis?: string;
+  conditions: ConditionalRegulationCondition[];
+}
+
+export type RegulationFieldProvenanceMap = Partial<Record<RegulationSectionName, Record<string, RegulationFieldProvenance>>>;
+
+export interface RegulationSourceInfo {
+  provider: RegulationProvider;
+  label: string;
+  confidence?: RegulationSourceConfidence;
+  detail?: string;
+  gridicsGroupId?: string;
+  zoneCode?: string;
+  hasAdminOverride?: boolean;
+  missingFields?: string[];
+}
+
+export interface GridicsRegulationArtifacts {
+  provider: 'gridics';
+  availableViews: string[];
+  envelopeGeometryView?: string;
+  envelopeGeometry?: GeoJsonObject | null;
+  frontageCount?: number;
+}
+
+export interface RegulationArtifacts {
+  gridics?: GridicsRegulationArtifacts;
+}
+
 export interface RegulationData {
   id?: string;
   location: string;
@@ -786,6 +850,8 @@ export interface RegulationData {
   safety_and_services: { [key: string]: RegulationValue };
   administration: { [key: string]: RegulationValue };
   accessibility?: { [key: string]: RegulationValue }; // IFC Fire Code + ADA (US)
+  sourceInfo?: RegulationSourceInfo;
+  fieldProvenance?: RegulationFieldProvenanceMap;
 }
 
 export const REGULATION_SUB_GROUPS: Record<string, string[]> = {
@@ -798,7 +864,7 @@ export const REGULATION_SUB_GROUPS: Record<string, string[]> = {
     "Environment & Greens": ["open_space", "max_ground_coverage", "tree_plantation_green_cover", "leed_compliance", "igbc_compliance", "griha_compliance", "rainwater_harvesting", "solar_panels", "water_consumption_norm", "energy_efficiency"],
     "Fire & Life Safety": ["fire_safety", "fire_tender_access", "staircases_by_height", "fire_exits_travel_distance", "refuge_floors", "fire_fighting_systems", "fire_command_center", "fire_tender_movement"],
     "IFC Fire Code (US)": ["hydrant_spacing", "fire_lane_width", "standpipe_required", "fire_sprinkler_threshold", "fire_alarm_threshold_occupants", "travel_distance_sprinklered", "travel_distance_unsprinklered", "smoke_control_threshold"],
-    "ADA Accessibility (US)": ["accessible_route_width", "accessible_parking_pct", "accessible_parking_van", "ramp_max_slope", "door_clearance_width", "elevator_required_floors", "accessible_restrooms", "signage_compliance", "common_area_accessible"],
+    "Accessibility": ["accessible_route_width", "accessible_parking_pct", "accessible_parking_van", "ramp_max_slope", "door_clearance_width", "elevator_required_floors", "accessible_restrooms", "signage_compliance", "common_area_accessible"],
     "Utilities & MEP": ["water_supply_approval", "sewer_connection_stp", "stormwater_drainage", "electrical_load_sanction", "transformer_placement", "backup_power_norms", "gas_pipelines", "telecom_infrastructure", "sewage_treatment_plant", "solid_waste_management"],
     "Structural Engineering": ["seismic_zone", "wind_load", "soil_bearing_capacity"],
     "Financial & Legal": ["fee_rate", "saleable_vs_carpet_rera", "exit_compliance", "absorption_assumptions", "infra_load_vs_financial_viability"],
@@ -856,6 +922,7 @@ export interface CostRevenueParameters {
   structure_cost_per_sqm: number;
   finishing_cost_per_sqm: number;
   services_cost_per_sqm: number; // MEP
+  closeout_cost_per_sqm?: number;
   total_cost_per_sqm: number; // Calculated field
 
   // Range fields for Monte Carlo simulation (min/max)
@@ -867,6 +934,16 @@ export interface CostRevenueParameters {
   finishing_cost_per_sqm_max?: number;
   services_cost_per_sqm_min?: number;
   services_cost_per_sqm_max?: number;
+  closeout_cost_per_sqm_min?: number;
+  closeout_cost_per_sqm_max?: number;
+
+  // Soft costs (% based)
+  finance_pct?: number;
+  finance_pct_min?: number;
+  finance_pct_max?: number;
+  marketing_pct?: number;
+  marketing_pct_min?: number;
+  marketing_pct_max?: number;
 
   // Utility Costs (absolute or per-unit)
   utility_costs?: {
@@ -1142,16 +1219,27 @@ export interface SimulationResults {
 }
 
 export interface ProjectEstimates {
+  /** Core construction incl. closeout and contingency, excl. finance/marketing/site/land */
   isPotential?: boolean;
   /** Currency code for all monetary values in this estimate ('INR' | 'USD') */
   currency?: string;
   total_construction_cost: number;
+  /** Fully loaded project cost excl. land/site extras, incl. finance and marketing */
+  total_project_cost?: number;
   cost_breakdown: {
     earthwork: number;
     structure: number;
     finishing: number;
     services: number;
+    closeout: number;
     contingency: number;
+  };
+  soft_cost_breakdown?: {
+    finance: number;
+    marketing: number;
+    total: number;
+    finance_pct?: number;
+    marketing_pct?: number;
   };
 
   total_revenue: number;
@@ -1160,6 +1248,7 @@ export interface ProjectEstimates {
   /** Market rate from admin cost params (₹/sqm sellable) */
   market_rate_per_sqm?: number;
   sellable_ratio?: number;
+  site_costs?: CostRevenueParameters['site_costs'] | null;
 
   timeline: {
     total_months: number;
@@ -1309,6 +1398,55 @@ export interface SatelliteChangeData {
   source: string;
 }
 
+export type TerrainGeometryMode = 'plot' | 'buffer';
+export type TerrainRiskLevel = 'low' | 'moderate' | 'high';
+export type TerrainBuildability = 'favorable' | 'conditional' | 'constrained';
+export type TerrainAspectDirection =
+  | 'N'
+  | 'NE'
+  | 'E'
+  | 'SE'
+  | 'S'
+  | 'SW'
+  | 'W'
+  | 'NW';
+export type TerrainClass =
+  | 'flat'
+  | 'gentle'
+  | 'rolling'
+  | 'steep'
+  | 'very-steep';
+
+export interface TerrainIntelligenceData {
+  location: string;
+  coordinates: [number, number];
+  analysisDate: string;
+  source: string;
+  dataset: string;
+  resolutionMeters: number;
+  geometryMode: TerrainGeometryMode;
+  bufferRadiusMeters: number | null;
+  elevationMeters: {
+    mean: number | null;
+    min: number | null;
+    max: number | null;
+    relief: number | null;
+    centroid: number | null;
+  };
+  slopeDegrees: {
+    mean: number | null;
+    max: number | null;
+  };
+  aspectDegrees: number | null;
+  aspectDirection: TerrainAspectDirection | null;
+  terrainClass: TerrainClass;
+  runoffRisk: TerrainRiskLevel;
+  foundationRisk: TerrainRiskLevel;
+  buildability: TerrainBuildability;
+  drainageNote: string;
+  summary: string;
+}
+
 // Master Plan extraction types
 export interface MasterPlanZone {
   zoneName: string;              // e.g. "Residential Zone R1"
@@ -1399,3 +1537,12 @@ export const getPrimarySetback = (regulation?: RegulationData | null): number | 
 
     return undefined;
 };
+
+export const isConditionalRegulationPayload = (value: unknown): value is ConditionalRegulationPayload =>
+    Boolean(
+        value &&
+        typeof value === 'object' &&
+        (value as ConditionalRegulationPayload).kind === 'conditional' &&
+        typeof (value as ConditionalRegulationPayload).summary === 'string' &&
+        Array.isArray((value as ConditionalRegulationPayload).conditions)
+    );

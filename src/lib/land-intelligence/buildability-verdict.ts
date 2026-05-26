@@ -171,6 +171,7 @@ export function evaluateBuildabilityVerdict({
   const { zoneDisplay, conversionDisplay } = getRegulationFields(regulation);
   const isNationalFallback = regulationSource === "national-fallback";
   const hasLocalRegulation =
+    regulationSource === "gridics" ||
     regulationSource === "specific-id" ||
     regulationSource === "generic-id" ||
     regulationSource === "location-query";

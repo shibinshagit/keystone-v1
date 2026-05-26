@@ -47,6 +47,11 @@ export interface AirQualityScreeningSummary extends EnvironmentalSignal {
   formalEnforcementCount: number;
   totalPenalties?: string | null;
   sampleFacilities: EnvironmentalFacility[];
+  observedAqi?: number | null;
+  observedCategory?: string | null;
+  primaryPollutant?: string | null;
+  reportingArea?: string | null;
+  observationTime?: string | null;
 }
 
 export interface WaterQualityScreeningSummary extends EnvironmentalSignal {
@@ -58,6 +63,13 @@ export interface WaterQualityScreeningSummary extends EnvironmentalSignal {
   totalPenalties?: string | null;
   permitStatuses: string[];
   sampleFacilities: EnvironmentalFacility[];
+  nearestAssessmentUnit?: string | null;
+  overallStatus?: string | null;
+  irCategory?: string | null;
+  assessed?: boolean | null;
+  impaired?: boolean | null;
+  waterbodyReportLink?: string | null;
+  impairmentSignals?: string[];
 }
 
 export interface NepaScreeningSummary {
@@ -85,6 +97,7 @@ export interface EnvironmentalScreeningReport {
   nepa: NepaScreeningSummary;
   dataSources: {
     nlcd: EnvironmentalDataSourceStatus;
+    airNow?: EnvironmentalDataSourceStatus;
     echoAir: EnvironmentalDataSourceStatus;
     echoWater: EnvironmentalDataSourceStatus;
     attains?: EnvironmentalDataSourceStatus;
