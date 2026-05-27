@@ -1,6 +1,10 @@
 import { resolveOverlayByViewportSampling } from "@/services/india/shared/overlay-sampling";
 import { postPublicBhuNakshaFormJson } from "@/services/india/shared/bhunaksha-public";
 import {
+  boundsCenter,
+  intersectionArea,
+} from "@/services/india/shared/geometry";
+import {
   decodePortalText,
   inferUtmZoneFromLongitude,
   normalizeExtent4326,
@@ -15,9 +19,10 @@ import type {
   IndiaParcelSelection,
   IndiaViewportBounds,
 } from "@/services/india/shared/types";
+import { INDIA_STATE_ENDPOINTS } from "@/services/india/shared/state-endpoints";
 
-const RAJASTHAN_BHUNAKSHA_BASE = "https://bhunaksha.rajasthan.gov.in/Viewmap";
-const RAJASTHAN_STATE_CODE = "08" as const;
+const { baseUrl: RAJASTHAN_BHUNAKSHA_BASE, stateCode: RAJASTHAN_STATE_CODE } =
+  INDIA_STATE_ENDPOINTS.rajasthan;
 const RAJASTHAN_COVERAGE = {
   west: 69.2,
   south: 23.0,
@@ -25,6 +30,12 @@ const RAJASTHAN_COVERAGE = {
   north: 30.95,
 } as const;
 const RAJASTHAN_GIS_SEGMENTS = [2, 3, 4, 5, 5, 3] as const;
+const RAJASTHAN_OVERLAY_REUSE_MARGIN = 1.2 as const;
+const rajasthanOverlayVillageCache = new Map<string, IndiaOverlayVillage>();
+const rajasthanOverlayVillagePromiseCache = new Map<
+  string,
+  Promise<IndiaOverlayVillage | null>
+>();
 
 type RajasthanPlotAtXYResponse = {
   vsrno?: string;
@@ -110,6 +121,21 @@ function buildSelectedLevelsFromGisCode(gisCode: string) {
   return parts ? `${parts.join(",")},` : null;
 }
 
+function expandBounds(
+  bounds: IndiaViewportBounds,
+  factor: number,
+): IndiaViewportBounds {
+  const lngPad = (bounds.east - bounds.west) * factor;
+  const latPad = (bounds.north - bounds.south) * factor;
+
+  return {
+    west: Math.max(RAJASTHAN_COVERAGE.west, bounds.west - lngPad),
+    south: Math.max(RAJASTHAN_COVERAGE.south, bounds.south - latPad),
+    east: Math.min(RAJASTHAN_COVERAGE.east, bounds.east + lngPad),
+    north: Math.min(RAJASTHAN_COVERAGE.north, bounds.north + latPad),
+  };
+}
+
 function buildAdministrativeFields(parts: ReturnType<typeof parseLocationParts>) {
   return [
     { label: "District", value: parts.districtName || "N/A" },
@@ -189,44 +215,100 @@ async function getPlotExtent4326(gisCode: string, plotId: string) {
   });
 }
 
+function buildOverlayVillageFromContext(args: {
+  gisCode: string;
+  gisInfo?: string | null;
+  attribution?: string | null;
+  extent: IndiaViewportBounds;
+}): IndiaOverlayVillage {
+  const parts = parseLocationParts(args.gisInfo || args.attribution);
+  const codes = splitFixedWidthCodes(args.gisCode, [...RAJASTHAN_GIS_SEGMENTS]);
+
+  return {
+    stateCode: RAJASTHAN_STATE_CODE,
+    stateName: "Rajasthan",
+    gisCode: args.gisCode,
+    overlayCodes: "",
+    extent: args.extent,
+    administrativeLevels: [
+      { code: codes?.[0] || "", label: "District", value: parts.districtName || "N/A" },
+      { code: codes?.[1] || "", label: "Tehsil", value: parts.subdistrictName || "N/A" },
+      { code: codes?.[2] || "", label: "RI", value: parts.riName || "N/A" },
+      { code: codes?.[3] || "", label: "Halka", value: parts.halkaName || "N/A" },
+      { code: codes?.[4] || "", label: "Village", value: parts.villageName || "N/A" },
+      { code: codes?.[5] || "", label: "Sheet", value: parts.sheetName || "N/A" },
+    ],
+    districtName: parts.districtName,
+    subdistrictName: parts.subdistrictName,
+    villageName: parts.villageName,
+  };
+}
+
+async function buildOverlayVillageFromHit(
+  hit: RajasthanPlotAtXYResponse,
+): Promise<IndiaOverlayVillage | null> {
+  if (!hit.gis_code) return null;
+
+  const gisCode = hit.gis_code;
+  const cachedPromise = rajasthanOverlayVillagePromiseCache.get(gisCode);
+  if (cachedPromise) {
+    return cachedPromise;
+  }
+
+  const promise = (async () => {
+    const selectedLevels = buildSelectedLevelsFromGisCode(gisCode);
+    if (!selectedLevels) return null;
+
+    const extent = await getVillageExtent4326(selectedLevels).catch(() => null);
+    const normalizedExtent = normalizeExtent4326(extent);
+    if (!normalizedExtent) return null;
+    const village = buildOverlayVillageFromContext({
+      gisCode,
+      gisInfo: hit.gisinfo,
+      attribution: extent?.attribution,
+      extent: normalizedExtent,
+    });
+    rajasthanOverlayVillageCache.set(gisCode, village);
+    return village;
+  })()
+    .catch((error) => {
+      rajasthanOverlayVillageCache.delete(gisCode);
+      throw error;
+    })
+    .finally(() => {
+      rajasthanOverlayVillagePromiseCache.delete(gisCode);
+    });
+
+  rajasthanOverlayVillagePromiseCache.set(gisCode, promise);
+  return promise;
+}
+
 export const RajasthanParcelService = {
   stateCode: RAJASTHAN_STATE_CODE,
 
   async resolveVillageOverlay(
     bounds: IndiaViewportBounds,
   ): Promise<IndiaOverlayVillage | null> {
+    const centerHit = await getPlotAtXYGeoref(boundsCenter(bounds)).catch(() => null);
+    if (centerHit?.gis_code) {
+      const cachedVillage = rajasthanOverlayVillageCache.get(centerHit.gis_code);
+      if (cachedVillage && intersectionArea(bounds, cachedVillage.extent) > 0) {
+        return cachedVillage;
+      }
+
+      void buildOverlayVillageFromHit(centerHit).catch(() => null);
+
+      return buildOverlayVillageFromContext({
+        gisCode: centerHit.gis_code,
+        gisInfo: centerHit.gisinfo,
+        extent: expandBounds(bounds, RAJASTHAN_OVERLAY_REUSE_MARGIN),
+      });
+    }
+
     return resolveOverlayByViewportSampling(bounds, async (point) => {
       const hit = await getPlotAtXYGeoref(point).catch(() => null);
       if (!hit?.gis_code) return null;
-
-      const selectedLevels = buildSelectedLevelsFromGisCode(hit.gis_code);
-      if (!selectedLevels) return null;
-
-      const extent = await getVillageExtent4326(selectedLevels).catch(() => null);
-      const normalizedExtent = normalizeExtent4326(extent);
-      if (!normalizedExtent) return null;
-
-      const parts = parseLocationParts(hit.gisinfo || extent?.attribution);
-      const codes = splitFixedWidthCodes(hit.gis_code, [...RAJASTHAN_GIS_SEGMENTS]);
-
-      return {
-        stateCode: RAJASTHAN_STATE_CODE,
-        stateName: "Rajasthan",
-        gisCode: hit.gis_code,
-        overlayCodes: "",
-        extent: normalizedExtent,
-        administrativeLevels: [
-          { code: codes?.[0] || "", label: "District", value: parts.districtName || "N/A" },
-          { code: codes?.[1] || "", label: "Tehsil", value: parts.subdistrictName || "N/A" },
-          { code: codes?.[2] || "", label: "RI", value: parts.riName || "N/A" },
-          { code: codes?.[3] || "", label: "Halka", value: parts.halkaName || "N/A" },
-          { code: codes?.[4] || "", label: "Village", value: parts.villageName || "N/A" },
-          { code: codes?.[5] || "", label: "Sheet", value: parts.sheetName || "N/A" },
-        ],
-        districtName: parts.districtName,
-        subdistrictName: parts.subdistrictName,
-        villageName: parts.villageName,
-      };
+      return buildOverlayVillageFromHit(hit);
     });
   },
 

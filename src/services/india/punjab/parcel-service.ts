@@ -7,15 +7,10 @@ import type {
   IndiaParcelSelection,
   IndiaViewportBounds,
 } from "@/services/india/shared/types";
+import { INDIA_STATE_ENDPOINTS } from "@/services/india/shared/state-endpoints";
 
-const PUNJAB_BHUNAKSHA_BASE = "https://gisbhunaksha.punjab.gov.in";
-const PUNJAB_STATE_CODE = "03" as const;
-const PUNJAB_COVERAGE = {
-  west: 73.8,
-  south: 29.5,
-  east: 76.95,
-  north: 32.55,
-} as const;
+const { baseUrl: PUNJAB_BHUNAKSHA_BASE, stateCode: PUNJAB_STATE_CODE } =
+  INDIA_STATE_ENDPOINTS.punjab;
 
 type PunjabLevelOption = {
   code: string;

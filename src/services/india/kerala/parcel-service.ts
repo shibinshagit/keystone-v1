@@ -10,9 +10,10 @@ import {
   webMercatorToLngLat,
 } from "@/services/india/shared/geometry";
 import type { IndiaParcelField, IndiaViewportBounds } from "@/services/india/shared/types";
+import { INDIA_STATE_ENDPOINTS } from "@/services/india/shared/state-endpoints";
 
-const KERALA_EMAPS_BASE = "https://emaps.kerala.gov.in/bhunaksha";
-const KERALA_STATE_CODE = "32" as const;
+const { baseUrl: KERALA_EMAPS_BASE, stateCode: KERALA_STATE_CODE } =
+  INDIA_STATE_ENDPOINTS.kerala;
 
 type PlotAtCoordinateResponse = {
   vsrno?: string;

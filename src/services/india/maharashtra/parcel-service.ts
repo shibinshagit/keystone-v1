@@ -10,16 +10,13 @@ import type {
   IndiaParcelSelection,
   IndiaViewportBounds,
 } from "@/services/india/shared/types";
+import { INDIA_STATE_ENDPOINTS } from "@/services/india/shared/state-endpoints";
 
-const MAHARASHTRA_BHUNAKSHA_BASE = "https://mahabhunakasha.mahabhumi.gov.in";
-const MAHARASHTRA_LANDING_PATH = "/27/index.html";
-const MAHARASHTRA_STATE_CODE = "27" as const;
-const MAHARASHTRA_COVERAGE = {
-  west: 72.55,
-  south: 15.6,
-  east: 80.95,
-  north: 22.1,
-} as const;
+const {
+  baseUrl: MAHARASHTRA_BHUNAKSHA_BASE,
+  landingPath: MAHARASHTRA_LANDING_PATH,
+  stateCode: MAHARASHTRA_STATE_CODE,
+} = INDIA_STATE_ENDPOINTS.maharashtra;
 
 type MaharashtraExtentResponse = {
   xmin?: number;

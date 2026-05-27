@@ -150,3 +150,22 @@ export async function proxyIndiaParcelWms(
     );
   }
 }
+
+export function buildIndiaParcelWmsHandler(options: {
+  remoteWmsUrl: string;
+  errorLabel: string;
+  remoteFetcher?: (targetUrl: string) => Promise<{
+    statusCode: number;
+    headers: Record<string, string | string[] | undefined>;
+    body: Buffer;
+  }>;
+}) {
+  return function GET(request: NextRequest) {
+    return proxyIndiaParcelWms(
+      request,
+      options.remoteWmsUrl,
+      options.errorLabel,
+      options.remoteFetcher,
+    );
+  };
+}

@@ -15,9 +15,10 @@ import type {
   IndiaParcelSelection,
   IndiaViewportBounds,
 } from "@/services/india/shared/types";
+import { INDIA_STATE_ENDPOINTS } from "@/services/india/shared/state-endpoints";
 
-const GOA_BHUNAKSHA_BASE = "https://bhunaksha.goa.gov.in/bhunaksha";
-const GOA_STATE_CODE = "30" as const;
+const { baseUrl: GOA_BHUNAKSHA_BASE, stateCode: GOA_STATE_CODE } =
+  INDIA_STATE_ENDPOINTS.goa;
 
 type GoaPlotAtXYResponse = {
   vsrno?: string;
@@ -385,6 +386,7 @@ async function getGoaOverlayIndex() {
     goaOverlayIndexPromise = buildGoaOverlayIndex()
       .then((entries) => {
         goaOverlayIndex = entries;
+        goaOverlayIndexPromise = null;
         return entries;
       })
       .catch((error) => {

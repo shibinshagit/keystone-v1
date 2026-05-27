@@ -9,6 +9,7 @@ import {
 } from "@/services/india/shared/geometry";
 import { pickBestOverlayVillage } from "@/services/india/shared/overlay-sampling";
 import { requestHttp } from "@/services/india/shared/bhunaksha-session";
+import { INDIA_STATE_ENDPOINTS } from "@/services/india/shared/state-endpoints";
 import type {
   IndiaOverlayVillage,
   IndiaParcelField,
@@ -17,17 +18,13 @@ import type {
 } from "@/services/india/shared/types";
 import villageExtentRecords from "./village-extents.generated.json";
 
-const HARYANA_API_BASE = "https://maps.revenueharyana.gov.in/bhunakshaserver";
-const HARYANA_WMS_PATH = "/api/in/haryana/parcels/wms";
-const HARYANA_STATE_CODE = "06" as const;
+const {
+  apiBaseUrl: HARYANA_API_BASE,
+  referer: HARYANA_REFERER,
+  stateCode: HARYANA_STATE_CODE,
+} = INDIA_STATE_ENDPOINTS.haryana;
 const HARYANA_UTM_ZONE = 43 as const;
 const HARYANA_SAMPLE_CONCURRENCY = 18;
-const HARYANA_COVERAGE = {
-  west: 74.45,
-  south: 27.65,
-  east: 77.65,
-  north: 30.95,
-} as const;
 
 type HaryanaVillageExtentRecord = {
   stateCode: string;
@@ -238,7 +235,7 @@ async function postFormJson<T>(
       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
       Accept: "application/json, text/plain, */*",
       "User-Agent": "Mozilla/5.0",
-      Referer: "https://maps.revenueharyana.gov.in/home",
+      Referer: HARYANA_REFERER,
     },
     body: body.toString(),
     rejectUnauthorized: false,
@@ -264,7 +261,7 @@ async function postJsonText(
       "Content-Type": "application/json",
       Accept: "text/plain, application/json, */*",
       "User-Agent": "Mozilla/5.0",
-      Referer: "https://maps.revenueharyana.gov.in/home",
+      Referer: HARYANA_REFERER,
     },
     body: JSON.stringify(payload),
     rejectUnauthorized: false,
