@@ -1,7 +1,6 @@
-import {
-  isFiniteNumber,
-} from "@/services/india/shared/geometry";
-import { buildViewportSamplePoints } from "@/services/india/shared/overlay-sampling";
+import { postPublicBhuNakshaFormJson } from "@/services/india/shared/bhunaksha-public";
+import { normalizeExtent4326 } from "@/services/india/shared/bhunaksha-portal";
+import { resolveOverlayByViewportSampling } from "@/services/india/shared/overlay-sampling";
 import type {
   IndiaOverlayVillage,
   IndiaParcelField,
@@ -83,53 +82,15 @@ function parseHref(value?: string | null) {
     : `${PUNJAB_BHUNAKSHA_BASE}/${href.replace(/^\.\.\//, "")}`;
 }
 
-function normalizeExtent4326(
-  extent: Pick<PunjabExtentResponse, "xmin" | "ymin" | "xmax" | "ymax"> | null | undefined,
-): IndiaViewportBounds | null {
-  if (
-    !extent ||
-    !isFiniteNumber(extent.xmin) ||
-    !isFiniteNumber(extent.ymin) ||
-    !isFiniteNumber(extent.xmax) ||
-    !isFiniteNumber(extent.ymax)
-  ) {
-    return null;
-  }
-
-  return {
-    west: extent.xmin,
-    south: extent.ymin,
-    east: extent.xmax,
-    north: extent.ymax,
-  };
-}
-
 async function postForm<T>(
   path: string,
   params: Record<string, string | number | boolean | null | undefined>,
 ): Promise<T> {
-  const body = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null) return;
-    body.set(key, String(value));
+  return postPublicBhuNakshaFormJson<T>({
+    baseUrl: PUNJAB_BHUNAKSHA_BASE,
+    path,
+    params,
   });
-
-  const response = await fetch(`${PUNJAB_BHUNAKSHA_BASE}/${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      Accept: "application/json, text/plain, */*",
-      "User-Agent": "Mozilla/5.0",
-    },
-    body: body.toString(),
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error(`Punjab BhuNaksha request failed (${response.status}) for ${path}`);
-  }
-
-  return (await response.json()) as T;
 }
 
 async function getScalarJson<T>(
@@ -283,33 +244,18 @@ function parsePunjabGisInfo(gisInfo?: string | null) {
 export const PunjabParcelService = {
   stateCode: PUNJAB_STATE_CODE,
 
-  isPunjabCoordinate(lng: number, lat: number) {
-    return (
-      lng >= PUNJAB_COVERAGE.west &&
-      lng <= PUNJAB_COVERAGE.east &&
-      lat >= PUNJAB_COVERAGE.south &&
-      lat <= PUNJAB_COVERAGE.north
-    );
-  },
-
-  looksLikePunjabLocation(location?: string | null) {
-    return /\bpunjab\b/i.test(location || "");
-  },
-
   async resolveVillageOverlay(bounds: IndiaViewportBounds): Promise<IndiaOverlayVillage | null> {
-    const samplePoints = buildViewportSamplePoints(bounds);
-
-    for (const point of samplePoints) {
+    return resolveOverlayByViewportSampling(bounds, async (point) => {
       const hit = await getPlotAtXYGeoref(point).catch(() => null);
-      if (!hit?.gis_code) continue;
+      if (!hit?.gis_code) return null;
 
       const levels = await getLevelsFromGisCode(hit.gis_code).catch(() => null);
-      if (!levels?.length) continue;
+      if (!levels?.length) return null;
 
       const selectedLevels = `${levels.join(",")},`;
       const extent = await getExtentForLevels(selectedLevels).catch(() => null);
       const normalizedExtent = normalizeExtent4326(extent);
-      if (!normalizedExtent) continue;
+      if (!normalizedExtent) return null;
 
       const overlayCodes = await getOverlayCodesForGisCode(hit.gis_code);
       const parsedInfo = parsePunjabGisInfo(hit.gisinfo);
@@ -329,9 +275,7 @@ export const PunjabParcelService = {
         subdistrictName: parsedInfo.subdistrictName,
         villageName: parsedInfo.villageName,
       };
-    }
-
-    return null;
+    });
   },
 
   async getParcelAtCoordinate(

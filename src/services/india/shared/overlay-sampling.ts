@@ -10,22 +10,28 @@ import type { IndiaOverlayVillage, IndiaViewportBounds } from "./types";
 export function buildViewportSamplePoints(
   bounds: IndiaViewportBounds,
 ): [number, number][] {
-  const centerLng = (bounds.west + bounds.east) / 2;
-  const centerLat = (bounds.south + bounds.north) / 2;
-  const lngQuarter = (bounds.east - bounds.west) / 4;
-  const latQuarter = (bounds.north - bounds.south) / 4;
-
-  return [
-    [centerLng, centerLat],
-    [centerLng - lngQuarter, centerLat],
-    [centerLng + lngQuarter, centerLat],
-    [centerLng, centerLat - latQuarter],
-    [centerLng, centerLat + latQuarter],
-    [centerLng - lngQuarter, centerLat - latQuarter],
-    [centerLng + lngQuarter, centerLat - latQuarter],
-    [centerLng - lngQuarter, centerLat + latQuarter],
-    [centerLng + lngQuarter, centerLat + latQuarter],
+  const lngSpan = bounds.east - bounds.west;
+  const latSpan = bounds.north - bounds.south;
+  const sampleFractions: Array<[number, number]> = [
+    [0.5, 0.5],
+    [0.25, 0.5],
+    [0.75, 0.5],
+    [0.5, 0.25],
+    [0.5, 0.75],
+    [0.25, 0.25],
+    [0.75, 0.25],
+    [0.25, 0.75],
+    [0.75, 0.75],
+    [0.35, 0.35],
+    [0.65, 0.35],
+    [0.35, 0.65],
+    [0.65, 0.65],
   ];
+
+  return sampleFractions.map(([lngFraction, latFraction]) => [
+    bounds.west + lngSpan * lngFraction,
+    bounds.south + latSpan * latFraction,
+  ]);
 }
 
 export function pickBestOverlayVillage<T extends IndiaOverlayVillage>(
@@ -59,8 +65,47 @@ export function pickBestOverlayVillage<T extends IndiaOverlayVillage>(
       return overlapRatioB - overlapRatioA;
     }
 
+    const villageAreaA = rectArea(a.village.extent);
+    const villageAreaB = rectArea(b.village.extent);
+    if (Math.abs(villageAreaA - villageAreaB) > 0.000001) {
+      return villageAreaA - villageAreaB;
+    }
+
     return a.distanceToCenter - b.distanceToCenter;
   });
 
   return overlapping[0]?.village || null;
+}
+
+export async function resolveOverlayByViewportSampling<
+  T extends IndiaOverlayVillage,
+>(
+  bounds: IndiaViewportBounds,
+  resolveCandidateAtPoint: (point: [number, number]) => Promise<T | null>,
+  pickCandidate?: (bounds: IndiaViewportBounds, candidates: T[]) => T | null,
+) {
+  const samplePoints = buildViewportSamplePoints(bounds);
+  const candidates: T[] = [];
+  const seenGisCodes = new Set<string>();
+
+  for (const point of samplePoints) {
+    const candidate = await resolveCandidateAtPoint(point).catch(() => null);
+    if (!candidate?.gisCode || seenGisCodes.has(candidate.gisCode)) {
+      continue;
+    }
+
+    seenGisCodes.add(candidate.gisCode);
+    candidates.push(candidate);
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return (
+    pickCandidate?.(bounds, candidates) ||
+    pickBestOverlayVillage(bounds, candidates) ||
+    candidates[0] ||
+    null
+  );
 }

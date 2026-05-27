@@ -5,7 +5,8 @@ export type IndiaParcelAdapterId =
   | "punjab"
   | "maharashtra"
   | "haryana"
-  | "rajasthan";
+  | "rajasthan"
+  | "goa";
 
 export type IndiaParcelClientAdapter = {
   id: IndiaParcelAdapterId;
@@ -234,6 +235,30 @@ export const INDIA_PARCEL_CLIENT_ADAPTERS: IndiaParcelClientAdapter[] = [
       buildDefaultParcelLocationLabel("Rajasthan Parcel", parcel),
   },
   {
+    id: "goa",
+    stateCode: "30",
+    stateName: "Goa",
+    overlayMinZoom: 14,
+    overlaySourceType: "wms",
+    overlayRenderMode: "tiles",
+    coverageBounds: {
+      west: 73.6,
+      south: 14.8,
+      east: 74.45,
+      north: 15.9,
+    },
+    overlayResolvePath: "/api/in/goa/overlay-resolve",
+    parcelClickPath: "/api/in/goa/parcel-click",
+    wmsPath: "/api/in/goa/parcels/wms",
+    buildOverlayParams: createOverlayParamsBuilder({
+      layerName: "VILLAGE_MAP",
+      styles: "VILLAGE_MAP",
+      stateCode: "30",
+    }),
+    buildParcelLocationLabel: (parcel) =>
+      buildDefaultParcelLocationLabel("Goa Parcel", parcel),
+  },
+  {
     id: "haryana",
     stateCode: "06",
     stateName: "Haryana",
@@ -272,4 +297,36 @@ export function getIndiaParcelClientAdapters(coordinates: [number, number]) {
     (a, b) =>
       boundsArea(a.coverageBounds) - boundsArea(b.coverageBounds),
   );
+}
+
+function normalizeStateName(value?: string | null) {
+  return (value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+export function prioritizeIndiaParcelClientAdapters(
+  adapters: IndiaParcelClientAdapter[],
+  stateName?: string | null,
+) {
+  const normalizedStateName = normalizeStateName(stateName);
+  if (!normalizedStateName || adapters.length <= 1) {
+    return adapters;
+  }
+
+  const matchingAdapters = adapters.filter(
+    (adapter) => normalizeStateName(adapter.stateName) === normalizedStateName,
+  );
+
+  if (matchingAdapters.length === 0) {
+    return adapters;
+  }
+
+  const matchingIds = new Set(matchingAdapters.map((adapter) => adapter.id));
+
+  return [
+    ...matchingAdapters,
+    ...adapters.filter((adapter) => !matchingIds.has(adapter.id)),
+  ];
 }

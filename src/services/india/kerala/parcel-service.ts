@@ -416,14 +416,6 @@ async function getVillageExtentsIndex() {
 export const KeralaParcelService = {
   stateCode: KERALA_STATE_CODE,
 
-  isKeralaCoordinate(lng: number, lat: number) {
-    return lng >= 74.8 && lng <= 77.7 && lat >= 8.0 && lat <= 12.9;
-  },
-
-  looksLikeKeralaLocation(location?: string | null) {
-    return /\bkerala\b/i.test(location || "");
-  },
-
   async resolveVillageOverlay(bounds: KeralaViewportBounds) {
     const villages = await getVillageExtentsIndex();
     const center = boundsCenter(bounds);

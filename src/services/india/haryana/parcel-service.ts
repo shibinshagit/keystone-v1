@@ -376,19 +376,6 @@ function findVillageRecordsByCoordinates(coordinates: [number, number]) {
 export const HaryanaParcelService = {
   stateCode: HARYANA_STATE_CODE,
 
-  isHaryanaCoordinate(lng: number, lat: number) {
-    return (
-      lng >= HARYANA_COVERAGE.west &&
-      lng <= HARYANA_COVERAGE.east &&
-      lat >= HARYANA_COVERAGE.south &&
-      lat <= HARYANA_COVERAGE.north
-    );
-  },
-
-  looksLikeHaryanaLocation(location?: string | null) {
-    return /\bharyana\b/i.test(location || "");
-  },
-
   async resolveVillageOverlay(
     bounds: IndiaViewportBounds,
   ): Promise<IndiaOverlayVillage | null> {

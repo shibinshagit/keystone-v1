@@ -54,6 +54,7 @@ import {
 } from "@/lib/thematic-utils";
 import {
   getIndiaParcelClientAdapters,
+  prioritizeIndiaParcelClientAdapters,
   type IndiaParcelClientAdapter,
 } from "@/services/india/shared/client-adapters";
 import type {
@@ -221,6 +222,8 @@ export function MapEditor({
   const markers = useRef<Marker[]>([]);
   const instantAnalysisMarker = useRef<Marker | null>(null);
   const indiaParcelOverlayKeyRef = useRef<string | null>(null);
+  const indiaOverlayStateRef = useRef<typeof indiaOverlayState>(null);
+  const indiaOverlayRequestSeqRef = useRef(0);
   const indiaOverlayFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -234,6 +237,75 @@ export function MapEditor({
     bounds: IndiaViewportBounds;
     featureCollection?: FeatureCollection<Polygon> | null;
   } | null>(null);
+
+  useEffect(() => {
+    indiaOverlayStateRef.current = indiaOverlayState;
+  }, [indiaOverlayState]);
+
+  const clearIndiaOverlayVisuals = useCallback(() => {
+    const mapInst = map.current;
+    if (!mapInst || !isMapLoaded) return;
+
+    indiaParcelOverlayKeyRef.current = null;
+    if (mapInst.getLayer(INDIA_PARCEL_IMAGE_LAYER_ID)) {
+      mapInst.removeLayer(INDIA_PARCEL_IMAGE_LAYER_ID);
+    }
+    if (mapInst.getSource(INDIA_PARCEL_IMAGE_SOURCE_ID)) {
+      mapInst.removeSource(INDIA_PARCEL_IMAGE_SOURCE_ID);
+    }
+    if (mapInst.getLayer(INDIA_PARCEL_GEOJSON_LABEL_ID)) {
+      mapInst.setLayoutProperty(
+        INDIA_PARCEL_GEOJSON_LABEL_ID,
+        "visibility",
+        "none",
+      );
+    }
+    if (mapInst.getLayer(INDIA_PARCEL_GEOJSON_LINE_ID)) {
+      mapInst.setLayoutProperty(
+        INDIA_PARCEL_GEOJSON_LINE_ID,
+        "visibility",
+        "none",
+      );
+    }
+    if (mapInst.getLayer(INDIA_PARCEL_GEOJSON_FILL_ID)) {
+      mapInst.setLayoutProperty(
+        INDIA_PARCEL_GEOJSON_FILL_ID,
+        "visibility",
+        "none",
+      );
+    }
+  }, [isMapLoaded]);
+
+  const hideIndiaOverlay = useCallback(
+    (invalidateRequests = false) => {
+      if (invalidateRequests) {
+        indiaOverlayRequestSeqRef.current += 1;
+      }
+      setIndiaOverlayState(null);
+      clearIndiaOverlayVisuals();
+    },
+    [clearIndiaOverlayVisuals],
+  );
+  const clearParcelHighlight = useCallback(() => {
+    const mapInst = map.current;
+    if (!mapInst || !isMapLoaded) return;
+
+    if (mapInst.getLayer(HIGHLIGHT_FILL)) {
+      mapInst.removeLayer(HIGHLIGHT_FILL);
+    }
+    if (mapInst.getLayer(HIGHLIGHT_LINE)) {
+      mapInst.removeLayer(HIGHLIGHT_LINE);
+    }
+    if (mapInst.getSource(HIGHLIGHT_SOURCE)) {
+      mapInst.removeSource(HIGHLIGHT_SOURCE);
+    }
+    if (mapInst.getLayer(HIGHLIGHT_WMS_LAYER)) {
+      mapInst.removeLayer(HIGHLIGHT_WMS_LAYER);
+    }
+    if (mapInst.getSource(HIGHLIGHT_WMS_SOURCE)) {
+      mapInst.removeSource(HIGHLIGHT_WMS_SOURCE);
+    }
+  }, [isMapLoaded]);
   const hasNavigatedRef = useRef(false);
   const windStreamlineLayer = useRef<WindStreamlineLayer | null>(null);
 
@@ -276,6 +348,10 @@ export function MapEditor({
   const { regulations } = useRegulations(activeProject || null);
   const { toast } = useToast();
   const getStoreState = useCallback(() => useBuildingStore.getState(), []);
+  const clearInstantAnalysisSelection = useCallback(() => {
+    actions.setInstantAnalysisTarget(null);
+    clearParcelHighlight();
+  }, [actions, clearParcelHighlight]);
 
   const applyMapStyleMode = useCallback(
     (nextMode: "map" | "satellite" | "terrain") => {
@@ -691,58 +767,59 @@ export function MapEditor({
     const mapInst = map.current;
     if (!mapInst || !isMapLoaded) return;
 
-    const hideIndiaOverlay = () => {
-      setIndiaOverlayState(null);
-      if (mapInst.getLayer(INDIA_PARCEL_IMAGE_LAYER_ID)) {
-        mapInst.setLayoutProperty(
-          INDIA_PARCEL_IMAGE_LAYER_ID,
-          "visibility",
-          "none",
-        );
-      }
-      if (mapInst.getLayer(INDIA_PARCEL_GEOJSON_FILL_ID)) {
-        mapInst.setLayoutProperty(
-          INDIA_PARCEL_GEOJSON_FILL_ID,
-          "visibility",
-          "none",
-        );
-      }
-      if (mapInst.getLayer(INDIA_PARCEL_GEOJSON_LINE_ID)) {
-        mapInst.setLayoutProperty(
-          INDIA_PARCEL_GEOJSON_LINE_ID,
-          "visibility",
-          "none",
-        );
-      }
-    };
-
     if (!uiState.isInstantAnalysisMode) {
-      hideIndiaOverlay();
+      hideIndiaOverlay(true);
       return;
     }
 
     const resolveIndiaOverlay = async () => {
       if (!mapInst.isStyleLoaded()) return;
+      const requestSeq = ++indiaOverlayRequestSeqRef.current;
+      const isLatestRequest = () =>
+        indiaOverlayRequestSeqRef.current === requestSeq;
 
       const center = mapInst.getCenter();
       const zoom = mapInst.getZoom();
       const candidateAdapters = getIndiaParcelClientAdapters([center.lng, center.lat]);
-      const adapters = candidateAdapters.filter((adapter) => zoom >= adapter.overlayMinZoom);
+      const geocode =
+        candidateAdapters.length > 1
+          ? await MapboxPlacesService.reverseGeocode([
+              center.lng,
+              center.lat,
+            ]).catch(() => null)
+          : null;
+      if (!isLatestRequest()) return;
+
+      const adapters = prioritizeIndiaParcelClientAdapters(
+        candidateAdapters.filter((adapter) => zoom >= adapter.overlayMinZoom),
+        geocode?.stateName,
+      );
+      const currentOverlayState = indiaOverlayStateRef.current;
 
       if (adapters.length === 0) {
-        hideIndiaOverlay();
+        if (isLatestRequest()) {
+          hideIndiaOverlay();
+        }
         return;
       }
 
       if (
-        indiaOverlayState &&
-        adapters.some((adapter) => adapter.id === indiaOverlayState.adapter.id) &&
-        isPointInBounds([center.lng, center.lat], indiaOverlayState.bounds)
+        currentOverlayState &&
+        !adapters.some((adapter) => adapter.id === currentOverlayState.adapter.id)
+      ) {
+        setIndiaOverlayState(null);
+        clearIndiaOverlayVisuals();
+      }
+
+      if (
+        currentOverlayState &&
+        adapters.some((adapter) => adapter.id === currentOverlayState.adapter.id) &&
+        isPointInBounds([center.lng, center.lat], currentOverlayState.bounds)
       ) {
         const bounds = mapInst.getBounds();
         if (!bounds) return;
         setIndiaOverlayState({
-          ...indiaOverlayState,
+          ...currentOverlayState,
           bounds: {
             west: bounds.getWest(),
             south: bounds.getSouth(),
@@ -756,7 +833,9 @@ export function MapEditor({
       try {
         const bounds = mapInst.getBounds();
         if (!bounds) {
-          hideIndiaOverlay();
+          if (isLatestRequest()) {
+            hideIndiaOverlay();
+          }
           return;
         }
 
@@ -782,10 +861,12 @@ export function MapEditor({
               bounds: overlayBounds,
             }),
           });
+          if (!isLatestRequest()) return;
 
           if (!response.ok) continue;
 
           const payload = await response.json();
+          if (!isLatestRequest()) return;
           const village = payload?.village as IndiaOverlayVillage | null;
           if (!village?.gisCode) continue;
 
@@ -794,10 +875,13 @@ export function MapEditor({
         }
 
         if (!resolved) {
-          hideIndiaOverlay();
+          if (isLatestRequest()) {
+            hideIndiaOverlay();
+          }
           return;
         }
 
+        if (!isLatestRequest()) return;
         setIndiaOverlayState({
           adapter: resolved.adapter,
           gisCode: resolved.village.gisCode,
@@ -818,9 +902,11 @@ export function MapEditor({
               gisCode: resolved.village.gisCode,
             }),
           });
+          if (!isLatestRequest()) return;
 
           if (featuresResponse.ok) {
             const featuresPayload = await featuresResponse.json();
+            if (!isLatestRequest()) return;
             const featureCollection =
               featuresPayload?.featureCollection as FeatureCollection<Polygon> | null;
             setIndiaOverlayState({
@@ -834,7 +920,9 @@ export function MapEditor({
         }
       } catch (error) {
         console.warn("[IndiaOverlay] Failed to resolve village overlay:", error);
-        hideIndiaOverlay();
+        if (isLatestRequest()) {
+          hideIndiaOverlay();
+        }
       }
     };
 
@@ -854,8 +942,9 @@ export function MapEditor({
         clearTimeout(indiaOverlayFetchTimerRef.current);
         indiaOverlayFetchTimerRef.current = null;
       }
+      indiaOverlayRequestSeqRef.current += 1;
     };
-  }, [isMapLoaded, uiState.isInstantAnalysisMode]);
+  }, [clearIndiaOverlayVisuals, hideIndiaOverlay, isMapLoaded, uiState.isInstantAnalysisMode]);
 
   useEffect(() => {
     const mapInst = map.current;
@@ -863,22 +952,8 @@ export function MapEditor({
 
     if (instantAnalysisTarget) return;
 
-    if (mapInst.getLayer(HIGHLIGHT_FILL)) {
-      mapInst.removeLayer(HIGHLIGHT_FILL);
-    }
-    if (mapInst.getLayer(HIGHLIGHT_LINE)) {
-      mapInst.removeLayer(HIGHLIGHT_LINE);
-    }
-    if (mapInst.getSource(HIGHLIGHT_SOURCE)) {
-      mapInst.removeSource(HIGHLIGHT_SOURCE);
-    }
-    if (mapInst.getLayer(HIGHLIGHT_WMS_LAYER)) {
-      mapInst.removeLayer(HIGHLIGHT_WMS_LAYER);
-    }
-    if (mapInst.getSource(HIGHLIGHT_WMS_SOURCE)) {
-      mapInst.removeSource(HIGHLIGHT_WMS_SOURCE);
-    }
-  }, [instantAnalysisTarget, isMapLoaded]);
+    clearParcelHighlight();
+  }, [clearParcelHighlight, instantAnalysisTarget, isMapLoaded]);
 
   const plotsRendering = plots;
 
@@ -1248,11 +1323,18 @@ export function MapEditor({
         if (indiaParcelAdapters.length > 0) {
           try {
             const geocodePromise =
-              MapboxPlacesService.reverseGeocode(coordinates).catch(() => null);
+              indiaParcelAdapters.length > 1
+                ? MapboxPlacesService.reverseGeocode(coordinates).catch(() => null)
+                : Promise.resolve(null);
+            const geocode = await geocodePromise;
+            const prioritizedParcelAdapters = prioritizeIndiaParcelClientAdapters(
+              indiaParcelAdapters,
+              geocode?.stateName,
+            );
             let indiaParcel: IndiaParcelSelection | null = null;
             let resolvedParcelAdapter: IndiaParcelClientAdapter | null = null;
 
-            for (const indiaParcelAdapter of indiaParcelAdapters) {
+            for (const indiaParcelAdapter of prioritizedParcelAdapters) {
               const transformedCoordinates =
                 indiaParcelAdapter.transformClickCoordinates?.(coordinates);
               const clickCandidates = [
@@ -1313,46 +1395,30 @@ export function MapEditor({
                 });
                 actions.selectObject(null, null);
 
-                void geocodePromise.then((geocode) => {
-                  if (!geocode) return;
+                if (geocode) {
                   const nextLocationLabel =
                     geocode.locationLabel ||
                     [geocode.district, geocode.stateName].filter(Boolean).join(", ") ||
                     initialLocationLabel;
                   const currentTarget = useBuildingStore.getState().instantAnalysisTarget;
-                  if (currentTarget?.requestKey !== requestKey) return;
+                  if (currentTarget?.requestKey === requestKey) {
+                    actions.setMapLocation(nextLocationLabel);
+                    actions.setDistrictNameHint(geocode.district);
+                    actions.setInstantAnalysisTarget({
+                      ...currentTarget,
+                      locationLabel: nextLocationLabel,
+                      district:
+                        geocode.district ||
+                        currentTarget.district ||
+                        indiaParcel.districtName ||
+                        undefined,
+                      stateCode: geocode.stateCode || currentTarget.stateCode,
+                      stateName: geocode.stateName || currentTarget.stateName,
+                    });
+                  }
+                }
 
-                  actions.setMapLocation(nextLocationLabel);
-                  actions.setDistrictNameHint(geocode.district);
-                  actions.setInstantAnalysisTarget({
-                    ...currentTarget,
-                    locationLabel: nextLocationLabel,
-                    district:
-                      geocode.district ||
-                      currentTarget.district ||
-                      indiaParcel.districtName ||
-                      undefined,
-                    stateCode: geocode.stateCode || currentTarget.stateCode,
-                    stateName: geocode.stateName || currentTarget.stateName,
-                  });
-                });
-
-                if (indiaParcel.geometry?.geometry) {
-                  window.dispatchEvent(
-                    new CustomEvent("highlightParcel", {
-                      detail: {
-                        geometry: indiaParcel.geometry.geometry,
-                        apn:
-                          indiaParcel.surveyNo ||
-                          indiaParcel.plotNo ||
-                          indiaParcel.plotId,
-                        fillColor: "rgba(59, 130, 246, 0.18)",
-                        outlineColor: "rgba(59, 130, 246, 0.65)",
-                        lineColor: "rgba(59, 130, 246, 0.9)",
-                      },
-                    }),
-                  );
-                } else if (
+                if (
                   indiaParcel.overlay?.highlightType === "wms" &&
                   indiaParcel.extent &&
                   indiaParcel.overlay.wmsPath &&
@@ -1365,6 +1431,21 @@ export function MapEditor({
                         wmsPath: indiaParcel.overlay.wmsPath,
                         wmsParams: indiaParcel.overlay.wmsParams,
                         bounds: indiaParcel.extent,
+                      },
+                    }),
+                  );
+                } else if (indiaParcel.geometry?.geometry) {
+                  window.dispatchEvent(
+                    new CustomEvent("highlightParcel", {
+                      detail: {
+                        geometry: indiaParcel.geometry.geometry,
+                        apn:
+                          indiaParcel.surveyNo ||
+                          indiaParcel.plotNo ||
+                          indiaParcel.plotId,
+                        fillColor: "rgba(59, 130, 246, 0.18)",
+                        outlineColor: "rgba(59, 130, 246, 0.65)",
+                        lineColor: "rgba(59, 130, 246, 0.9)",
                       },
                     }),
                   );
@@ -1684,6 +1765,8 @@ export function MapEditor({
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         if (!map.current) return;
+        clearInstantAnalysisSelection();
+        hideIndiaOverlay(true);
         const userLoc: LngLatLike = [pos.coords.longitude, pos.coords.latitude];
         map.current.flyTo({ center: userLoc, zoom: 16 });
         new mapboxgl.Marker({ color: "#10b981" })
@@ -1698,7 +1781,7 @@ export function MapEditor({
         });
       },
     );
-  }, [toast]);
+  }, [clearInstantAnalysisSelection, hideIndiaOverlay, toast]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1742,6 +1825,9 @@ export function MapEditor({
       if (!map.current) return;
       const customEvent = event as CustomEvent;
       const { center, zoom } = customEvent.detail;
+      clearInstantAnalysisSelection();
+      hideIndiaOverlay(true);
+
       map.current.flyTo({
         center,
         zoom: zoom || 18,
@@ -1894,7 +1980,14 @@ export function MapEditor({
       window.removeEventListener("flyTo", handleFlyTo);
       window.removeEventListener("highlightParcel", handleHighlightParcel);
     };
-  }, [locateUser, closePolygon, finishRoad]);
+  }, [
+    clearInstantAnalysisSelection,
+    closePolygon,
+    finishRoad,
+    hideIndiaOverlay,
+    isMapLoaded,
+    locateUser,
+  ]);
 
   // Initialize Map
   useEffect(() => {
@@ -2890,6 +2983,8 @@ export function MapEditor({
     if (!map.current || !isMapLoaded || !mapCommand) return;
 
     if (mapCommand.type === "flyTo") {
+      clearInstantAnalysisSelection();
+      hideIndiaOverlay(true);
       map.current.flyTo({
         center: mapCommand.center,
         zoom: mapCommand.zoom || 15,
@@ -2899,7 +2994,7 @@ export function MapEditor({
 
       useBuildingStore.setState({ mapCommand: null });
     }
-  }, [mapCommand, isMapLoaded]);
+  }, [clearInstantAnalysisSelection, hideIndiaOverlay, mapCommand, isMapLoaded]);
 
   useEffect(() => {
     if (!isSimulatorEnabled) {

@@ -19,13 +19,22 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+async function readOptionalJson<T>(request: NextRequest): Promise<T | null> {
+  const rawBody = await request.text();
+  if (!rawBody.trim()) {
+    return null;
+  }
+
+  return JSON.parse(rawBody) as T;
+}
+
 export async function handleIndiaOverlayResolve(
   request: NextRequest,
   service: IndiaParcelRouteService,
   label: string,
 ) {
   try {
-    const body = (await request.json()) as { bounds?: BoundsPayload };
+    const body = await readOptionalJson<{ bounds?: BoundsPayload }>(request);
     const bounds = body?.bounds;
 
     if (
@@ -70,7 +79,9 @@ export async function handleIndiaParcelClick(
   label: string,
 ) {
   try {
-    const body = await request.json();
+    const body = await readOptionalJson<{ coordinates?: [number, number] }>(
+      request,
+    );
     const coordinates = body?.coordinates as [number, number] | undefined;
 
     if (

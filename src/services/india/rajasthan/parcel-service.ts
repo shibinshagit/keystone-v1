@@ -1,4 +1,5 @@
-import { buildViewportSamplePoints } from "@/services/india/shared/overlay-sampling";
+import { resolveOverlayByViewportSampling } from "@/services/india/shared/overlay-sampling";
+import { postPublicBhuNakshaFormJson } from "@/services/india/shared/bhunaksha-public";
 import {
   decodePortalText,
   inferUtmZoneFromLongitude,
@@ -146,31 +147,11 @@ async function postForm<T>(
   path: string,
   params: Record<string, string | number | boolean | null | undefined>,
 ): Promise<T> {
-  const body = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null) return;
-    body.set(key, String(value));
+  return postPublicBhuNakshaFormJson<T>({
+    baseUrl: RAJASTHAN_BHUNAKSHA_BASE,
+    path,
+    params,
   });
-
-  const response = await fetch(`${RAJASTHAN_BHUNAKSHA_BASE}/${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      Accept: "application/json, text/plain, */*",
-      "User-Agent": "Mozilla/5.0",
-      Referer: `${RAJASTHAN_BHUNAKSHA_BASE}/`,
-    },
-    body: body.toString(),
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Rajasthan BhuNaksha request failed (${response.status}) for ${path}`,
-    );
-  }
-
-  return (await response.json()) as T;
 }
 
 async function getPlotAtXYGeoref(coordinates: [number, number]) {
@@ -211,34 +192,19 @@ async function getPlotExtent4326(gisCode: string, plotId: string) {
 export const RajasthanParcelService = {
   stateCode: RAJASTHAN_STATE_CODE,
 
-  isRajasthanCoordinate(lng: number, lat: number) {
-    return (
-      lng >= RAJASTHAN_COVERAGE.west &&
-      lng <= RAJASTHAN_COVERAGE.east &&
-      lat >= RAJASTHAN_COVERAGE.south &&
-      lat <= RAJASTHAN_COVERAGE.north
-    );
-  },
-
-  looksLikeRajasthanLocation(location?: string | null) {
-    return /\brajasthan\b/i.test(location || "");
-  },
-
   async resolveVillageOverlay(
     bounds: IndiaViewportBounds,
   ): Promise<IndiaOverlayVillage | null> {
-    const samplePoints = buildViewportSamplePoints(bounds);
-
-    for (const point of samplePoints) {
+    return resolveOverlayByViewportSampling(bounds, async (point) => {
       const hit = await getPlotAtXYGeoref(point).catch(() => null);
-      if (!hit?.gis_code) continue;
+      if (!hit?.gis_code) return null;
 
       const selectedLevels = buildSelectedLevelsFromGisCode(hit.gis_code);
-      if (!selectedLevels) continue;
+      if (!selectedLevels) return null;
 
       const extent = await getVillageExtent4326(selectedLevels).catch(() => null);
       const normalizedExtent = normalizeExtent4326(extent);
-      if (!normalizedExtent) continue;
+      if (!normalizedExtent) return null;
 
       const parts = parseLocationParts(hit.gisinfo || extent?.attribution);
       const codes = splitFixedWidthCodes(hit.gis_code, [...RAJASTHAN_GIS_SEGMENTS]);
@@ -261,9 +227,7 @@ export const RajasthanParcelService = {
         subdistrictName: parts.subdistrictName,
         villageName: parts.villageName,
       };
-    }
-
-    return null;
+    });
   },
 
   async getParcelAtCoordinate(

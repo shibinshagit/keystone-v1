@@ -3,7 +3,7 @@ import {
   getBhuNakshaBinary,
   postBhuNakshaFormJson,
 } from "@/services/india/shared/bhunaksha-session";
-import { buildViewportSamplePoints } from "@/services/india/shared/overlay-sampling";
+import { resolveOverlayByViewportSampling } from "@/services/india/shared/overlay-sampling";
 import type {
   IndiaOverlayVillage,
   IndiaParcelField,
@@ -245,29 +245,14 @@ function buildParcelFields(
 export const MaharashtraParcelService = {
   stateCode: MAHARASHTRA_STATE_CODE,
 
-  isMaharashtraCoordinate(lng: number, lat: number) {
-    return (
-      lng >= MAHARASHTRA_COVERAGE.west &&
-      lng <= MAHARASHTRA_COVERAGE.east &&
-      lat >= MAHARASHTRA_COVERAGE.south &&
-      lat <= MAHARASHTRA_COVERAGE.north
-    );
-  },
-
-  looksLikeMaharashtraLocation(location?: string | null) {
-    return /\bmaharashtra\b/i.test(location || "");
-  },
-
   async resolveVillageOverlay(bounds: IndiaViewportBounds): Promise<IndiaOverlayVillage | null> {
-    const samplePoints = buildViewportSamplePoints(bounds);
-
-    for (const point of samplePoints) {
+    return resolveOverlayByViewportSampling(bounds, async (point) => {
       const hit = await getPlotAtXYGeoref(point).catch(() => null);
-      if (!hit?.gis_code) continue;
+      if (!hit?.gis_code) return null;
 
       const extent = await getVillageExtent(hit.gis_code).catch(() => null);
       const normalizedExtent = normalizeExtent4326(extent);
-      if (!normalizedExtent) continue;
+      if (!normalizedExtent) return null;
 
       const parts = parseLocationParts(hit.gisinfo || extent?.attribution);
 
@@ -286,9 +271,7 @@ export const MaharashtraParcelService = {
         subdistrictName: parts.subdistrictName,
         villageName: parts.villageName,
       };
-    }
-
-    return null;
+    });
   },
 
   async getParcelAtCoordinate(
