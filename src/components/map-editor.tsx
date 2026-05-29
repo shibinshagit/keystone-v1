@@ -57,6 +57,10 @@ import {
   prioritizeIndiaParcelClientAdapters,
   type IndiaParcelClientAdapter,
 } from "@/services/india/shared/client-adapters";
+import {
+  shiftBounds,
+  shiftFeatureGeometry,
+} from "@/services/india/shared/bhunaksha-portal";
 import type {
   IndiaOverlayVillage,
   IndiaParcelSelection,
@@ -134,6 +138,69 @@ const WMS_RASTER_PAINT: mapboxgl.RasterPaint = {
   "raster-contrast": 0.12,
   "raster-brightness-max": 0.98,
   "raster-fade-duration": 120,
+};
+
+const STRONG_WMS_RASTER_PAINT: mapboxgl.RasterPaint = {
+  "raster-opacity": [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    14,
+    0.42,
+    15.5,
+    0.56,
+    17,
+    0.7,
+    18.5,
+    0.82,
+  ],
+  "raster-contrast": 0.18,
+  "raster-brightness-max": 1,
+  "raster-fade-duration": 120,
+};
+
+const getOverlayRasterPaint = (
+  adapter?: Pick<IndiaParcelClientAdapter, "overlayPaintPreset"> | null,
+) =>
+  adapter?.overlayPaintPreset === "strong"
+    ? STRONG_WMS_RASTER_PAINT
+    : WMS_RASTER_PAINT;
+
+const applyRasterPaint = (
+  mapInstance: Map,
+  layerId: string,
+  paint: mapboxgl.RasterPaint,
+) => {
+  const resolvedPaint = paint || {};
+
+  if (resolvedPaint["raster-opacity"] !== undefined) {
+    mapInstance.setPaintProperty(
+      layerId,
+      "raster-opacity",
+      resolvedPaint["raster-opacity"] as any,
+    );
+  }
+  if (resolvedPaint["raster-contrast"] !== undefined) {
+    mapInstance.setPaintProperty(
+      layerId,
+      "raster-contrast",
+      resolvedPaint["raster-contrast"] as any,
+    );
+  }
+  if (resolvedPaint["raster-brightness-max"] !== undefined) {
+    mapInstance.setPaintProperty(
+      layerId,
+      "raster-brightness-max",
+      resolvedPaint["raster-brightness-max"] as any,
+    );
+  }
+  if (resolvedPaint["raster-fade-duration"] !== undefined) {
+    mapInstance.setPaintProperty(
+      layerId,
+      "raster-fade-duration",
+      resolvedPaint["raster-fade-duration"] as any,
+    );
+  }
 };
 
 // Helper to calculate distance labels for drawing segments
@@ -670,11 +737,16 @@ export function MapEditor({
           id: INDIA_PARCEL_IMAGE_LAYER_ID,
           type: "raster",
           source: INDIA_PARCEL_IMAGE_SOURCE_ID,
-          paint: WMS_RASTER_PAINT,
+          paint: getOverlayRasterPaint(overlay.adapter),
         });
         return;
       }
 
+      applyRasterPaint(
+        mapInst,
+        INDIA_PARCEL_IMAGE_LAYER_ID,
+        getOverlayRasterPaint(overlay.adapter),
+      );
       mapInst.setLayoutProperty(
         INDIA_PARCEL_IMAGE_LAYER_ID,
         "visibility",
@@ -742,7 +814,7 @@ export function MapEditor({
         id: INDIA_PARCEL_IMAGE_LAYER_ID,
         type: "raster",
         source: INDIA_PARCEL_IMAGE_SOURCE_ID,
-        paint: WMS_RASTER_PAINT,
+        paint: getOverlayRasterPaint(adapter),
       });
       return;
     }
@@ -755,6 +827,11 @@ export function MapEditor({
     });
 
     if (mapInst.getLayer(INDIA_PARCEL_IMAGE_LAYER_ID)) {
+      applyRasterPaint(
+        mapInst,
+        INDIA_PARCEL_IMAGE_LAYER_ID,
+        getOverlayRasterPaint(adapter),
+      );
       mapInst.setLayoutProperty(
         INDIA_PARCEL_IMAGE_LAYER_ID,
         "visibility",
@@ -1372,6 +1449,22 @@ export function MapEditor({
             }
 
             if (indiaParcel?.plotId && indiaParcel.gisCode && resolvedParcelAdapter) {
+                if (resolvedParcelAdapter.overlayAlignmentOffset) {
+                  indiaParcel = {
+                    ...indiaParcel,
+                    geometry:
+                      shiftFeatureGeometry(
+                        indiaParcel.geometry || null,
+                        resolvedParcelAdapter.overlayAlignmentOffset,
+                      ) || indiaParcel.geometry,
+                    extent:
+                      shiftBounds(
+                        indiaParcel.extent || null,
+                        resolvedParcelAdapter.overlayAlignmentOffset,
+                      ) || indiaParcel.extent,
+                  };
+                }
+
                 const initialLocationLabel =
                   indiaParcel.locationLabel ||
                   resolvedParcelAdapter.buildParcelLocationLabel(indiaParcel);

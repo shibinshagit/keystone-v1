@@ -4,6 +4,55 @@ import { webMercatorToLngLat } from "./geometry";
 
 const US_BLUE = { r: 59, g: 130, b: 246 };
 
+export async function recolorIndiaParcelRaster(
+  buffer: Buffer,
+  contentType: string,
+) {
+  if (!contentType.includes("png")) {
+    return buffer;
+  }
+
+  const recolored = await sharp(buffer)
+    .ensureAlpha()
+    .sharpen({ sigma: 0.7, m1: 0.8, m2: 1.6, x1: 2, y2: 10, y3: 20 })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const pixels = recolored.data;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const alpha = pixels[i + 3];
+    if (alpha === 0) continue;
+
+    const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+    let nextAlpha = 0;
+
+    if (brightness < 105) {
+      nextAlpha = Math.round(alpha * 0.78);
+    } else if (brightness < 150) {
+      nextAlpha = Math.round(alpha * 0.42);
+    } else if (brightness < 205) {
+      nextAlpha = Math.round(alpha * 0.08);
+    } else {
+      nextAlpha = 0;
+    }
+
+    pixels[i] = US_BLUE.r;
+    pixels[i + 1] = US_BLUE.g;
+    pixels[i + 2] = US_BLUE.b;
+    pixels[i + 3] = Math.max(0, Math.min(255, nextAlpha));
+  }
+
+  return sharp(pixels, {
+    raw: {
+      width: recolored.info.width,
+      height: recolored.info.height,
+      channels: 4,
+    },
+  })
+    .png()
+    .toBuffer();
+}
+
 export async function proxyIndiaParcelWms(
   request: NextRequest,
   remoteWmsUrl: string,
@@ -91,48 +140,7 @@ export async function proxyIndiaParcelWms(
       (Array.isArray(headerValue) ? headerValue[0] : headerValue) || "image/png";
     const buffer = fetchResponse.body;
 
-    let output = buffer;
-    if (contentType.includes("png")) {
-      const recolored = await sharp(buffer)
-        .ensureAlpha()
-        .sharpen({ sigma: 0.7, m1: 0.8, m2: 1.6, x1: 2, y2: 10, y3: 20 })
-        .raw()
-        .toBuffer({ resolveWithObject: true });
-
-      const pixels = recolored.data;
-      for (let i = 0; i < pixels.length; i += 4) {
-        const alpha = pixels[i + 3];
-        if (alpha === 0) continue;
-
-        const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-        let nextAlpha = 0;
-
-        if (brightness < 105) {
-          nextAlpha = Math.round(alpha * 0.78);
-        } else if (brightness < 150) {
-          nextAlpha = Math.round(alpha * 0.42);
-        } else if (brightness < 205) {
-          nextAlpha = Math.round(alpha * 0.08);
-        } else {
-          nextAlpha = 0;
-        }
-
-        pixels[i] = US_BLUE.r;
-        pixels[i + 1] = US_BLUE.g;
-        pixels[i + 2] = US_BLUE.b;
-        pixels[i + 3] = Math.max(0, Math.min(255, nextAlpha));
-      }
-
-      output = await sharp(pixels, {
-        raw: {
-          width: recolored.info.width,
-          height: recolored.info.height,
-          channels: 4,
-        },
-      })
-        .png()
-        .toBuffer();
-    }
+    const output = await recolorIndiaParcelRaster(buffer, contentType);
 
     return new NextResponse(new Uint8Array(output), {
       status: 200,

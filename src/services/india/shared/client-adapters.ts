@@ -1,6 +1,7 @@
 import type { IndiaParcelSelection, IndiaViewportBounds } from "./types";
 
 export type IndiaParcelAdapterId =
+  | "assam"
   | "kerala"
   | "punjab"
   | "maharashtra"
@@ -16,6 +17,7 @@ export type IndiaParcelClientAdapter = {
   coverageBounds: IndiaViewportBounds;
   overlaySourceType?: "wms" | "geojson";
   overlayRenderMode?: "image" | "tiles";
+  overlayPaintPreset?: "default" | "strong";
   overlayResolvePath: string;
   overlayFeaturesPath?: string;
   parcelClickPath: string;
@@ -116,6 +118,58 @@ function buildDefaultParcelLocationLabel(
 }
 
 export const INDIA_PARCEL_CLIENT_ADAPTERS: IndiaParcelClientAdapter[] = [
+  {
+    id: "assam",
+    stateCode: "18",
+    stateName: "Assam",
+    overlayMinZoom: 14,
+    overlaySourceType: "wms",
+    overlayRenderMode: "image",
+    overlayPaintPreset: "strong",
+    overlayAlignmentOffset: {
+      lng: 0.00024,
+      lat: -0.00009,
+    },
+    coverageBounds: {
+      west: 89.65,
+      south: 24.0,
+      east: 96.1,
+      north: 28.4,
+    },
+    overlayResolvePath: "/api/in/assam/overlay-resolve",
+    parcelClickPath: "/api/in/assam/parcel-click",
+    wmsPath: "/api/in/assam/parcels/wms",
+    buildOverlayParams: ({
+      bounds,
+      gisCode,
+      viewportWidth,
+      viewportHeight,
+    }) => {
+      const params = new URLSearchParams();
+      params.set("service", "WMS");
+      params.set("version", "1.1.1");
+      params.set("request", "GetMap");
+      params.set("format", "image/png");
+      params.set("transparent", "true");
+      params.set("layer_code", "ASSAM_PARCEL");
+      params.set("map_type", "GENERIC_MAP");
+      params.set("ignore_georef", "N");
+      params.set("_overlay_version", "assam-v2");
+      params.set("srs", "EPSG:4326");
+      params.set("width", String(viewportWidth));
+      params.set("height", String(viewportHeight));
+      params.set(
+        "bbox",
+        `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`,
+      );
+      params.set("gis_code", gisCode);
+      params.set("location_code", gisCode);
+      return params;
+    },
+    transformClickCoordinates: ([lng, lat]) => [lng - 0.00024, lat + 0.00009],
+    buildParcelLocationLabel: (parcel) =>
+      buildDefaultParcelLocationLabel("Assam Parcel", parcel),
+  },
   {
     id: "kerala",
     stateCode: "32",

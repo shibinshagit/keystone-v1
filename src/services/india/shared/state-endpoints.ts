@@ -1,4 +1,9 @@
 export const INDIA_STATE_ENDPOINTS = {
+  assam: {
+    stateCode: "18" as const,
+    baseUrl: "https://bhunaksha.assam.gov.in",
+    mapWmsUrl: "https://bhunaksha.assam.gov.in/v1/map/wms",
+  },
   kerala: {
     stateCode: "32" as const,
     baseUrl: "https://emaps.kerala.gov.in/bhunaksha",
